@@ -1,23 +1,17 @@
 //! Captura de tela e de áudio no Windows.
 //!
-//! Fase 1: Windows.Graphics.Capture com a textura mantida na GPU (zero cópia para a CPU)
-//! e WASAPI process loopback para capturar só o áudio do jogo.
+//! - [`sources`]: lista monitores e janelas que podem ser transmitidos.
+//! - [`video`]: Windows.Graphics.Capture com a textura mantida na GPU (zero cópia para a CPU).
+//! - [`throttle`]: limita os frames ao fps escolhido.
 
-/// O que pode ser capturado.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CaptureSource {
-    /// Um monitor inteiro, pelo índice.
-    Monitor(u32),
-    /// Uma janela, pelo título.
-    Window(String),
-}
+pub mod audio;
+pub mod sources;
+pub mod throttle;
+pub mod thumbnail;
+pub mod video;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fontes_diferentes_nao_sao_iguais() {
-        assert_ne!(CaptureSource::Monitor(0), CaptureSource::Window("Jogo".into()));
-    }
-}
+pub use audio::AudioCapture;
+pub use sources::{CaptureSource, Source, find_replacement, is_alive, list_sources};
+pub use throttle::FrameThrottle;
+pub use thumbnail::{Thumbnail, thumbnail};
+pub use video::VideoCapture;

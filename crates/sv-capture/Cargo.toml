@@ -10,7 +10,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-sv-core.workspace = true
+serde.workspace = true
+sv-gpu.workspace = true
+windows.workspace = true
+windows-core.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true

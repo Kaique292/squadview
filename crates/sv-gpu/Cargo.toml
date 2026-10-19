@@ -1,0 +1,16 @@
+[package]
+name = "sv-gpu"
+description = "Device D3D11 compartilhado e conversão de formato/escala na GPU (VideoProcessor)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+windows.workspace = true
+
+[lints]
+workspace = true
