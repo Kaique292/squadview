@@ -11,6 +11,8 @@ yanked = "deny"
 [licenses]
 version = 2
 confidence-threshold = 0.9
+# A lista cobre o ecossistema esperado; nem toda licença aparece desde o começo.
+unused-allowed-license = "allow"
 allow = [
   "MIT",
   "MIT-0",
