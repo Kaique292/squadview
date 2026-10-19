@@ -2,14 +2,16 @@
 
 Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 
+Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline funciona com NVIDIA e AMD (League of Legends: 59 fps transmitidos, ~5 ms de captura até o encode), mas falta medir a perda de FPS do jogo com PresentMon. A Fase 2 funciona com a sinalização publicada e falta o teste com um amigo em outra rede. Das Fases 4 e 5 já saíram as salas, as configurações, o login com o Discord, o AMF (pelo Media Foundation) e o Rich Presence.
+
 | Fase               | Status | Entrega                                                       | Critério de saída                                                                      |
 | ------------------ | ------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 0. Fundação        | 🟨     | Estrutura, docs, esteira, esqueleto do app                    | CI verde em `dev` e `main`; release `v0.1.0` com instalador                            |
-| 1. Pipeline local  | ⬜     | Captura → NVENC → decode → preview; áudio do jogo             | 1080p60 com perda de FPS no jogo < 5% e latência local < 30 ms                         |
-| 2. Transmissão 1:1 | ⬜     | QUIC, hole punching, sinalização                              | 2 PCs em redes diferentes, < 100 ms ponta a ponta                                      |
+| 0. Fundação        | ✅     | Estrutura, docs, esteira, esqueleto do app                    | CI verde em `dev` e `main`; release `v0.1.0` com instalador                            |
+| 1. Pipeline local  | 🟨     | Captura → NVENC → decode → preview; áudio do jogo             | 1080p60 com perda de FPS no jogo < 5% e latência local < 30 ms                         |
+| 2. Transmissão 1:1 | 🟨     | QUIC, hole punching, sinalização                              | 2 PCs em redes diferentes, < 100 ms ponta a ponta                                      |
 | 3. Malha da sala   | ⬜     | Árvore de repasse, medição, pai reserva, 2 camadas, NACK/FEC  | Sala com 6+ pessoas; troca de pai < 1 s; membro fraco recebe 720p sem afetar os outros |
-| 4. App completo    | ⬜     | Salas, vários streams, configurações, login Discord, UI final | Fluxo completo sem terminal; prints reais no README                                    |
-| 5. Distribuição    | ⬜     | AMF (AMD), Rich Presence, bot de aviso                        | `v1.0.0`                                                                               |
+| 4. App completo    | 🟨     | Salas, vários streams, configurações, login Discord, UI final | Fluxo completo sem terminal; prints reais no README                                    |
+| 5. Distribuição    | 🟨     | AMF (AMD), Rich Presence, bot de aviso                        | `v1.0.0`                                                                               |
 | 6. Futuro          | ⬜     | Discord Activity, QuickSync (Intel), gravação local           | —                                                                                      |
 
 ## Fase 0 — Fundação

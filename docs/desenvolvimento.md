@@ -61,3 +61,13 @@ docs/                 documentação, ADRs, design e imagens
 3. Faça commits pequenos no padrão semântico (o hook confere). Veja [git-e-versionamento.md](git-e-versionamento.md).
 4. Rode `yarn lint` e `yarn test`.
 5. Abra o PR para a **`dev`** com título semântico.
+
+## Capturas do README e imagem de prévia do site
+
+- **Capturas das telas:** com o `yarn dev` rodando, abra `http://localhost:1420/#demo=sala` (ou `#demo=transmitir`, `#demo=config`). O modo de demonstração (`apps/desktop/src/dev/demo.ts`, só no dev) preenche a interface com uma sala de exemplo. Para gerar o PNG sem abrir janela:
+
+  ```powershell
+  & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --headless=new --hide-scrollbars --window-size=1280,800 --virtual-time-budget=6000 --screenshot=docs\images\tela-sala.png "http://localhost:1420/#demo=sala"
+  ```
+
+- **Imagem de prévia do site** (`site/og.png`, 1200×630, o card que aparece ao colar o link no Discord): a fonte é `site/og/card.html`. Gere com o mesmo comando, usando `--window-size=1200,630` e o caminho do arquivo no lugar da URL.
