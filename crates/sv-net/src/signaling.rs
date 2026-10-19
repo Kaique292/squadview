@@ -1,0 +1,287 @@
+//! Cliente da sinalização (o Worker em `services/signaling`, contrato em `PROTOCOL.md`).
+//!
+//! Só serve para entrar na sala, saber quem está nela e quem está ao vivo, e trocar [`Signal`]s
+//! com um membro. Nenhuma mídia passa por aqui.
+
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
+
+use crate::protocol::Signal;
+
+/// Versão do contrato da sinalização (o Worker recusa versões diferentes).
+pub const SIGNALING_PROTOCOL: u32 = 1;
+
+/// Letras dos códigos de sala: fáceis de ditar (sem 0/O, 1/I/L). Igual ao `room-code.ts`.
+pub const ROOM_CODE_ALPHABET: &str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+pub const ROOM_CODE_LENGTH: usize = 6;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub id: String,
+    pub name: String,
+    pub live: bool,
+}
+
+/// Mensagens que mandamos.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum Outgoing<'a> {
+    Join { name: &'a str, protocol: u32 },
+    Status { live: bool },
+    Signal { to: &'a str, payload: &'a Signal },
+    Leave,
+}
+
+/// Mensagens que o Worker manda.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum Incoming {
+    Welcome { you: String, members: Vec<Member> },
+    MemberJoined { member: Member },
+    MemberUpdated { member: Member },
+    MemberLeft { id: String },
+    Signal { from: String, payload: serde_json::Value },
+    Error { code: String },
+}
+
+/// O que acontece na sala.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RoomEvent {
+    Joined {
+        you: String,
+        members: Vec<Member>,
+    },
+    MemberJoined(Member),
+    MemberUpdated(Member),
+    MemberLeft(String),
+    Signal {
+        from: String,
+        signal: Signal,
+    },
+    /// Erro vindo do Worker (ex.: `room-full`, `version-mismatch`).
+    Error(String),
+    /// A conexão com a sinalização caiu ou foi fechada.
+    Disconnected,
+}
+
+impl RoomEvent {
+    fn from_incoming(msg: Incoming) -> Option<Self> {
+        Some(match msg {
+            Incoming::Welcome { you, members } => Self::Joined { you, members },
+            Incoming::MemberJoined { member } => Self::MemberJoined(member),
+            Incoming::MemberUpdated { member } => Self::MemberUpdated(member),
+            Incoming::MemberLeft { id } => Self::MemberLeft(id),
+            // Sinal que não entendemos (versão mais nova do app do outro lado): ignora.
+            Incoming::Signal { from, payload } => Self::Signal {
+                from,
+                signal: serde_json::from_value(payload).ok()?,
+            },
+            Incoming::Error { code } => Self::Error(code),
+        })
+    }
+}
+
+/// Mensagem amigável para os erros do Worker.
+pub fn error_message(code: &str) -> &'static str {
+    match code {
+        "room-full" => "A sala está cheia (máximo de 8 pessoas).",
+        "version-mismatch" => "Alguém na sala está com outra versão do SquadView. Atualizem o app.",
+        "rate-limited" => "Muitas mensagens em pouco tempo. Tente entrar de novo.",
+        "unknown-peer" => "Esse membro já saiu da sala.",
+        _ => "A sala recusou a conexão.",
+    }
+}
+
+/// Conexão com a sala. Para (sai da sala) ao ser descartada.
+#[derive(Debug)]
+pub struct RoomClient {
+    outgoing: mpsc::UnboundedSender<Message>,
+}
+
+impl RoomClient {
+    /// Entra na sala `code` em `base_url` (ex.: `wss://squadview-signaling.exemplo.workers.dev`).
+    /// Os eventos chegam por `events`. Precisa rodar dentro de um runtime tokio.
+    pub async fn join(
+        base_url: &str,
+        code: &str,
+        name: &str,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
+        if !is_valid_room_code(code) {
+            return Err("Código de sala inválido.".into());
+        }
+        let url = format!("{}/rooms/{}", base_url.trim_end_matches('/'), code);
+        let (ws, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .map_err(|e| format!("não deu para alcançar o serviço de salas: {e}"))?;
+        let (mut write, mut read) = ws.split();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+        let (ev_tx, ev_rx) = mpsc::unbounded_channel::<RoomEvent>();
+
+        let join = serde_json::to_string(&Outgoing::Join {
+            name,
+            protocol: SIGNALING_PROTOCOL,
+        })
+        .expect("json");
+        write
+            .send(Message::Text(join.into()))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tokio::spawn(async move {
+            while let Some(msg) = out_rx.recv().await {
+                let leaving = matches!(&msg, Message::Close(_));
+                if write.send(msg).await.is_err() || leaving {
+                    break;
+                }
+            }
+            let _ = write.close().await;
+        });
+        tokio::spawn(async move {
+            while let Some(Ok(msg)) = read.next().await {
+                let Message::Text(text) = msg else { continue };
+                let Ok(incoming) = serde_json::from_str::<Incoming>(&text) else {
+                    continue;
+                };
+                if let Some(event) = RoomEvent::from_incoming(incoming)
+                    && ev_tx.send(event).is_err()
+                {
+                    return;
+                }
+            }
+            let _ = ev_tx.send(RoomEvent::Disconnected);
+        });
+        Ok((Self { outgoing: out_tx }, ev_rx))
+    }
+
+    /// Avisa a sala que começamos ou paramos de transmitir.
+    pub fn set_live(&self, live: bool) {
+        self.send(&Outgoing::Status { live });
+    }
+
+    pub fn signal(&self, to: &str, signal: &Signal) {
+        self.send(&Outgoing::Signal { to, payload: signal });
+    }
+
+    fn send(&self, msg: &Outgoing<'_>) {
+        if let Ok(text) = serde_json::to_string(msg) {
+            let _ = self.outgoing.send(Message::Text(text.into()));
+        }
+    }
+}
+
+impl Drop for RoomClient {
+    fn drop(&mut self) {
+        self.send(&Outgoing::Leave);
+        let _ = self.outgoing.send(Message::Close(None));
+    }
+}
+
+/// Sorteia um código de sala novo. A sala passa a existir quando o primeiro membro entra.
+pub fn new_room_code() -> String {
+    let alphabet: Vec<char> = ROOM_CODE_ALPHABET.chars().collect();
+    let mut seed = [0u8; ROOM_CODE_LENGTH];
+    // Gerador aleatório criptográfico do sistema (o mesmo que o TLS usa).
+    rustls::crypto::ring::default_provider()
+        .secure_random
+        .fill(&mut seed)
+        .expect("gerador aleatório do sistema");
+    seed.iter().map(|b| alphabet[*b as usize % alphabet.len()]).collect()
+}
+
+/// Normaliza o que o usuário digitou (minúsculas, espaços, traço) e confere o formato.
+pub fn normalize_room_code(input: &str) -> Option<String> {
+    let code: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect::<String>()
+        .to_uppercase();
+    is_valid_room_code(&code).then_some(code)
+}
+
+pub fn is_valid_room_code(code: &str) -> bool {
+    code.chars().count() == ROOM_CODE_LENGTH && code.chars().all(|c| ROOM_CODE_ALPHABET.contains(c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mensagens_seguem_o_contrato_do_worker() {
+        let join = serde_json::to_string(&Outgoing::Join {
+            name: "Ana",
+            protocol: 1,
+        })
+        .unwrap();
+        assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1}"#);
+        let status = serde_json::to_string(&Outgoing::Status { live: true }).unwrap();
+        assert_eq!(status, r#"{"type":"status","live":true}"#);
+        let sig = Signal::WatchDeny {
+            reason: "não está ao vivo".into(),
+        };
+        let s = serde_json::to_string(&Outgoing::Signal {
+            to: "0123456789abcdef",
+            payload: &sig,
+        })
+        .unwrap();
+        assert_eq!(
+            s,
+            r#"{"type":"signal","to":"0123456789abcdef","payload":{"kind":"watch-deny","reason":"não está ao vivo"}}"#
+        );
+        assert_eq!(serde_json::to_string(&Outgoing::Leave).unwrap(), r#"{"type":"leave"}"#);
+    }
+
+    #[test]
+    fn le_os_eventos_do_worker() {
+        let parse = |s: &str| RoomEvent::from_incoming(serde_json::from_str(s).unwrap());
+        assert_eq!(
+            parse(r#"{"type":"welcome","you":"aa","members":[{"id":"bb","name":"Beto","live":true}]}"#),
+            Some(RoomEvent::Joined {
+                you: "aa".into(),
+                members: vec![Member {
+                    id: "bb".into(),
+                    name: "Beto".into(),
+                    live: true
+                }]
+            })
+        );
+        assert_eq!(
+            parse(r#"{"type":"member-left","id":"bb"}"#),
+            Some(RoomEvent::MemberLeft("bb".into()))
+        );
+        assert_eq!(
+            parse(r#"{"type":"error","code":"room-full"}"#),
+            Some(RoomEvent::Error("room-full".into()))
+        );
+        assert_eq!(
+            parse(r#"{"type":"signal","from":"bb","payload":{"kind":"watch-deny","reason":"x"}}"#),
+            Some(RoomEvent::Signal {
+                from: "bb".into(),
+                signal: Signal::WatchDeny { reason: "x".into() }
+            })
+        );
+        // Sinal de uma versão mais nova: ignorado sem derrubar nada.
+        assert_eq!(
+            parse(r#"{"type":"signal","from":"bb","payload":{"kind":"novidade"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn codigos_de_sala() {
+        let code = new_room_code();
+        assert!(is_valid_room_code(&code), "{code}");
+        assert_ne!(new_room_code(), new_room_code());
+        assert_eq!(normalize_room_code(" b8r-j2q "), Some("B8RJ2Q".into()));
+        assert_eq!(normalize_room_code("B0RJ2Q"), None, "0 é ambíguo");
+        assert_eq!(normalize_room_code("ABC"), None);
+    }
+
+    #[test]
+    fn erros_tem_mensagem_para_o_usuario() {
+        assert!(error_message("room-full").contains("8"));
+        assert!(error_message("qualquer").contains("recusou"));
+    }
+}

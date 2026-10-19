@@ -1,8 +1,25 @@
 //! Transporte P2P sobre QUIC.
 //!
-//! Fase 2: conexão direta com hole punching, com a sinalização feita pelo Worker em
-//! `services/signaling`. Quando dois membros não conseguem se ver (CGNAT), um terceiro
-//! membro da sala faz a ponte.
+//! - [`stun`]: descobre o endereço público do nosso socket.
+//! - [`endpoint`]: o ponto QUIC de cada membro (furo de NAT, conectar, aceitar).
+//! - [`cert`]: certificados por sessão, conferidos pela fingerprint combinada na sinalização.
+//! - [`media`]: vídeo (um stream por frame), áudio (datagramas) e controle.
+//! - [`protocol`]: os formatos que viajam; [`clock`]: estimativa do relógio do outro lado.
+//!
+//! Quando dois membros não conseguem se ver (CGNAT simétrico), a conexão falha com uma mensagem
+//! clara; a ponte por um terceiro membro da sala vem na Fase 3.
+
+pub mod cert;
+pub mod clock;
+pub mod endpoint;
+pub mod media;
+pub mod protocol;
+pub mod signaling;
+pub mod stun;
+
+pub use endpoint::{ConnectError, Peer};
+pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
+pub use signaling::{Member, RoomClient, RoomEvent};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.
 pub const PROTOCOL_VERSION: u16 = 1;
