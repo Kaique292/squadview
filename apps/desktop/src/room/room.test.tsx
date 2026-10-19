@@ -148,6 +148,29 @@ describe("na sala", () => {
     expect(screen.queryByRole("region", { name: "Assistindo Ana" })).not.toBeInTheDocument();
   });
 
+  it("ajusta o volume de quem assiste até 200%, como no Discord, e lembra", async () => {
+    localStorage.removeItem("squadview.volume");
+    useRoomStore.setState({ watchVolume: 100 });
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("watch-started", ANA);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1 }));
+
+    const slider = screen.getByRole("slider", { name: "Volume da transmissão" });
+    expect(slider).toHaveAttribute("max", "200");
+    fireEvent.change(slider, { target: { value: "150" } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1.5 }));
+    expect(screen.getByText("150%")).toBeInTheDocument();
+    expect(localStorage.getItem("squadview.volume")).toBe("150");
+  });
+
+  it("mexer no volume com o som desligado liga o som", async () => {
+    useRoomStore.setState({ watching: ANA, members: [ME, ANA], watchListening: false, watchVolume: 0 });
+    render(<App />);
+    fireEvent.change(screen.getByRole("slider", { name: "Volume da transmissão" }), { target: { value: "40" } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: true }));
+  });
+
   it("quando a transmissão do amigo acaba, sai do vídeo e explica", () => {
     useRoomStore.setState({ watching: ANA, members: [ME, ANA] });
     render(<App />);

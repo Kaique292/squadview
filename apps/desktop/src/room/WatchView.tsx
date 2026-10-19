@@ -1,13 +1,14 @@
-import { Headphones, HeadphoneOff, Maximize2, Minimize2, X } from "lucide-react";
+import { Maximize2, Minimize2, X } from "lucide-react";
 import { BarButton } from "../stream/StreamView";
 import { useStreamStore } from "../stream/stream-store";
 import { useVideoSlot } from "../stream/video-slot";
 import type { Member } from "./room-store";
 import { useRoomStore } from "./room-store";
+import { VolumeControl } from "./VolumeControl";
 
 /** Assistindo um amigo: o vídeo dele dentro do app, com uma barra embaixo. */
 export function WatchView(props: { member: Member }) {
-  const { watchStats: stats, watchListening, setWatchListening, stopWatching } = useRoomStore();
+  const { watchStats: stats, stopWatching } = useRoomStore();
   const { fullscreen, setFullscreen } = useStreamStore();
   const slot = useVideoSlot();
 
@@ -33,13 +34,7 @@ export function WatchView(props: { member: Member }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
-          <BarButton
-            label={watchListening ? "Silenciar" : "Ativar som"}
-            active={watchListening}
-            onClick={() => void setWatchListening(!watchListening)}
-          >
-            {watchListening ? <Headphones size={18} /> : <HeadphoneOff size={18} />}
-          </BarButton>
+          <VolumeControl />
           <BarButton
             label={fullscreen ? "Sair da tela cheia" : "Tela cheia"}
             onClick={() => void setFullscreen(!fullscreen)}
