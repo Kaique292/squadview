@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" role="img" aria-label="SquadView: compartilhe a tela com a galera da call, sem servidor">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16171a"/>
+      <stop offset="1" stop-color="#2a1f5c"/>
+    </linearGradient>
+    <linearGradient id="logo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9478ff"/>
+      <stop offset="1" stop-color="#5a3be0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="400" fill="url(#g)"/>
+  <g opacity="0.18" stroke="#9478ff" stroke-width="3" fill="#9478ff">
+    <line x1="900" y1="90" x2="1040" y2="170"/><line x1="1040" y1="170" x2="1180" y2="110"/>
+    <line x1="1040" y1="170" x2="1000" y2="300"/><line x1="1000" y1="300" x2="1160" y2="300"/>
+    <line x1="900" y1="90" x2="860" y2="240"/><line x1="860" y1="240" x2="1000" y2="300"/>
+    <circle cx="900" cy="90" r="12"/><circle cx="1040" cy="170" r="16"/><circle cx="1180" cy="110" r="10"/>
+    <circle cx="1000" cy="300" r="12"/><circle cx="1160" cy="300" r="10"/><circle cx="860" cy="240" r="10"/>
+  </g>
+  <g transform="translate(110 112) scale(0.34)">
+    <rect width="512" height="512" rx="120" fill="url(#logo)"/>
+    <rect x="104" y="116" width="304" height="200" rx="28" fill="none" stroke="#fff" stroke-width="28"/>
+    <path d="M232 176 L296 216 L232 256 Z" fill="#fff"/>
+    <g stroke="#fff" stroke-width="16" stroke-linecap="round"><line x1="256" y1="316" x2="256" y2="372"/><line x1="256" y1="372" x2="160" y2="400"/><line x1="256" y1="372" x2="352" y2="400"/></g>
+    <circle cx="256" cy="380" r="26" fill="#fff"/><circle cx="148" cy="404" r="26" fill="#fff"/><circle cx="364" cy="404" r="26" fill="#fff"/>
+  </g>
+  <text x="310" y="200" fill="#f2f3f5" font-family="Segoe UI, Inter, sans-serif" font-size="84" font-weight="700">SquadView</text>
+  <text x="314" y="256" fill="#b5bac1" font-family="Segoe UI, Inter, sans-serif" font-size="30">Compartilhe a tela com a galera da call.</text>
+  <text x="314" y="296" fill="#b5bac1" font-family="Segoe UI, Inter, sans-serif" font-size="30">Qualidade de jogo, sem servidor.</text>
+</svg>

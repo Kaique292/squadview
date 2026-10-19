@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SquadView">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9478ff"/>
+      <stop offset="1" stop-color="#5a3be0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <!-- tela -->
+  <rect x="104" y="116" width="304" height="200" rx="28" fill="none" stroke="#fff" stroke-width="28"/>
+  <path d="M232 176 L296 216 L232 256 Z" fill="#fff"/>
+  <!-- malha: a tela alimenta três amigos -->
+  <g stroke="#fff" stroke-width="16" stroke-linecap="round" opacity="0.9">
+    <line x1="256" y1="316" x2="256" y2="372"/>
+    <line x1="256" y1="372" x2="160" y2="400"/>
+    <line x1="256" y1="372" x2="352" y2="400"/>
+  </g>
+  <circle cx="256" cy="380" r="26" fill="#fff"/>
+  <circle cx="148" cy="404" r="26" fill="#fff"/>
+  <circle cx="364" cy="404" r="26" fill="#fff"/>
+</svg>

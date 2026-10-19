@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" role="img" aria-label="Prévia da interface do SquadView: barra de salas, membros e grade com dois streams ao vivo">
+  <style>text{font-family:"Segoe UI",Inter,sans-serif}</style>
+  <rect width="1280" height="760" rx="14" fill="#232428"/>
+  <!-- barra de salas -->
+  <path d="M14 0h58v760H14a14 14 0 0 1-14-14V14A14 14 0 0 1 14 0z" fill="#111214"/>
+  <rect x="12" y="14" width="48" height="48" rx="16" fill="#6e4ff6"/><text x="36" y="45" fill="#fff" font-size="16" font-weight="700" text-anchor="middle">SV</text>
+  <rect x="22" y="74" width="28" height="2" rx="1" fill="#2e3035"/>
+  <circle cx="36" cy="112" r="24" fill="#23a55a"/><text x="36" y="118" fill="#fff" font-size="15" font-weight="600" text-anchor="middle">CS</text>
+  <circle cx="36" cy="170" r="24" fill="#2e3035"/><text x="36" y="176" fill="#b5bac1" font-size="15" font-weight="600" text-anchor="middle">LoL</text>
+  <circle cx="36" cy="228" r="24" fill="#2e3035"/><text x="36" y="236" fill="#23a55a" font-size="26" text-anchor="middle">+</text>
+  <!-- barra lateral -->
+  <rect x="72" width="240" height="760" fill="#1a1b1e"/>
+  <text x="90" y="32" fill="#f2f3f5" font-size="16" font-weight="600">Squad do CS</text>
+  <rect x="72" y="48" width="240" height="1" fill="#111214"/>
+  <text x="90" y="80" fill="#80848e" font-size="12" font-weight="600">NA SALA — 5</text>
+  <g font-size="14">
+    <circle cx="102" cy="108" r="12" fill="#f0b232"/><text x="122" y="113" fill="#f2f3f5">Ana</text><rect x="232" y="100" width="58" height="18" rx="4" fill="#f23f43"/><text x="261" y="113" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">AO VIVO</text>
+    <circle cx="102" cy="144" r="12" fill="#6e4ff6"/><text x="122" y="149" fill="#f2f3f5">Beto</text><rect x="232" y="136" width="58" height="18" rx="4" fill="#f23f43"/><text x="261" y="149" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">AO VIVO</text>
+    <circle cx="102" cy="180" r="12" fill="#23a55a"/><text x="122" y="185" fill="#b5bac1">Caio</text><text x="290" y="185" fill="#80848e" font-size="11" text-anchor="end">repassando</text>
+    <circle cx="102" cy="216" r="12" fill="#3ba0ff"/><text x="122" y="221" fill="#b5bac1">Duda</text><text x="290" y="221" fill="#80848e" font-size="11" text-anchor="end">assistindo</text>
+    <circle cx="102" cy="252" r="12" fill="#e06c9f"/><text x="122" y="257" fill="#b5bac1">Edu</text><text x="290" y="257" fill="#f0b232" font-size="11" text-anchor="end">720p · instável</text>
+  </g>
+  <rect x="72" y="704" width="240" height="56" fill="#141517"/>
+  <circle cx="98" cy="732" r="14" fill="#2e3035"/><text x="120" y="737" fill="#f2f3f5" font-size="14" font-weight="500">Você</text>
+  <!-- grade de streams -->
+  <text x="336" y="34" fill="#f2f3f5" font-size="16" font-weight="600">2 transmitindo</text>
+  <g>
+    <rect x="336" y="56" width="456" height="300" rx="12" fill="#0d0e10"/>
+    <rect x="336" y="56" width="456" height="300" rx="12" fill="url(#jogo1)"/>
+    <rect x="350" y="70" width="58" height="20" rx="4" fill="#f23f43"/><text x="379" y="84" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">AO VIVO</text>
+    <rect x="350" y="318" width="150" height="26" rx="6" fill="#000" opacity=".55"/><text x="362" y="336" fill="#fff" font-size="13">Ana · 1080p60</text>
+  </g>
+  <g>
+    <rect x="808" y="56" width="456" height="300" rx="12" fill="url(#jogo2)"/>
+    <rect x="822" y="70" width="58" height="20" rx="4" fill="#f23f43"/><text x="851" y="84" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">AO VIVO</text>
+    <rect x="822" y="318" width="150" height="26" rx="6" fill="#000" opacity=".55"/><text x="834" y="336" fill="#fff" font-size="13">Beto · 1080p60</text>
+  </g>
+  <!-- painel da malha -->
+  <rect x="336" y="376" width="928" height="300" rx="12" fill="#1a1b1e"/>
+  <text x="360" y="410" fill="#f2f3f5" font-size="15" font-weight="600">Como o vídeo da Ana chega em cada um</text>
+  <g stroke="#6e4ff6" stroke-width="3">
+    <line x1="800" y1="470" x2="640" y2="560"/><line x1="800" y1="470" x2="960" y2="560"/>
+    <line x1="640" y1="560" x2="560" y2="640"/><line x1="640" y1="560" x2="720" y2="640"/>
+    <line x1="960" y1="560" x2="960" y2="640" stroke="#f0b232" stroke-dasharray="6 6"/>
+  </g>
+  <g font-size="13" text-anchor="middle">
+    <circle cx="800" cy="460" r="22" fill="#f0b232"/><text x="800" y="465" fill="#111">Ana</text>
+    <circle cx="640" cy="560" r="22" fill="#23a55a"/><text x="640" y="565" fill="#fff">Caio</text>
+    <circle cx="960" cy="560" r="22" fill="#6e4ff6"/><text x="960" y="565" fill="#fff">Beto</text>
+    <circle cx="560" cy="640" r="18" fill="#3ba0ff"/><text x="560" y="645" fill="#fff" font-size="11">Duda</text>
+    <circle cx="720" cy="640" r="18" fill="#e06c9f"/><text x="720" y="645" fill="#fff" font-size="11">Edu</text>
+    <circle cx="960" cy="640" r="18" fill="#2e3035"/><text x="960" y="645" fill="#b5bac1" font-size="11">reserva</text>
+  </g>
+  <defs>
+    <linearGradient id="jogo1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f3b5c"/><stop offset=".6" stop-color="#3f2a5c"/><stop offset="1" stop-color="#5c3a1f"/></linearGradient>
+    <linearGradient id="jogo2" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#14402c"/><stop offset=".55" stop-color="#1f3b5c"/><stop offset="1" stop-color="#4a1f3b"/></linearGradient>
+  </defs>
+</svg>
