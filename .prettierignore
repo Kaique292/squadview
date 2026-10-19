@@ -8,3 +8,5 @@ CHANGELOG.md
 yarn.lock
 .release-please-manifest.json
 apps/desktop/src-tauri/gen
+# O release-please regrava este arquivo a cada versão (listas em várias linhas).
+apps/desktop/src-tauri/tauri.conf.json
