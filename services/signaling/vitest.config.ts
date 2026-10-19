@@ -5,7 +5,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      // index.ts só liga o runtime da Cloudflare; ganha testes com vitest-pool-workers na Fase 2.
+      // index.ts só liga os módulos ao runtime da Cloudflare (ver PROTOCOL.md, "Testar localmente").
       exclude: ["src/**/*.test.ts", "src/index.ts"],
       reporter: ["text", "json-summary"],
       reportsDirectory: "../../build/coverage-signaling",
