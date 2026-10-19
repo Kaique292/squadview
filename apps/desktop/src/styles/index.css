@@ -141,7 +141,18 @@ body,
   height: 100%;
 }
 
-/* Fundo transparente: a janela é transparente para o vidro; as camadas do app pintam o resto. */
+/*
+ * A janela é transparente (para o vidro). O fundo só some quando o vidro está ligado
+ * (classe `glass`, posta por `applyGlass`): se a interface falhar ao carregar, a janela fica
+ * escura em vez de invisível.
+ */
+html {
+  background: var(--color-surface-0);
+}
+html.glass {
+  background: transparent;
+}
+
 body {
   margin: 0;
   background: transparent;

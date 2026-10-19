@@ -27,6 +27,7 @@ describe("configurações de aparência", () => {
     fireEvent.change(screen.getByRole("slider", { name: "Efeito de vidro" }), { target: { value: "75" } });
     expect(screen.getByText("75%")).toBeInTheDocument();
     expect(glassVar()).toBe("0.75");
+    expect(document.documentElement).toHaveClass("glass");
     expect(localStorage.getItem("squadview.vidro")).toBe("75");
   });
 
@@ -34,6 +35,8 @@ describe("configurações de aparência", () => {
     openSettings();
     fireEvent.change(screen.getByRole("slider", { name: "Efeito de vidro" }), { target: { value: "0" } });
     expect(glassVar()).toBe("0");
+    // Sem vidro, o fundo da janela fica sólido.
+    expect(document.documentElement).not.toHaveClass("glass");
   });
 
   it("volta ao padrão", () => {

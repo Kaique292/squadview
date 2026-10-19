@@ -48,6 +48,7 @@ let acrylic: boolean | null = null;
 export function applyGlass(glass: number) {
   document.documentElement.style.setProperty("--glass", String(clamp(glass) / 100));
   const want = glass > 0;
+  document.documentElement.classList.toggle("glass", want);
   if (want === acrylic || !inTauri()) return;
   acrylic = want;
   const win = getCurrentWindow();
