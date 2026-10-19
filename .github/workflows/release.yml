@@ -61,6 +61,8 @@ jobs:
       # Gera o instalador e a assinatura (.sig) usada pela atualização automática.
       - name: Gerar instalador assinado
         env:
+          # Sinalização publicada no Cloudflare (services/signaling); entra no executável no build.
+          SQUADVIEW_SIGNALING_URL: wss://squadview-signaling.squadview.workers.dev
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: yarn build:release
