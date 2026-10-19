@@ -13,5 +13,5 @@ pub mod video;
 pub use audio::AudioCapture;
 pub use sources::{CaptureSource, Source, find_replacement, is_alive, list_sources};
 pub use throttle::FrameThrottle;
-pub use thumbnail::{Thumbnail, thumbnail};
+pub use thumbnail::{Thumbnail, read_frame, thumbnail};
 pub use video::VideoCapture;

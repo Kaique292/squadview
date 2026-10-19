@@ -1,6 +1,7 @@
 //! Miniatura de uma fonte para o seletor: um frame, reduzido na GPU, copiado para a CPU.
 //!
-//! É o único lugar em que uma imagem sai da GPU, e só uma vez, pequena, quando o seletor abre.
+//! É o único lugar em que uma imagem sai da GPU, e só uma vez, pequena: quando o seletor abre e
+//! na foto do último quadro ao parar um vídeo (para a animação de saída).
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -41,7 +42,9 @@ pub fn thumbnail(gpu: &Gpu, source: CaptureSource, max: Size, timeout: Duration)
     result
 }
 
-fn read_frame(gpu: &Gpu, frame: &sv_gpu::GpuFrame, max: Size) -> windows::core::Result<Thumbnail> {
+/// Reduz `frame` na GPU para caber em `max` e copia para a CPU. Use só em momentos pontuais
+/// (miniatura, foto do último quadro ao parar), nunca a cada frame.
+pub fn read_frame(gpu: &Gpu, frame: &sv_gpu::GpuFrame, max: Size) -> windows::core::Result<Thumbnail> {
     let rect = fit_inside(frame.size, max);
     let size = Size::new((rect.right - rect.left).max(1), (rect.bottom - rect.top).max(1));
     let target = texture(gpu, size, false)?;

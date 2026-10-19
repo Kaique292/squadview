@@ -104,7 +104,7 @@ pub async fn source_thumbnail(source: CaptureSource) -> Option<String> {
     .flatten()
 }
 
-fn jpeg_data_url(thumb: &sv_capture::Thumbnail) -> Option<String> {
+pub(crate) fn jpeg_data_url(thumb: &sv_capture::Thumbnail) -> Option<String> {
     use base64::Engine;
     let mut jpeg = Vec::new();
     jpeg_encoder::Encoder::new(&mut jpeg, 80)
@@ -189,7 +189,9 @@ pub fn set_preview_listening(state: State<'_, PreviewState>, listening: bool) {
 
 /// Para a prévia (fora da thread principal: ver [`off_main`]).
 #[tauri::command]
-pub async fn stop_preview(app: AppHandle) -> Result<(), String> {
+/// Para a transmissão e devolve a foto do último quadro (JPEG em data URL), para a interface
+/// fazer a animação de saída no lugar do vídeo.
+pub async fn stop_preview(app: AppHandle) -> Result<Option<String>, String> {
     off_main(move || {
         let state = app.state::<PreviewState>();
         let stopped = {
@@ -197,13 +199,14 @@ pub async fn stop_preview(app: AppHandle) -> Result<(), String> {
             running.generation += 1;
             running.preview.take()
         };
-        if let Some(preview) = stopped {
-            // Fecha vídeo, áudio, encoder e captura, sem segurar nenhum lock.
-            drop(preview);
-            crate::room::stream_changed(&app, None);
-            app.state::<Diagnostics>()
-                .write("stream-end", &json!({ "reason": "parado pela interface" }));
-        }
+        let preview = stopped?;
+        let photo = preview.snapshot().as_ref().and_then(jpeg_data_url);
+        // Fecha vídeo, áudio, encoder e captura, sem segurar nenhum lock.
+        drop(preview);
+        crate::room::stream_changed(&app, None);
+        app.state::<Diagnostics>()
+            .write("stream-end", &json!({ "reason": "parado pela interface" }));
+        photo
     })
     .await
 }
