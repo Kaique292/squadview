@@ -155,7 +155,7 @@
         <a class="button" id="open">Abrir no SquadView</a>
         <div class="fallback" id="fallback">
           <p>Não abriu? Você ainda não tem o SquadView. Baixe, instale e clique em "Abrir no SquadView" de novo.</p>
-          <a class="button secondary" href="https://github.com/Kaique292/squadview/releases/latest">
+          <a class="button secondary" data-download href="https://github.com/Kaique292/squadview/releases/latest">
             Baixar o SquadView para Windows
           </a>
         </div>
@@ -169,6 +169,7 @@
       </div>
       <small>SquadView é gratuito e de código aberto.</small>
     </main>
+    <script src="../download.js"></script>
     <script>
       // Mesmo alfabeto da sinalização: 6 caracteres, sem letras que se confundem (I, L, O, 0, 1).
       const ALPHABET = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
@@ -187,10 +188,13 @@
         const showFallback = () => document.getElementById("fallback").classList.add("show");
         let left = false;
         window.addEventListener("blur", () => (left = true));
-        location.href = deepLink;
-        setTimeout(() => {
-          if (!left) showFallback();
-        }, 1500);
+        // Tenta abrir o app depois de preparar o download (ou em no máximo 1,5 s).
+        Promise.race([window.downloadReady, new Promise((r) => setTimeout(r, 1500))]).then(() => {
+          location.href = deepLink;
+          setTimeout(() => {
+            if (!left) showFallback();
+          }, 1500);
+        });
         open.addEventListener("click", () => setTimeout(showFallback, 1500));
       }
     </script>
