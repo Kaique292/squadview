@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "pull-request-title-pattern": "chore(release): versão ${version}",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "squadview",
+      "changelog-path": "CHANGELOG.md",
+      "include-v-in-tag": true,
+      "extra-files": [
+        "Cargo.toml",
+        { "type": "json", "path": "apps/desktop/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "apps/desktop/src-tauri/tauri.conf.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "services/signaling/package.json", "jsonpath": "$.version" }
+      ],
+      "changelog-sections": [
+        { "type": "feat", "section": "✨ Novidades" },
+        { "type": "fix", "section": "🐛 Correções" },
+        { "type": "perf", "section": "⚡ Desempenho" },
+        { "type": "refactor", "section": "♻️ Melhorias internas" },
+        { "type": "docs", "section": "📝 Documentação" },
+        { "type": "build", "section": "📦 Build" },
+        { "type": "ci", "section": "🤖 Automação", "hidden": true },
+        { "type": "chore", "section": "🧹 Manutenção", "hidden": true },
+        { "type": "style", "section": "🎨 Estilo", "hidden": true },
+        { "type": "test", "section": "✅ Testes", "hidden": true }
+      ]
+    }
+  }
+}

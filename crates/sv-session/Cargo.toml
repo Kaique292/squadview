@@ -1,0 +1,26 @@
+[package]
+name = "sv-session"
+description = "Liga captura, encoder, decoder e janela em sessões de transmitir e assistir."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+serde.workspace = true
+serde_json = "1"
+sv-capture.workspace = true
+sv-core.workspace = true
+sv-encode.workspace = true
+sv-gpu.workspace = true
+sv-media.workspace = true
+sv-net.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+windows.workspace = true
+
+[lints]
+workspace = true

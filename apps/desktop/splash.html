@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SquadView</title>
+    <style>
+      :root {
+        --bg: #1e1f22;
+        --text: #f2f3f5;
+        --muted: #b5bac1;
+        --faint: #80848e;
+        --brand: #6e4ff6;
+        --track: #383a40;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Figtree Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        overflow: hidden;
+        /* A janela inteira é arrastável, como a do Discord. */
+        app-region: drag;
+      }
+
+      /* Mascote: pula com uma leve "amassada" ao tocar o chão; a sombra acompanha. */
+      .stage {
+        position: relative;
+        width: 112px;
+        height: 132px;
+      }
+      .mascot {
+        position: absolute;
+        left: 8px;
+        top: 4px;
+        width: 96px;
+        height: 96px;
+        transform-origin: 50% 100%;
+        animation: hop 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      }
+      .shadow {
+        position: absolute;
+        left: 30px;
+        bottom: 14px;
+        width: 52px;
+        height: 8px;
+        border-radius: 50%;
+        background: #000;
+        opacity: 0.35;
+        animation: shadow 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      }
+      /* A metade apagada "falha" de vez em quando, como uma tela com defeito. */
+      .faded {
+        animation: glitch 2.8s steps(1) infinite;
+      }
+      /* As antenas balançam de leve. */
+      .antenna {
+        transform-box: fill-box;
+        animation: wiggle 1.4s ease-in-out infinite;
+      }
+      .antenna.left {
+        transform-origin: 100% 100%;
+      }
+      .antenna.right {
+        transform-origin: 0% 100%;
+        animation-delay: -0.7s;
+      }
+
+      @keyframes hop {
+        0%,
+        100% {
+          transform: translateY(18px) scale(1.08, 0.9);
+        }
+        15% {
+          transform: translateY(14px) scale(0.96, 1.05);
+        }
+        50% {
+          transform: translateY(-6px) scale(1, 1);
+        }
+        85% {
+          transform: translateY(14px) scale(1, 1);
+        }
+      }
+      @keyframes shadow {
+        0%,
+        100% {
+          transform: scaleX(1.1);
+          opacity: 0.4;
+        }
+        50% {
+          transform: scaleX(0.6);
+          opacity: 0.15;
+        }
+      }
+      @keyframes glitch {
+        0%,
+        78% {
+          opacity: 0.3;
+          transform: none;
+        }
+        80% {
+          opacity: 0.85;
+          transform: translateX(6px);
+        }
+        82% {
+          opacity: 0.15;
+          transform: translateX(-4px);
+        }
+        84% {
+          opacity: 0.6;
+          transform: translateX(2px);
+        }
+        86% {
+          opacity: 0.3;
+          transform: none;
+        }
+      }
+      @keyframes wiggle {
+        0%,
+        100% {
+          rotate: -6deg;
+        }
+        50% {
+          rotate: 6deg;
+        }
+      }
+
+      .status {
+        margin-top: 4px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+        min-height: 18px;
+      }
+      .bar {
+        margin-top: 12px;
+        width: 168px;
+        height: 6px;
+        border-radius: 9999px;
+        background: var(--track);
+        overflow: hidden;
+      }
+      .fill {
+        height: 100%;
+        width: 4%;
+        border-radius: inherit;
+        background: var(--brand);
+        transition: width 450ms cubic-bezier(0.16, 1, 0.3, 1);
+        /* Brilho correndo pela barra enquanto carrega. */
+        background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.35) 50%, transparent 100%);
+        background-size: 60px 100%;
+        background-repeat: no-repeat;
+        animation: shine 1.2s linear infinite;
+      }
+      @keyframes shine {
+        from {
+          background-position: -60px 0;
+        }
+        to {
+          background-position: 228px 0;
+        }
+      }
+      .tip {
+        position: absolute;
+        bottom: 18px;
+        left: 24px;
+        right: 24px;
+        text-align: center;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--faint);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage" aria-hidden="true">
+      <svg class="mascot" viewBox="0 0 512 512">
+        <defs>
+          <g id="corpo">
+            <path
+              fill-rule="evenodd"
+              d="M136 128 H376 C430 128 470 168 470 222 V330 C470 384 430 424 376 424 H136 C82 424 42 384 42 330 V222 C42 168 82 128 136 128 Z
+                 M188 230 a34 38 0 1 0 0.1 0 Z
+                 M324 230 a34 38 0 1 0 0.1 0 Z
+                 M180 326 C210 372 302 372 332 326 C318 350 194 350 180 326 Z"
+            />
+            <rect x="128" y="404" width="72" height="56" rx="28" />
+            <rect x="312" y="404" width="72" height="56" rx="28" />
+          </g>
+          <clipPath id="esq"><path d="M0 0 H262 L238 120 L272 220 L240 320 L270 420 L252 512 H0 Z" /></clipPath>
+          <clipPath id="dir"><path d="M274 0 H512 V512 H264 L282 420 L252 320 L284 220 L250 120 Z" /></clipPath>
+        </defs>
+        <!-- Antenas fora do <use>, para poderem balançar. -->
+        <g class="antenna left" fill="#fff">
+          <path d="M214 132 L156 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none" />
+          <circle cx="150" cy="46" r="30" />
+        </g>
+        <g class="antenna right" fill="#fff" opacity=".3">
+          <path d="M298 132 L356 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none" />
+          <circle cx="362" cy="46" r="30" />
+        </g>
+        <use href="#corpo" fill="#fff" clip-path="url(#esq)" />
+        <g class="faded"><use href="#corpo" fill="#fff" clip-path="url(#dir)" /></g>
+      </svg>
+      <div class="shadow"></div>
+    </div>
+    <p class="status" id="status">Iniciando…</p>
+    <div class="bar" role="progressbar" aria-label="Carregando o SquadView" aria-valuemin="0" aria-valuemax="100">
+      <div class="fill" id="fill"></div>
+    </div>
+    <p class="tip" id="tip"></p>
+    <script type="module" src="/src/splash/splash.ts"></script>
+  </body>
+</html>

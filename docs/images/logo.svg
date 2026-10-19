@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SquadView">
+  <defs>
+    <g id="mascote">
+      <!-- antenas -->
+      <path d="M214 132 L156 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none"/>
+      <path d="M298 132 L356 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none"/>
+      <circle cx="150" cy="46" r="30"/>
+      <circle cx="362" cy="46" r="30"/>
+      <!-- corpo-TV com a carinha recortada (olhos + sorriso) -->
+      <path fill-rule="evenodd" d="
+        M136 128 H376 C430 128 470 168 470 222 V330 C470 384 430 424 376 424 H136 C82 424 42 384 42 330 V222 C42 168 82 128 136 128 Z
+        M188 230 a34 38 0 1 0 0.1 0 Z
+        M324 230 a34 38 0 1 0 0.1 0 Z
+        M180 326 C210 372 302 372 332 326 C318 350 194 350 180 326 Z"/>
+      <!-- pezinhos -->
+      <rect x="128" y="404" width="72" height="56" rx="28"/>
+      <rect x="312" y="404" width="72" height="56" rx="28"/>
+    </g>
+    <clipPath id="esq"><path d="M0 0 H262 L238 120 L272 220 L240 320 L270 420 L252 512 H0 Z"/></clipPath>
+    <clipPath id="dir"><path d="M274 0 H512 V512 H264 L282 420 L252 320 L284 220 L250 120 Z"/></clipPath>
+  </defs>
+  <use href="#mascote" fill="#fff" clip-path="url(#esq)"/>
+  <use href="#mascote" fill="#fff" opacity=".3" clip-path="url(#dir)"/>
+</svg>

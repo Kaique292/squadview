@@ -1,0 +1,13 @@
+# Sinalização do SquadView: só troca endereços para os membros se conectarem.
+# Nenhum vídeo passa por aqui (ver docs/adr/0003-sinalizacao-cloudflare-worker.md).
+name = "squadview-signaling"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

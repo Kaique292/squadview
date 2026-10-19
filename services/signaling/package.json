@@ -1,0 +1,19 @@
+{
+  "name": "@squadview/signaling",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "lint": "tsc --noEmit",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261018.1",
+    "@vitest/coverage-v8": "^5.0.5",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.1"
+  }
+}

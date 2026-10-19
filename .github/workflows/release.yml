@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag já existente para gerar o instalador de novo (ex.: v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Versão e changelog
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  instalador:
+    name: Instalador do Windows
+    needs: release-please
+    if: always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: windows-latest
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      # No Windows o corepack precisa ser ligado no Node que o setup-node instala; só depois
+      # disso o cache do Yarn 4 funciona (antes ele acha o Yarn 1 global e falha).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - run: corepack enable
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: yarn
+
+      - run: yarn install --immutable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Gera o instalador e a assinatura (.sig) usada pela atualização automática.
+      - name: Gerar instalador assinado
+        env:
+          # Sinalização publicada no Cloudflare (services/signaling); entra no executável no build.
+          SQUADVIEW_SIGNALING_URL: wss://squadview-signaling.squadview.workers.dev
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: yarn build:release
+
+      - name: Gerar latest.json (atualização automática)
+        run: node scripts/updater-manifest.mjs ${{ env.TAG }}
+
+      - name: Publicar na release
+        shell: pwsh
+        run: |
+          $dir = "target/release/bundle/nsis"
+          $exe = Get-ChildItem "$dir/*-setup.exe"
+          $exe | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Set-Content "$dir/SHA256SUMS.txt" -Encoding utf8
+          gh release edit $env:TAG --title "SquadView $env:TAG"
+          gh release upload $env:TAG $exe.FullName "$($exe.FullName).sig" "$dir/latest.json" "$dir/SHA256SUMS.txt" --clobber

@@ -1,0 +1,51 @@
+//! Sessões de mídia: liga captura, encoder, decoder e janela.
+//!
+//! - [`VideoSender`]: captura → NV12 → encoder (lado de quem transmite).
+//! - [`VideoViewer`]: frames codificados → decoder → janela (lado de quem assiste).
+//! - [`LocalPreview`]: os dois ligados no mesmo PC, para medir antes de usar a rede.
+
+mod audio;
+mod log;
+mod preview;
+mod remote;
+mod room;
+mod sender;
+mod stats;
+mod surface;
+mod system;
+mod viewer;
+
+pub use sv_media::{Bounds, WindowEvent, WindowTarget};
+
+use std::fmt;
+
+pub use audio::{AudioPacket, AudioReceiver, AudioSender, ReceiverEvent};
+pub use log::{SessionLog, recent_logs};
+pub use preview::{KeyframeHandle, LocalPreview, StreamTap};
+pub use remote::RemoteView;
+pub use room::{Room, RoomUpdate};
+pub use sender::{SenderEvent, StreamInfo, VideoSender};
+pub use stats::{StatsMeter, StreamStats};
+pub use sv_net::Member;
+pub use system::{SystemLoad, SystemMonitor};
+pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
+
+/// O que pode dar errado ao começar uma sessão, com mensagem para o usuário.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionError {
+    Gpu(String),
+    Capture(String),
+    Encoder(String),
+}
+
+impl fmt::Display for SessionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Gpu(e) => write!(f, "Não deu para usar a placa de vídeo: {e}"),
+            Self::Capture(e) => write!(f, "Não deu para capturar essa tela ou janela: {e}"),
+            Self::Encoder(e) => write!(f, "Não deu para iniciar o encoder de vídeo: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SessionError {}

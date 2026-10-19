@@ -1,0 +1,10 @@
+node_modules
+.yarn
+target
+dist
+build
+coverage
+CHANGELOG.md
+yarn.lock
+.release-please-manifest.json
+apps/desktop/src-tauri/gen

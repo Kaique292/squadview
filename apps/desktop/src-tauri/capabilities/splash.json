@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "splash",
+  "description": "Permissões da splash: só ouvir o andamento da abertura.",
+  "windows": ["splash"],
+  "permissions": ["core:event:default"]
+}

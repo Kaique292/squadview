@@ -1,0 +1,42 @@
+name: 🐛 Algo deu errado
+description: O stream travou, não conectou, pesou no jogo ou algo não funcionou como deveria.
+labels: [bug]
+body:
+  - type: textarea
+    id: o-que-aconteceu
+    attributes:
+      label: O que aconteceu?
+      description: Conte o que você fez, o que esperava e o que apareceu na tela.
+    validations:
+      required: true
+  - type: dropdown
+    id: papel
+    attributes:
+      label: Você estava
+      options: [Transmitindo, Assistindo, Os dois]
+    validations:
+      required: true
+  - type: input
+    id: sala
+    attributes:
+      label: Quantas pessoas na sala?
+      placeholder: "4"
+  - type: input
+    id: gpu
+    attributes:
+      label: Placa de vídeo e driver
+      placeholder: RTX 3060, driver 581.xx
+    validations:
+      required: true
+  - type: input
+    id: internet
+    attributes:
+      label: Internet (download/upload)
+      placeholder: 300/150 Mbps fibra
+  - type: input
+    id: versao
+    attributes:
+      label: Versão do SquadView
+      placeholder: v0.1.0
+    validations:
+      required: true
