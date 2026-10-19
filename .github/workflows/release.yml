@@ -52,14 +52,22 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Gerar instalador
-        run: yarn build
+      # Gera o instalador e a assinatura (.sig) usada pela atualização automática.
+      - name: Gerar instalador assinado
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: yarn build:release
+
+      - name: Gerar latest.json (atualização automática)
+        run: node scripts/updater-manifest.mjs ${{ env.TAG }}
 
       - name: Publicar na release
         shell: pwsh
         run: |
-          $files = Get-ChildItem target/release/bundle/nsis/*.exe
-          $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } |
-            Set-Content target/release/bundle/nsis/SHA256SUMS.txt -Encoding utf8
+          $dir = "target/release/bundle/nsis"
+          $exe = Get-ChildItem "$dir/*-setup.exe"
+          $exe | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Set-Content "$dir/SHA256SUMS.txt" -Encoding utf8
           gh release edit $env:TAG --title "SquadView $env:TAG"
-          gh release upload $env:TAG $files.FullName target/release/bundle/nsis/SHA256SUMS.txt --clobber
+          gh release upload $env:TAG $exe.FullName "$($exe.FullName).sig" "$dir/latest.json" "$dir/SHA256SUMS.txt" --clobber

@@ -13,6 +13,7 @@
     "postinstall": "husky",
     "dev": "yarn workspace @squadview/desktop tauri dev",
     "build": "yarn workspace @squadview/desktop tauri build",
+    "build:release": "yarn workspace @squadview/desktop tauri build --config src-tauri/tauri.release.conf.json",
     "format": "prettier --write . && cargo fmt --all",
     "lint": "prettier --check . && yarn lint:js && yarn lint:rs",
     "lint:js": "yarn workspaces foreach -A --exclude squadview run lint",
