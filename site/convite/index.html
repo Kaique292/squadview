@@ -11,6 +11,13 @@
       content="Te chamaram para uma sala. Clique para entrar e assistir a tela da galera."
     />
     <meta name="theme-color" content="#6e4ff6" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SquadView" />
+    <meta property="og:image" content="https://kaique292.github.io/squadview/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://kaique292.github.io/squadview/og.png" />
     <link rel="icon" href="../logo.svg" type="image/svg+xml" />
     <style>
       :root {
@@ -148,7 +155,7 @@
         <a class="button" id="open">Abrir no SquadView</a>
         <div class="fallback" id="fallback">
           <p>Não abriu? Você ainda não tem o SquadView. Baixe, instale e clique em "Abrir no SquadView" de novo.</p>
-          <a class="button secondary" href="https://github.com/Kaique292/squadview/releases/latest">
+          <a class="button secondary" data-download href="https://github.com/Kaique292/squadview/releases/latest">
             Baixar o SquadView para Windows
           </a>
         </div>
@@ -162,6 +169,7 @@
       </div>
       <small>SquadView é gratuito e de código aberto.</small>
     </main>
+    <script src="../download.js"></script>
     <script>
       // Mesmo alfabeto da sinalização: 6 caracteres, sem letras que se confundem (I, L, O, 0, 1).
       const ALPHABET = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
@@ -180,10 +188,13 @@
         const showFallback = () => document.getElementById("fallback").classList.add("show");
         let left = false;
         window.addEventListener("blur", () => (left = true));
-        location.href = deepLink;
-        setTimeout(() => {
-          if (!left) showFallback();
-        }, 1500);
+        // Tenta abrir o app depois de preparar o download (ou em no máximo 1,5 s).
+        Promise.race([window.downloadReady, new Promise((r) => setTimeout(r, 1500))]).then(() => {
+          location.href = deepLink;
+          setTimeout(() => {
+            if (!left) showFallback();
+          }, 1500);
+        });
         open.addEventListener("click", () => setTimeout(showFallback, 1500));
       }
     </script>

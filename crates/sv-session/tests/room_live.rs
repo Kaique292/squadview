@@ -31,12 +31,12 @@ fn url() -> String {
 fn um_amigo_assiste_o_outro_pela_sala() {
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
-    let ana = Room::join(&url(), &code, "Ana", move |u| {
+    let ana = Room::join(&url(), &code, "Ana", None, move |u| {
         let _ = ana_tx.send(u);
     })
     .expect("Ana entra");
     let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
-    let beto = Room::join(&url(), &code, "Beto", move |u| {
+    let beto = Room::join(&url(), &code, "Beto", None, move |u| {
         let _ = beto_tx.send(u);
     })
     .expect("Beto entra");

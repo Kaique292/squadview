@@ -18,11 +18,15 @@ use windows::Win32::Media::Audio::{
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
+use crate::devices::{Flow, open_device};
 use crate::opus::{CHANNELS, SAMPLE_RATE};
 
 /// Maior atraso aceito na fila de reprodução.
 pub const MAX_BUFFERED_MS: usize = 120;
 const MAX_BUFFERED: usize = SAMPLE_RATE as usize * CHANNELS * MAX_BUFFERED_MS / 1000;
+
+/// Volume máximo (200%).
+pub const MAX_VOLUME: f32 = 2.0;
 
 #[derive(Debug, Default)]
 struct Queue {
@@ -39,7 +43,13 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
+    /// Toca na saída padrão do Windows.
     pub fn start() -> windows::core::Result<Self> {
+        Self::start_on(None)
+    }
+
+    /// Toca na saída `device` (ou na padrão, se `None` ou se ela sumiu).
+    pub fn start_on(device: Option<String>) -> windows::core::Result<Self> {
         let queue = Arc::new(Mutex::new(Queue {
             samples: VecDeque::new(),
             volume: 1.0,
@@ -49,7 +59,7 @@ impl AudioPlayer {
         let (q, s) = (queue.clone(), stop.clone());
         let thread = std::thread::Builder::new()
             .name("sv-audio-playback".into())
-            .spawn(move || match open() {
+            .spawn(move || match open(device.as_deref()) {
                 Ok(out) => {
                     let _ = ready_tx.send(Ok(()));
                     out.run(&q, &s);
@@ -82,9 +92,9 @@ impl AudioPlayer {
         push_bounded(&mut q.samples, samples, MAX_BUFFERED);
     }
 
-    /// Volume de 0 (mudo) a 1.
+    /// Volume de 0 (mudo) a 2 (200%, como no Discord).
     pub fn set_volume(&self, volume: f32) {
-        self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, 1.0);
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, MAX_VOLUME);
     }
 }
 
@@ -110,7 +120,8 @@ pub(crate) fn push_bounded(queue: &mut VecDeque<f32>, samples: &[f32], max: usiz
 fn fill(queue: &mut Queue, out: &mut [f32]) {
     let n = out.len().min(queue.samples.len());
     for (dst, src) in out.iter_mut().zip(queue.samples.drain(..n)) {
-        *dst = src * queue.volume;
+        // Acima de 100% o som pode passar do limite: corta em vez de distorcer na placa.
+        *dst = (src * queue.volume).clamp(-1.0, 1.0);
     }
     out[n..].fill(0.0);
 }
@@ -160,12 +171,18 @@ impl Drop for Output {
     }
 }
 
-fn open() -> windows::core::Result<Output> {
+fn open(device: Option<&str>) -> windows::core::Result<Output> {
     // SAFETY: COM iniciado nesta thread; estruturas vivem até o fim das chamadas.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = devices.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let device = match device {
+            Some(id) => open_device(Flow::Output, Some(id))?,
+            // Sem escolha: a saída padrão geral (a mesma de antes, para o som do jogo).
+            None => {
+                let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+                devices.GetDefaultAudioEndpoint(eRender, eConsole)?
+            }
+        };
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         let block_align = CHANNELS as u16 * 4;
         let format = WAVEFORMATEX {
@@ -221,6 +238,18 @@ mod tests {
         fill(&mut q, &mut out);
         assert_eq!(out, [0.5, -0.5, 0.0, 0.0]);
         assert!(q.samples.is_empty());
+    }
+
+    #[test]
+    fn volume_acima_de_100_corta_no_limite() {
+        let mut q = Queue {
+            samples: VecDeque::from(vec![0.3, -0.8]),
+            volume: 2.0,
+        };
+        let mut out = [0.0; 2];
+        fill(&mut q, &mut out);
+        assert!((out[0] - 0.6).abs() < 1e-6);
+        assert_eq!(out[1], -1.0);
     }
 
     #[test]

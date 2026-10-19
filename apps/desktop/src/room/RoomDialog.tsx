@@ -29,6 +29,7 @@ export function RoomDialog(props: {
   const [mode, setMode] = useState<Mode>(props.initialMode ?? "create");
   const [name, setName] = useState(savedName);
   const [code, setCode] = useState(props.initialCode ?? "");
+  const [roomName, setRoomName] = useState("");
   const profile = useAccountStore((s) => s.profile);
 
   function onOpenChange(next: boolean) {
@@ -36,15 +37,20 @@ export function RoomDialog(props: {
     if (next) {
       setMode(props.initialMode ?? "create");
       setCode(props.initialCode ?? "");
+      setRoomName("");
       clearError();
-      // Sem nome salvo: sugere o do Discord.
-      if (!name.trim() && profile) setName(displayName(profile));
+      // Com o Discord vinculado, entra com o nome do perfil (dá para trocar o apelido na sala).
+      if (profile) setName(displayName(profile));
     }
   }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const ok = await join(mode === "join" ? code : null, name);
+    const ok = await join(
+      mode === "join" ? code : null,
+      name,
+      mode === "create" ? roomName.trim() || `Sala de ${name.trim()}` : null,
+    );
     if (ok) setOpen(false);
   }
 
@@ -87,6 +93,20 @@ export function RoomDialog(props: {
       }
     >
       <form id="room-form" onSubmit={submit} className="flex flex-col gap-4 pb-1 text-left">
+        {mode === "create" && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold tracking-wide text-text-muted uppercase">Nome da sala</span>
+            <input
+              value={roomName}
+              onChange={(e) => setRoomName(e.target.value)}
+              maxLength={32}
+              placeholder={name.trim() ? `Sala de ${name.trim()}` : "Ex.: Galera do LoL"}
+              autoFocus
+              className="rounded-md bg-surface-0 px-3 py-2 text-text placeholder:text-text-faint focus:ring-2 focus:ring-brand focus:outline-none"
+            />
+            <span className="text-xs text-text-faint">Dá para mudar depois, no menu da sala.</span>
+          </label>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold tracking-wide text-text-muted uppercase">Seu nome na sala</span>
           <input
@@ -94,7 +114,6 @@ export function RoomDialog(props: {
             onChange={(e) => setName(e.target.value)}
             maxLength={32}
             placeholder="Como a galera te chama"
-            autoFocus={mode === "create"}
             className="rounded-md bg-surface-0 px-3 py-2 text-text placeholder:text-text-faint focus:ring-2 focus:ring-brand focus:outline-none"
           />
         </label>

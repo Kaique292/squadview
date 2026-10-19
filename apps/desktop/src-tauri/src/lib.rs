@@ -110,9 +110,12 @@ pub fn run() {
             preview::set_fullscreen,
             room::room_join,
             room::room_leave,
+            room::room_rename,
+            room::room_set_name,
             room::room_watch,
             room::room_stop_watching,
             room::set_watch_listening,
+            room::set_watch_volume,
             preview::stop_preview,
         ])
         .run(tauri::generate_context!())

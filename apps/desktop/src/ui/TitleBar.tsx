@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import logo from "../assets/logo.svg";
+import { UpdateButton } from "../update/UpdateButton";
 import { inTauri } from "./tauri-env";
 
 /**
@@ -33,6 +34,7 @@ export function TitleBar(props: { title?: string }) {
         {props.title ?? "SquadView"}
       </p>
       <div className="flex h-full">
+        <UpdateButton />
         <WindowButton label="Minimizar" onClick={() => run((w) => w.minimize())}>
           <Minus size={16} />
         </WindowButton>

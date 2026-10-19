@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+  Fonte da imagem de prévia (og.png, 1200×630) que aparece quando o link é colado no Discord,
+  no WhatsApp etc. Para gerar de novo: abra no Edge headless com --window-size=1200,630 e
+  --screenshot (ver docs/desenvolvimento.md, "Imagem de prévia do site").
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 64px;
+        padding: 0 88px;
+        box-sizing: border-box;
+        background:
+          radial-gradient(circle at 85% 20%, rgb(110 79 246 / 0.55), transparent 50%),
+          radial-gradient(circle at 10% 100%, rgb(35 165 90 / 0.25), transparent 45%), #111214;
+        color: #f2f3f5;
+        font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      }
+      .logo {
+        flex: none;
+        width: 260px;
+        height: 260px;
+        padding: 44px;
+        box-sizing: border-box;
+        border-radius: 72px;
+        background: #6e4ff6;
+        box-shadow: 0 30px 80px rgb(110 79 246 / 0.45);
+      }
+      .logo img {
+        width: 100%;
+        height: 100%;
+      }
+      h1 {
+        margin: 0;
+        font-size: 92px;
+        font-weight: 800;
+        letter-spacing: -2px;
+      }
+      p {
+        margin: 12px 0 0;
+        font-size: 38px;
+        line-height: 1.25;
+        color: #b5bac1;
+      }
+      .tags {
+        display: flex;
+        gap: 12px;
+        margin-top: 36px;
+      }
+      .tags span {
+        padding: 10px 20px;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 0.08);
+        font-size: 24px;
+        font-weight: 600;
+      }
+      .live {
+        background: #f23f43 !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="logo"><img src="../logo.svg" alt="" /></div>
+    <div>
+      <h1>SquadView</h1>
+      <p>Compartilhe a tela do jogo com a galera da call, direto de PC para PC.</p>
+      <div class="tags">
+        <span class="live">AO VIVO</span>
+        <span>1440p60</span>
+        <span>Sem servidor</span>
+        <span>Grátis</span>
+      </div>
+    </div>
+  </body>
+</html>

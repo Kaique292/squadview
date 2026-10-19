@@ -23,6 +23,8 @@ use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap};
 pub enum RoomUpdate {
     /// Lista completa de membros (nós primeiro).
     Members(Vec<Member>),
+    /// Nome da sala (`None`: sem nome; a interface mostra o código).
+    RoomName(Option<String>),
     /// A conexão com quem pedimos para assistir abriu.
     WatchReady {
         member: Member,
@@ -33,7 +35,11 @@ pub enum RoomUpdate {
     WatchFailed { member_id: String, reason: String },
     /// Erro da sala (cheia, versão diferente...).
     Error(String),
-    /// Perdemos a conexão com a sinalização.
+    /// A conexão com a sinalização caiu; tentando voltar para a sala.
+    Reconnecting,
+    /// Voltamos para a sala depois de uma queda.
+    Reconnected,
+    /// Perdemos a conexão com a sinalização e não deu para voltar.
     Disconnected,
 }
 
@@ -41,6 +47,7 @@ impl std::fmt::Debug for RoomUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Members(m) => f.debug_tuple("Members").field(m).finish(),
+            Self::RoomName(n) => f.debug_tuple("RoomName").field(n).finish(),
             Self::WatchReady { member, .. } => f.debug_struct("WatchReady").field("member", member).finish(),
             Self::WatchFailed { member_id, reason } => f
                 .debug_struct("WatchFailed")
@@ -48,6 +55,8 @@ impl std::fmt::Debug for RoomUpdate {
                 .field("reason", reason)
                 .finish(),
             Self::Error(e) => f.debug_tuple("Error").field(e).finish(),
+            Self::Reconnecting => f.write_str("Reconnecting"),
+            Self::Reconnected => f.write_str("Reconnected"),
             Self::Disconnected => f.write_str("Disconnected"),
         }
     }
@@ -55,10 +64,19 @@ impl std::fmt::Debug for RoomUpdate {
 
 type OnUpdate = Arc<dyn Fn(RoomUpdate) + Send + Sync>;
 
+/// Quanto esperar a resposta de quem transmite a um pedido para assistir.
+const WATCH_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+/// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total).
+const RECONNECT_DELAYS_S: [u64; 8] = [1, 2, 4, 8, 15, 30, 30, 30];
+
 struct Inner {
-    client: RoomClient,
+    /// Trocado quando a sala reconecta depois de uma queda.
+    client: Mutex<RoomClient>,
+    signaling_url: String,
+    code: String,
     peer: Peer,
     me: Mutex<Member>,
+    room_name: Mutex<Option<String>>,
     members: Mutex<BTreeMap<String, Member>>,
     broadcaster: Broadcaster,
     /// Formato do que estamos transmitindo (None: não estamos ao vivo ou o encoder ainda não começou).
@@ -88,6 +106,7 @@ impl Room {
         signaling_url: &str,
         code: &str,
         name: &str,
+        room_name: Option<&str>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let runtime = Arc::new(
@@ -103,22 +122,25 @@ impl Room {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
                 .map_err(|e| format!("rede indisponível: {e}"))?;
-            let (client, mut events) = RoomClient::join(signaling_url, code, name).await?;
+            let (client, mut events) = RoomClient::join(signaling_url, code, name, room_name).await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
-                Some(WireEvent::Joined { you, members }) => (you, members),
+                Some(WireEvent::Joined { you, members, room }) => (you, members, room),
                 Some(WireEvent::Error(code)) => return Err(error_message(&code).to_owned()),
                 _ => return Err("o serviço de salas não respondeu".to_owned()),
             };
-            let (you, members) = me;
+            let (you, members, room) = me;
             let inner = Arc::new(Inner {
-                client,
+                client: Mutex::new(client),
+                signaling_url: signaling_url.to_owned(),
+                code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
                     id: you,
                     name: name.to_owned(),
                     live: false,
                 }),
+                room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
                 broadcaster: Broadcaster::new(),
                 stream: Mutex::new(None),
@@ -130,7 +152,8 @@ impl Room {
         })?;
 
         inner.publish_members();
-        runtime.spawn(handle_events(inner.clone(), events));
+        (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
+        runtime.spawn(run_session(inner.clone(), events));
         runtime.spawn(accept_viewers(inner.clone()));
         Ok(Self {
             runtime,
@@ -141,6 +164,23 @@ impl Room {
 
     pub fn code(&self) -> &str {
         &self.code
+    }
+
+    /// Nome da sala, se ela tiver um.
+    pub fn room_name(&self) -> Option<String> {
+        lock(&self.inner.room_name).clone()
+    }
+
+    /// Renomeia a sala para todos. A confirmação volta como [`RoomUpdate::RoomName`].
+    pub fn rename_room(&self, name: &str) {
+        lock(&self.inner.client).set_room_name(name);
+    }
+
+    /// Troca o nosso apelido na sala.
+    pub fn set_name(&self, name: &str) {
+        lock(&self.inner.me).name = name.to_owned();
+        lock(&self.inner.client).set_name(name);
+        self.inner.publish_members();
     }
 
     /// Runtime da rede: [`crate::RemoteView::start`] precisa rodar dentro dele.
@@ -159,7 +199,7 @@ impl Room {
     pub fn stream_started(&self, keyframes: KeyframeHandle) {
         *lock(&self.inner.keyframes) = Some(keyframes);
         lock(&self.inner.me).live = true;
-        self.inner.client.set_live(true);
+        lock(&self.inner.client).set_live(true);
         self.inner.publish_members();
     }
 
@@ -169,7 +209,7 @@ impl Room {
         *lock(&self.inner.stream) = None;
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
-        self.inner.client.set_live(false);
+        lock(&self.inner.client).set_live(false);
         self.inner.publish_members();
     }
 
@@ -177,11 +217,36 @@ impl Room {
     /// [`RoomUpdate::WatchFailed`].
     pub fn watch(&self, member_id: &str) {
         *lock(&self.inner.pending_watch) = Some(member_id.to_owned());
+        // Sem resposta a tempo (quem transmite saiu, caiu ou tem um app antigo): desiste e avisa.
+        let inner = self.inner.clone();
+        let id = member_id.to_owned();
+        self.runtime.spawn(async move {
+            tokio::time::sleep(WATCH_ANSWER_TIMEOUT).await;
+            let expired = {
+                let mut pending = lock(&inner.pending_watch);
+                let expired = pending.as_deref() == Some(id.as_str());
+                if expired {
+                    *pending = None;
+                }
+                expired
+            };
+            if expired {
+                (inner.on_update)(RoomUpdate::WatchFailed {
+                    member_id: id,
+                    reason: "quem transmite não respondeu. Tente de novo em instantes.".into(),
+                });
+            }
+        });
         let signal = Signal::WatchRequest {
             candidates: self.inner.peer.candidates().to_vec(),
             fingerprint: self.inner.peer.fingerprint().to_owned(),
         };
-        self.inner.client.signal(member_id, &signal);
+        lock(&self.inner.client).signal(member_id, &signal);
+    }
+
+    /// Como o nosso roteador mapeia portas (para o registro e para explicar falhas de conexão).
+    pub fn nat(&self) -> sv_net::NatMapping {
+        self.inner.peer.nat()
     }
 
     /// Quantos amigos estão assistindo a gente.
@@ -231,7 +296,7 @@ impl Inner {
                         reason: "Não está transmitindo agora.".into(),
                     },
                 };
-                self.client.signal(&from, &reply);
+                lock(&self.client).signal(&from, &reply);
             }
             Signal::WatchAccept {
                 candidates,
@@ -259,7 +324,7 @@ impl Inner {
                         }),
                         Err(e) => (inner.on_update)(RoomUpdate::WatchFailed {
                             member_id: from,
-                            reason: e.to_string(),
+                            reason: connect_failure(&e, inner.peer.nat()),
                         }),
                     }
                 });
@@ -276,10 +341,25 @@ impl Inner {
     }
 }
 
+/// Explica por que não deu para conectar. Se o nosso NAT é simétrico, a causa é quase certa.
+fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping) -> String {
+    match (error, nat) {
+        (sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric) => {
+            "não deu para conectar direto: a sua internet troca de porta a cada conexão (NAT simétrico,              comum em CGNAT de operadora e em 4G). Tente por outra rede, como o roteador de casa ou o              celular. A ponte por outro membro da sala chega numa próxima versão."
+                .into()
+        }
+        _ => error.to_string(),
+    }
+}
+
 async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
     while let Some(event) = events.recv().await {
         match event {
             WireEvent::Joined { .. } => {}
+            WireEvent::RoomRenamed(name) => {
+                *lock(&inner.room_name) = Some(name.clone());
+                (inner.on_update)(RoomUpdate::RoomName(Some(name)));
+            }
             WireEvent::MemberJoined(m) | WireEvent::MemberUpdated(m) => {
                 lock(&inner.members).insert(m.id.clone(), m);
                 inner.publish_members();
@@ -290,12 +370,61 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
             }
             WireEvent::Signal { from, signal } => inner.on_signal(from, signal),
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
-            WireEvent::Disconnected => {
-                (inner.on_update)(RoomUpdate::Disconnected);
-                return;
-            }
+            WireEvent::Disconnected => return,
         }
     }
+}
+
+/// Ouve a sala; se a sinalização cair, volta para ela e continua ouvindo.
+async fn run_session(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
+    loop {
+        handle_events(inner.clone(), events).await;
+        match reconnect(&inner).await {
+            Some(next) => events = next,
+            None => return,
+        }
+    }
+}
+
+/// A sinalização caiu: entra de novo na mesma sala, com o mesmo nome. As conexões QUIC (quem
+/// assiste a gente e quem a gente assiste) não dependem dela e continuam. `None` se desistiu.
+async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedReceiver<WireEvent>> {
+    (inner.on_update)(RoomUpdate::Reconnecting);
+    for delay in RECONNECT_DELAYS_S {
+        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        let (name, live) = {
+            let me = lock(&inner.me);
+            (me.name.clone(), me.live)
+        };
+        let room_name = lock(&inner.room_name).clone();
+        let Ok((client, mut events)) =
+            RoomClient::join(&inner.signaling_url, &inner.code, &name, room_name.as_deref()).await
+        else {
+            continue;
+        };
+        match events.recv().await {
+            Some(WireEvent::Joined { you, members, room }) => {
+                *lock(&inner.client) = client;
+                lock(&inner.me).id = you;
+                *lock(&inner.members) = members.into_iter().map(|m| (m.id.clone(), m)).collect();
+                if room.is_some() {
+                    *lock(&inner.room_name) = room;
+                }
+                if live {
+                    lock(&inner.client).set_live(true);
+                }
+                inner.publish_members();
+                (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
+                (inner.on_update)(RoomUpdate::Reconnected);
+                return Some(events);
+            }
+            // Sala cheia ou versão diferente: não adianta insistir.
+            Some(WireEvent::Error(code)) if code != "rate-limited" => break,
+            _ => continue,
+        }
+    }
+    (inner.on_update)(RoomUpdate::Disconnected);
+    None
 }
 
 async fn accept_viewers(inner: Arc<Inner>) {

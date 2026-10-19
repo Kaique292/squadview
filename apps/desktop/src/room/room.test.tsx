@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import { App } from "../App";
 import { DEFAULT_QUALITY, type StreamStats, useStreamStore } from "../stream/stream-store";
@@ -34,6 +34,8 @@ beforeEach(async () => {
   localStorage.clear();
   useRoomStore.setState({
     code: null,
+    roomName: null,
+    reconnecting: false,
     members: [],
     joining: false,
     joinError: null,
@@ -58,7 +60,10 @@ describe("criar e entrar em sala", () => {
 
     fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: " Kaique " } });
     fireEvent.click(submit);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_join", { code: null, name: " Kaique " }));
+    // Sem nome digitado, a sala ganha o nome padrão "Sala de <nome>".
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_join", { code: null, name: " Kaique ", roomName: "Sala de Kaique" }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     emit("room-members", [ME]);
@@ -80,7 +85,9 @@ describe("criar e entrar em sala", () => {
     fireEvent.change(code, { target: { value: "b8rj2q" } });
     expect(code).toHaveValue("B8RJ2Q");
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_join", { code: "B8RJ2Q", name: "Beto" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_join", { code: "B8RJ2Q", name: "Beto", roomName: null }),
+    );
   });
 
   it("mostra o erro da sala e continua com o modal aberto", async () => {
@@ -146,6 +153,29 @@ describe("na sala", () => {
     fireEvent.click(screen.getByRole("button", { name: "Parar de assistir" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_stop_watching"));
     expect(screen.queryByRole("region", { name: "Assistindo Ana" })).not.toBeInTheDocument();
+  });
+
+  it("ajusta o volume de quem assiste até 200%, como no Discord, e lembra", async () => {
+    localStorage.removeItem("squadview.volume");
+    useRoomStore.setState({ watchVolume: 100 });
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("watch-started", ANA);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1 }));
+
+    const slider = screen.getByRole("slider", { name: "Volume da transmissão" });
+    expect(slider).toHaveAttribute("max", "200");
+    fireEvent.change(slider, { target: { value: "150" } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1.5 }));
+    expect(screen.getByText("150%")).toBeInTheDocument();
+    expect(localStorage.getItem("squadview.volume")).toBe("150");
+  });
+
+  it("mexer no volume com o som desligado liga o som", async () => {
+    useRoomStore.setState({ watching: ANA, members: [ME, ANA], watchListening: false, watchVolume: 0 });
+    render(<App />);
+    fireEvent.change(screen.getByRole("slider", { name: "Volume da transmissão" }), { target: { value: "40" } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: true }));
   });
 
   it("quando a transmissão do amigo acaba, sai do vídeo e explica", () => {
@@ -254,6 +284,87 @@ describe("na sala", () => {
     expect(screen.getByRole("contentinfo")).toHaveTextContent("Assistindo Ana");
     fireEvent.click(screen.getByRole("button", { name: "Silenciar a sala" }));
     expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: false });
+  });
+});
+
+describe("nome da sala e apelido", () => {
+  beforeEach(() => useRoomStore.setState({ code: "B8RJ2Q", joinedAt: Date.now() }));
+
+  it("cria a sala com o nome escolhido e mostra o nome no lugar do código", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "room_join" ? { code: "B8RJ2Q", roomName: "Galera do LoL" } : undefined),
+    );
+    useRoomStore.setState({ code: null, members: [] });
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Criar sala" })[1]);
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Kaique" } });
+    fireEvent.change(screen.getByPlaceholderText("Sala de Kaique"), { target: { value: "Galera do LoL" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Criar sala" }).at(-1)!);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_join", { code: null, name: "Kaique", roomName: "Galera do LoL" }),
+    );
+    emit("room-members", [ME]);
+    expect(await screen.findByRole("button", { name: /Galera do LoL/ })).toBeInTheDocument();
+  });
+
+  it("renomeia a sala pelo menu e atualiza quando alguém renomeia", async () => {
+    useRoomStore.setState({ roomName: "Sala 1" });
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sala 1/ }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Editar nome da sala/ }));
+    const input = await screen.findByRole("textbox", { name: "Nome da sala" });
+    fireEvent.change(input, { target: { value: "Squad" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_rename", { name: "Squad" }));
+
+    emit("room-name", "Squad");
+    expect(await screen.findByRole("button", { name: /Squad/ })).toBeInTheDocument();
+  });
+
+  it("troca o apelido pelo botão direito no próprio nome", async () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const list = screen.getByRole("list", { name: "Membros da sala" });
+    fireEvent.contextMenu(within(list).getByText(ME.name));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Alterar apelido/ }));
+    const input = await screen.findByRole("textbox", { name: "Apelido" });
+    fireEvent.change(input, { target: { value: "K.A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_set_name", { name: "K.A" }));
+  });
+
+  it("no amigo ao vivo, o botão direito oferece assistir", async () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    fireEvent.contextMenu(within(screen.getByRole("list", { name: "Membros da sala" })).getByText(ANA.name));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Assistir a transmissão/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_watch", { memberId: ANA.id }));
+  });
+});
+
+describe("queda da conexão com a sala", () => {
+  beforeEach(() => useRoomStore.setState({ code: "B8RJ2Q", joinedAt: Date.now() }));
+
+  it("avisa que está reconectando e quando volta", async () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("room-connection", "reconnecting");
+    expect(await screen.findByText("Reconectando…")).toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "warning", title: "Reconectando" });
+    emit("room-connection", "connected");
+    expect(screen.queryByText("Reconectando…")).not.toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: "De volta à sala." });
+  });
+
+  it("se não der para voltar, sai da sala e explica", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("room-connection", "lost");
+    expect(useRoomStore.getState().code).toBeNull();
+    expect(screen.getByRole("button", { name: "Entrar com código" })).toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "error", title: "Conexão perdida" });
   });
 });
 

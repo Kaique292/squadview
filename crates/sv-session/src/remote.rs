@@ -146,8 +146,22 @@ impl RemoteView {
         }
     }
 
+    /// Volume do som do amigo, de 0 a 2 (200%).
+    pub fn set_volume(&self, volume: f32) {
+        if let Some(audio) = lock(&self.state.audio).as_ref() {
+            audio.set_volume(volume);
+        }
+    }
+
     pub fn request_keyframe(&self) {
         self.receiver.request_keyframe();
+    }
+
+    /// Foto do último quadro do vídeo, para a animação de saída. Ver [`VideoViewer::snapshot`].
+    pub fn snapshot(&self) -> Option<sv_capture::Thumbnail> {
+        lock(&self.state.viewer)
+            .as_ref()?
+            .snapshot(crate::viewer::SNAPSHOT_MAX, std::time::Duration::from_millis(400))
     }
 }
 

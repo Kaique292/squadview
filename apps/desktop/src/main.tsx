@@ -10,7 +10,7 @@ import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
 import { SPLASH_EVENT, boot } from "./splash/boot";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { toast } from "./ui/toast-store";
-import { useUpdateStore } from "./update/update-store";
+import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
 
 // Vidro antes do primeiro desenho, para a janela já abrir com a intensidade salva.
 applyGlass(useAppearanceStore.getState().glass);
@@ -35,6 +35,15 @@ if ("__TAURI_INTERNALS__" in window) {
     progress: (p) => void emitTo("splash", SPLASH_EVENT, p).catch(() => {}),
     ready: () => invoke("app_ready"),
   });
+  // Com o app aberto, procura versão nova de hora em hora (o botão verde aparece na barra de título).
+  if (!import.meta.env.DEV) {
+    setInterval(() => void useUpdateStore.getState().checkForUpdate(), CHECK_EVERY_MS);
+  }
+}
+
+// Só em desenvolvimento: cenas de exemplo para as capturas do README (`#demo=sala`).
+if (import.meta.env.DEV && location.hash.startsWith("#demo=")) {
+  void import("./dev/demo").then((m) => m.runDemo(location.hash.slice("#demo=".length)));
 }
 
 // Só em desenvolvimento: mexer no app pelo console (`__sv.toast.error("teste")`, `__sv.room.setState(...)`).
@@ -46,6 +55,7 @@ if (import.meta.env.DEV) {
       stream: useStreamStore,
       appearance: useAppearanceStore,
       account: useAccountStore,
+      update: useUpdateStore,
     },
   });
 }

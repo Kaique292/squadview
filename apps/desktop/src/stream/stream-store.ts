@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { playVideoExit } from "../ui/dissolve-effect";
 
 /** Espelha `sv_capture::CaptureSource` (serde: { kind, handle }). */
 export type CaptureSource = { kind: "monitor" | "window"; handle: number };
@@ -165,6 +166,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   async stop() {
     await get().setFullscreen(false);
+    // Antes de fechar o vídeo, o Rust manda a foto do último quadro (evento `video-exit`).
     await invoke("stop_preview");
     set({ status: "idle", stats: null });
   },
@@ -203,6 +205,8 @@ export async function listenToStreamEvents() {
   };
   window.addEventListener("keydown", onKey);
   const unlistenSystem = await listen<SystemLoad>("system-load", (e) => useStreamStore.setState({ system: e.payload }));
+  // Foto do último quadro, logo antes de um vídeo (o nosso ou o de quem assistimos) fechar.
+  const unlistenExit = await listen<string>("video-exit", (e) => playVideoExit(e.payload));
   try {
     useStreamStore.setState({ logPath: await invoke<string | null>("session_log_path") });
   } catch {
@@ -212,6 +216,7 @@ export async function listenToStreamEvents() {
     unlistenStats();
     unlistenEnded();
     unlistenSystem();
+    unlistenExit();
     unlistenNotice();
     unlistenFullscreen();
     window.removeEventListener("keydown", onKey);

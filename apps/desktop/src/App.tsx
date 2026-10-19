@@ -3,14 +3,14 @@ import { RoomDialog } from "./room/RoomDialog";
 import { RoomSidebar, UserDock } from "./room/RoomSidebar";
 import { ServerRail } from "./room/ServerRail";
 import { WatchView } from "./room/WatchView";
-import { useRoomStore } from "./room/room-store";
+import { roomTitle, useRoomStore } from "./room/room-store";
 import { StreamDialog } from "./stream/StreamDialog";
 import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
+import { Dissolve } from "./ui/Dissolve";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
-import { UpdateBanner } from "./update/UpdateBanner";
 
 /**
  * Layout principal, na hierarquia do Discord: barra de título, barra de salas, barra lateral com
@@ -21,6 +21,7 @@ export function App() {
   const fullscreen = useStreamStore((s) => s.fullscreen);
   const watching = useRoomStore((s) => s.watching);
   const code = useRoomStore((s) => s.code);
+  const roomName = useRoomStore((s) => s.roomName);
   usePresenceSync();
 
   return (
@@ -32,8 +33,9 @@ export function App() {
       }`}
     >
       <InvitePrompt />
+      <Dissolve />
       <Toaster anchor={(watching || live) && !fullscreen ? "sidebar" : "center"} />
-      {!fullscreen && <TitleBar title={code ? `Sala ${code}` : undefined} />}
+      {!fullscreen && <TitleBar title={code ? roomTitle(code, roomName) : undefined} />}
       <ServerRail hidden={fullscreen} />
       {/* Moldura da lateral: o canto arredondado e a borda fina do Discord. */}
       {!fullscreen && (
@@ -45,7 +47,6 @@ export function App() {
       <div
         className={`z-[1] flex min-h-0 min-w-0 flex-col ${fullscreen ? "" : "col-3 row-[2/4] border-t border-white/[0.06]"}`}
       >
-        <UpdateBanner />
         <main
           className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
             fullscreen ? "bg-surface-2 p-0" : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`

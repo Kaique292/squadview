@@ -60,7 +60,7 @@ Padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/), conf
 
 ### Escopos permitidos
 
-`core`, `capture`, `encode`, `media`, `net`, `mesh`, `signal`, `ui`, `app`, `docs`, `ci`, `deps`, `release`. O escopo é opcional, mas recomendado.
+`core`, `capture`, `encode`, `media`, `net`, `mesh`, `signal`, `ui`, `app`, `docs`, `ci`, `deps`, `deps-dev`, `release`. O escopo é opcional, mas recomendado. `deps-dev` é o que o Dependabot usa para dependências de desenvolvimento.
 
 ### Exemplos
 
@@ -73,7 +73,7 @@ docs: explica como liberar o firewall
 
 ## Autoria única
 
-O projeto tem **um único autor por commit**. Commits com o trailer `Co-authored-by:` são **recusados** pela regra `no-co-author` do commitlint, tanto no hook local quanto no CI. Isso vale para commits feitos com ajuda de ferramentas de IA: a configuração do Claude no projeto (`.claude/settings.json`) já desliga a assinatura automática.
+O projeto tem **um único autor por commit**. Commits com o trailer `Co-authored-by:` são **recusados** pela regra `no-co-author` do commitlint, tanto no hook local quanto no CI. Isso vale para commits feitos com ajuda de ferramentas de IA: a configuração do Claude no projeto (`.claude/settings.json`) já desliga a assinatura automática. A única exceção são robôs do GitHub (`Co-authored-by: dependabot[bot] <…>`), que o próprio GitHub acrescenta ao fazer squash de um PR do Dependabot.
 
 ## Versionamento
 

@@ -12,6 +12,20 @@ export interface Member {
 }
 
 const NAME_KEY = "squadview.nome";
+const VOLUME_KEY = "squadview.volume";
+/** Volume máximo de quem assistimos, em % (como no Discord). */
+export const MAX_WATCH_VOLUME = 200;
+
+function savedVolume(): number {
+  try {
+    const v = Number(localStorage.getItem(VOLUME_KEY));
+    return localStorage.getItem(VOLUME_KEY) === null || !Number.isFinite(v)
+      ? 100
+      : Math.min(MAX_WATCH_VOLUME, Math.max(0, Math.round(v)));
+  } catch {
+    return 100;
+  }
+}
 
 /** Nome usado da última vez (só neste PC). */
 export function savedName(): string {
@@ -30,8 +44,29 @@ function saveName(name: string) {
   }
 }
 
+/** Nome que aparece para a sala: o que deram para ela ou, sem nome, o código. */
+export function roomTitle(code: string, name: string | null | undefined): string {
+  return name?.trim() || `Sala ${code}`;
+}
+
+/** Até 3 iniciais do nome da sala, para o ícone na barra de salas ("Galera do LoL" → "GDL"). */
+export function roomInitials(code: string, name: string | null | undefined): string {
+  const words = name?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (words.length === 0) return code.slice(0, 3);
+  if (words.length === 1) return [...words[0]].slice(0, 3).join("").toUpperCase();
+  return words
+    .slice(0, 3)
+    .map((w) => [...w][0])
+    .join("")
+    .toUpperCase();
+}
+
 interface RoomState {
   code: string | null;
+  /** Nome da sala (`null`: sem nome, aparece o código). */
+  roomName: string | null;
+  /** A ligação com a sala caiu e o app está tentando voltar. */
+  reconnecting: boolean;
   /** Quando entramos na sala (ms), para o tempo conectado. */
   joinedAt: number | null;
   /** Membros da sala, nós primeiro. */
@@ -44,10 +79,15 @@ interface RoomState {
   watching: Member | null;
   watchStats: StreamStats | null;
   watchListening: boolean;
+  /** Volume de quem assistimos, de 0 a 200 (%). Fica salvo neste PC. */
+  watchVolume: number;
+  setWatchVolume: (volume: number) => Promise<void>;
   /** Código de um convite por link, esperando a pessoa confirmar a entrada. */
   invite: string | null;
   setInvite: (code: string | null) => void;
-  join: (code: string | null, name: string) => Promise<boolean>;
+  join: (code: string | null, name: string, roomName?: string | null) => Promise<boolean>;
+  renameRoom: (name: string) => Promise<void>;
+  setNickname: (name: string) => Promise<void>;
   leave: () => Promise<void>;
   watch: (member: Member) => Promise<void>;
   stopWatching: () => Promise<void>;
@@ -57,7 +97,10 @@ interface RoomState {
 
 export const useRoomStore = create<RoomState>((set, get) => ({
   code: null,
+  roomName: null,
+  reconnecting: false,
   invite: null,
+  watchVolume: savedVolume(),
   joinedAt: null,
   members: [],
   joining: false,
@@ -67,12 +110,36 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   watchStats: null,
   watchListening: true,
 
-  async join(code, name) {
+  async renameRoom(name) {
+    try {
+      await invoke("room_rename", { name });
+    } catch (e) {
+      toast.error(String(e), "Nome da sala");
+    }
+  },
+
+  async setNickname(name) {
+    try {
+      await invoke("room_set_name", { name });
+      saveName(name.trim());
+    } catch (e) {
+      toast.error(String(e), "Apelido");
+    }
+  },
+
+  async join(code, name, roomName = null) {
     set({ joining: true, joinError: null });
     try {
-      const info = await invoke<{ code: string }>("room_join", { code, name });
+      const info = await invoke<{ code: string; roomName?: string | null }>("room_join", { code, name, roomName });
       saveName(name.trim());
-      set({ code: info.code, joinedAt: Date.now(), joining: false, watching: null, watchStats: null });
+      set({
+        code: info.code,
+        roomName: info.roomName ?? null,
+        joinedAt: Date.now(),
+        joining: false,
+        watching: null,
+        watchStats: null,
+      });
       toast.success(`Mande o código ${info.code} para a galera entrar.`, "Você está na sala");
       return true;
     } catch (e) {
@@ -91,7 +158,15 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 
   async leave() {
     await invoke("room_leave").catch(() => {});
-    set({ code: null, joinedAt: null, members: [], watching: null, watchStats: null, pendingWatch: null });
+    set({
+      code: null,
+      roomName: null,
+      joinedAt: null,
+      members: [],
+      watching: null,
+      watchStats: null,
+      pendingWatch: null,
+    });
   },
 
   async watch(member) {
@@ -108,6 +183,17 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   async stopWatching() {
     await invoke("room_stop_watching").catch(() => {});
     set({ watching: null, watchStats: null });
+  },
+
+  async setWatchVolume(volume) {
+    const v = Math.min(MAX_WATCH_VOLUME, Math.max(0, Math.round(volume)));
+    set({ watchVolume: v });
+    try {
+      localStorage.setItem(VOLUME_KEY, String(v));
+    } catch {
+      // Sem armazenamento: vale só nesta sessão.
+    }
+    await invoke("set_watch_volume", { volume: v / 100 }).catch(() => {});
   },
 
   async setWatchListening(listening) {
@@ -128,6 +214,28 @@ export function useMe() {
 /** Liga os eventos da sala vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
 export async function listenToRoomEvents() {
   const offs = await Promise.all([
+    listen<string | null>("room-name", (e) => useRoomStore.setState({ roomName: e.payload })),
+    listen<"reconnecting" | "connected" | "lost">("room-connection", (e) => {
+      if (e.payload === "reconnecting") {
+        useRoomStore.setState({ reconnecting: true });
+        toast.warning("A conexão com a sala caiu. Tentando voltar…", "Reconectando");
+      } else if (e.payload === "connected") {
+        useRoomStore.setState({ reconnecting: false });
+        toast.success("De volta à sala.", "Reconectado");
+      } else {
+        useRoomStore.setState({
+          code: null,
+          roomName: null,
+          reconnecting: false,
+          joinedAt: null,
+          members: [],
+          watching: null,
+          watchStats: null,
+          pendingWatch: null,
+        });
+        toast.error("Não deu para voltar para a sala. Entre de novo pelo código ou pelo link.", "Conexão perdida");
+      }
+    }),
     listen<Member[]>("room-members", (e) => {
       const members = e.payload;
       const { watching } = useRoomStore.getState();
@@ -137,6 +245,8 @@ export async function listenToRoomEvents() {
     listen<string>("room-error", (e) => toast.error(e.payload, "Sala")),
     listen<Member>("watch-started", (e) => {
       useRoomStore.setState({ watching: e.payload, pendingWatch: null, watchStats: null, watchListening: true });
+      // O volume escolhido vale para qualquer transmissão que a gente assistir.
+      void invoke("set_watch_volume", { volume: useRoomStore.getState().watchVolume / 100 }).catch(() => {});
       toast.success(`Conectado direto com ${e.payload.name}.`, "Assistindo");
     }),
     listen<{ memberId: string; reason: string }>("watch-ended", (e) => {

@@ -2,11 +2,345 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <title>SquadView</title>
-    <meta http-equiv="refresh" content="0; url=https://github.com/Kaique292/squadview" />
-    <link rel="canonical" href="https://github.com/Kaique292/squadview" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SquadView: compartilhe a tela do jogo com a galera da call</title>
+    <meta
+      name="description"
+      content="Compartilhe a tela do jogo com a galera da call em até 1440p60, direto de PC para PC, sem servidor de mídia. NVIDIA e AMD, áudio só do jogo, login e status no Discord. Grátis e open source."
+    />
+    <link rel="canonical" href="https://kaique292.github.io/squadview/" />
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#6e4ff6" />
+
+    <!-- Prévia ao colar o link (Discord, WhatsApp, X...). A imagem precisa de URL absoluta. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SquadView" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:url" content="https://kaique292.github.io/squadview/" />
+    <meta property="og:title" content="SquadView: compartilhe a tela do jogo com a galera" />
+    <meta
+      property="og:description"
+      content="Até 1440p60, direto de PC para PC, sem servidor. NVIDIA e AMD, áudio só do jogo, status no Discord. Grátis e open source."
+    />
+    <meta property="og:image" content="https://kaique292.github.io/squadview/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="SquadView: compartilhe a tela do jogo com a galera da call" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://kaique292.github.io/squadview/og.png" />
+
+    <style>
+      :root {
+        --bg: #111214;
+        --card: #1e1f22;
+        --inset: #2b2d31;
+        --text: #f2f3f5;
+        --muted: #b5bac1;
+        --faint: #80848e;
+        --brand: #6e4ff6;
+        --brand-hover: #5b3be0;
+        --live: #f23f43;
+        --online: #23a55a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 80% 0%, rgb(110 79 246 / 0.35), transparent 45%),
+          radial-gradient(circle at 0% 60%, rgb(35 165 90 / 0.12), transparent 40%), var(--bg);
+        color: var(--text);
+        font-family:
+          "Segoe UI Variable",
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        line-height: 1.55;
+      }
+      a {
+        color: inherit;
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        font-size: 20px;
+        text-decoration: none;
+      }
+      .brand img {
+        width: 36px;
+        height: 36px;
+        padding: 6px;
+        border-radius: 12px;
+        background: var(--brand);
+      }
+      nav a {
+        margin-left: 20px;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 15px;
+      }
+      nav a:hover {
+        color: var(--text);
+      }
+      .hero {
+        padding: 56px 0 32px;
+        text-align: center;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 0.06);
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .pill b {
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: var(--live);
+        color: #fff;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      h1 {
+        margin: 20px auto 12px;
+        max-width: 760px;
+        font-size: clamp(34px, 6vw, 58px);
+        line-height: 1.08;
+        letter-spacing: -1px;
+      }
+      .lead {
+        margin: 0 auto;
+        max-width: 640px;
+        color: var(--muted);
+        font-size: 19px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 28px;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 13px 22px;
+        border-radius: 8px;
+        background: var(--brand);
+        color: #fff;
+        font-weight: 600;
+        text-decoration: none;
+        transition: background 150ms;
+      }
+      .button:hover {
+        background: var(--brand-hover);
+      }
+      .button.secondary {
+        background: var(--inset);
+      }
+      .button.secondary:hover {
+        background: #404249;
+      }
+      .small {
+        margin-top: 12px;
+        color: var(--faint);
+        font-size: 13px;
+      }
+      .shot {
+        margin: 40px auto 0;
+        max-width: 960px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid rgb(255 255 255 / 0.08);
+        box-shadow: 0 30px 90px rgb(0 0 0 / 0.55);
+      }
+      .shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      section {
+        padding: 56px 0 8px;
+      }
+      h2 {
+        margin: 0 0 20px;
+        font-size: 28px;
+        text-align: center;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        padding: 20px;
+        border-radius: 12px;
+        background: var(--card);
+        border: 1px solid rgb(255 255 255 / 0.05);
+      }
+      .card .icon {
+        font-size: 24px;
+      }
+      .card h3 {
+        margin: 8px 0 6px;
+        font-size: 17px;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      ol.steps {
+        max-width: 640px;
+        margin: 0 auto;
+        padding-left: 22px;
+        color: var(--muted);
+        font-size: 17px;
+      }
+      ol.steps li {
+        margin-bottom: 10px;
+      }
+      ol.steps b {
+        color: var(--text);
+      }
+      footer {
+        margin-top: 64px;
+        padding: 28px 0 40px;
+        border-top: 1px solid rgb(255 255 255 / 0.06);
+        color: var(--faint);
+        font-size: 14px;
+        text-align: center;
+      }
+      footer a {
+        color: var(--muted);
+      }
+      @media (max-width: 560px) {
+        nav {
+          display: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <p><a href="https://github.com/Kaique292/squadview">SquadView no GitHub</a></p>
+    <div class="wrap">
+      <header>
+        <a class="brand" href="./"><img src="logo.svg" alt="" />SquadView</a>
+        <nav>
+          <a href="#recursos">Recursos</a>
+          <a href="#como-usar">Como usar</a>
+          <a href="https://github.com/Kaique292/squadview">GitHub</a>
+        </nav>
+      </header>
+
+      <main>
+        <div class="hero">
+          <span class="pill"><b>AO VIVO</b> Versão 0.1.0 para Windows</span>
+          <h1>Compartilhe a tela do jogo com a galera da call</h1>
+          <p class="lead">
+            Até 1440p60, com baixa latência e quase sem pesar no jogo. O vídeo vai direto de um PC para o outro, sem
+            servidor no meio, com o som do jogo e sem o som da call.
+          </p>
+          <div class="actions">
+            <a class="button" data-download href="https://github.com/Kaique292/squadview/releases/latest"
+              >⬇️ Baixar para Windows</a
+            >
+            <a class="button secondary" href="https://github.com/Kaique292/squadview">Ver no GitHub</a>
+          </div>
+          <p class="small">
+            <span data-download-info>Windows 10 ou 11</span>, NVIDIA ou AMD. Grátis, open source (MIT), sem anúncios.
+          </p>
+          <div class="shot">
+            <img
+              src="tela-sala.png"
+              width="1280"
+              height="800"
+              alt="SquadView com uma sala aberta: quatro amigos, um deles ao vivo, e o botão para assistir"
+            />
+          </div>
+        </div>
+
+        <section id="recursos">
+          <h2>Feito para jogar e mostrar ao mesmo tempo</h2>
+          <div class="grid">
+            <div class="card">
+              <div class="icon">🎮</div>
+              <h3>Qualidade de jogo</h3>
+              <p>
+                Encode por hardware na placa de vídeo (NVENC e AMF). A imagem não sai da GPU, então o jogo quase não
+                sente.
+              </p>
+            </div>
+            <div class="card">
+              <div class="icon">⚡</div>
+              <h3>Direto de PC para PC</h3>
+              <p>Nada de servidor de vídeo. Conexões cifradas (QUIC com TLS 1.3), sem abrir porta no roteador.</p>
+            </div>
+            <div class="card">
+              <div class="icon">🔊</div>
+              <h3>Só o som do jogo</h3>
+              <p>Transmitindo uma janela, vai só o áudio daquele app. Sua call continua só sua.</p>
+            </div>
+            <div class="card">
+              <div class="icon">🔗</div>
+              <h3>Convite por link</h3>
+              <p>Mande o link no Discord: quem tem o app entra na sala, quem não tem cai aqui para baixar.</p>
+            </div>
+            <div class="card">
+              <div class="icon">💬</div>
+              <h3>Integrado ao Discord</h3>
+              <p>Entre com a sua conta e mostre no perfil que está numa sala, transmitindo ou assistindo.</p>
+            </div>
+            <div class="card">
+              <div class="icon">🔄</div>
+              <h3>Sempre atualizado</h3>
+              <p>O app avisa quando sai versão nova e se atualiza com um clique, com pacotes assinados.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="como-usar">
+          <h2>Como usar</h2>
+          <ol class="steps">
+            <li><b>Baixe e instale</b> o SquadView. Não precisa ser administrador.</li>
+            <li><b>Crie uma sala</b> e clique em <b>Convidar pessoas</b>: o link vai para a área de transferência.</li>
+            <li><b>Cole o link na call</b> do Discord. Seus amigos entram com um clique.</li>
+            <li>
+              <b>Transmitir minha tela</b>: escolha o jogo, a qualidade, e pronto. Quem quiser, clica em
+              <b>Assistir</b>.
+            </li>
+          </ol>
+        </section>
+      </main>
+
+      <footer>
+        SquadView é um projeto independente e open source, sem ligação com o Discord.<br />
+        <a href="https://github.com/Kaique292/squadview">GitHub</a> ·
+        <a href="https://github.com/Kaique292/squadview/blob/main/SECURITY.md">Privacidade e segurança</a> ·
+        <a href="https://buymeacoffee.com/kaiqueamaral">☕ Apoie o projeto</a>
+      </footer>
+    </div>
+    <script src="download.js"></script>
   </body>
 </html>

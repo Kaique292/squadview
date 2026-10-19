@@ -159,6 +159,13 @@ impl LocalPreview {
     pub fn is_closed(&self) -> bool {
         self.state.closed.load(Ordering::Relaxed)
     }
+
+    /// Foto do último quadro do vídeo, para a animação de saída. Ver [`VideoViewer::snapshot`].
+    pub fn snapshot(&self) -> Option<sv_capture::Thumbnail> {
+        lock(&self.state.viewer)
+            .as_ref()?
+            .snapshot(crate::viewer::SNAPSHOT_MAX, std::time::Duration::from_millis(400))
+    }
 }
 
 impl Drop for LocalPreview {
