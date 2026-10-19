@@ -1,0 +1,24 @@
+[package]
+name = "squadview"
+description = "SquadView: compartilhamento de tela P2P para a galera da call."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "squadview_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = "2.7.3"
+
+[dependencies]
+sv-core.workspace = true
+tauri = "2.12.4"
+
+[lints]
+workspace = true

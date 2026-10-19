@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/*
+ * Tokens do SquadView (ver docs/design/ui.md).
+ * Tema escuro em camadas, inspirado na hierarquia visual do Discord, com paleta própria.
+ */
+@theme {
+  --color-surface-0: #111214; /* barra de salas */
+  --color-surface-1: #1a1b1e; /* barra lateral */
+  --color-surface-2: #232428; /* área principal */
+  --color-surface-3: #2e3035; /* cards, inputs */
+  --color-surface-hover: #35373c;
+
+  --color-text: #f2f3f5;
+  --color-text-muted: #b5bac1;
+  --color-text-faint: #80848e;
+
+  --color-brand: #6e4ff6;
+  --color-brand-hover: #5b3be0;
+  --color-live: #f23f43;
+  --color-online: #23a55a;
+  --color-warning: #f0b232;
+
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+
+  --radius-card: 0.75rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}

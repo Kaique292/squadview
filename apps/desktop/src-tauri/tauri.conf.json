@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SquadView",
+  "version": "0.0.0",
+  "identifier": "io.github.kaique292.squadview",
+  "build": {
+    "beforeDevCommand": "yarn dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "yarn build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SquadView",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 940,
+        "minHeight": 560,
+        "backgroundColor": "#232428"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Kaique Amaral",
+    "copyright": "© 2026 Kaique Amaral. Licença MIT.",
+    "category": "SocialNetworking",
+    "shortDescription": "Compartilhe a tela com a galera da call, sem servidor.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": { "installMode": "currentUser", "languages": ["PortugueseBR", "English"] }
+    }
+  }
+}
