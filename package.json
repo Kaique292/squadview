@@ -1,0 +1,37 @@
+{
+  "name": "squadview",
+  "private": true,
+  "description": "Compartilhe a tela com a galera da call, em qualidade de jogo e sem servidor: a própria sala distribui o vídeo.",
+  "license": "MIT",
+  "author": "Kaique Amaral",
+  "repository": "github:Kaique292/squadview",
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
+  "scripts": {
+    "postinstall": "husky",
+    "dev": "yarn workspace @squadview/desktop tauri dev",
+    "build": "yarn workspace @squadview/desktop tauri build",
+    "format": "prettier --write . && cargo fmt --all",
+    "lint": "prettier --check . && yarn lint:js && yarn lint:rs",
+    "lint:js": "yarn workspaces foreach -A --exclude squadview run lint",
+    "lint:rs": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "test": "yarn test:rs && yarn test:js",
+    "test:rs": "cargo llvm-cov --workspace --json --summary-only --output-path build/coverage-rust.json",
+    "test:js": "yarn workspaces foreach -A --exclude squadview run test",
+    "coverage:badge": "node scripts/coverage-badge.mjs"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,tsx,css,html,json,md,yml,yaml}": "prettier --write",
+    "*.rs": "rustfmt --edition 2024"
+  },
+  "packageManager": "yarn@4.18.1+sha512.b2e1e7524f654f2749d32b4ebcb4622473cb5bcbc485df2007e12a154e50162a4d795526768bc5f5b8f81717bfd79deb2472813d86fb5ae2eb551fa9c872b08f",
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10"
+  }
+}

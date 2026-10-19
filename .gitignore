@@ -1,0 +1,37 @@
+# Rust
+target/
+
+# Node / Yarn
+node_modules/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Build e cobertura
+dist/
+build/
+coverage/
+*.profraw
+lcov.info
+*.tsbuildinfo
+
+# Tauri
+apps/desktop/src-tauri/gen/schemas/
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# Sistema e editores
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude (local)
+.claude/settings.local.json
