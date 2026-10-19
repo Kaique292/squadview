@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Convite para o SquadView</title>
+    <meta name="description" content="Entre na sala da galera no SquadView e assista a tela dos amigos." />
+    <meta property="og:title" content="Bora pro SquadView?" />
+    <meta
+      property="og:description"
+      content="Te chamaram para uma sala. Clique para entrar e assistir a tela da galera."
+    />
+    <meta name="theme-color" content="#6e4ff6" />
+    <link rel="icon" href="../logo.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --bg: #1e1f22;
+        --card: #313338;
+        --inset: #2b2d31;
+        --text: #f2f3f5;
+        --muted: #b5bac1;
+        --faint: #80848e;
+        --brand: #6e4ff6;
+        --brand-hover: #5b3be0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background:
+          radial-gradient(circle at 20% 10%, rgb(110 79 246 / 0.25), transparent 45%),
+          radial-gradient(circle at 80% 90%, rgb(35 165 90 / 0.12), transparent 40%), var(--bg);
+        color: var(--text);
+        font-family:
+          "Segoe UI Variable",
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 420px;
+        padding: 32px 28px 24px;
+        border-radius: 12px;
+        background: var(--card);
+        box-shadow: 0 24px 64px rgb(0 0 0 / 0.45);
+        text-align: center;
+        animation: in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes in {
+        from {
+          opacity: 0;
+          transform: translateY(12px) scale(0.97);
+        }
+      }
+      .logo {
+        width: 72px;
+        height: 72px;
+        margin: -68px auto 12px;
+        padding: 14px;
+        border-radius: 22px;
+        background: var(--brand);
+        box-shadow: 0 8px 24px rgb(110 79 246 / 0.4);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .code {
+        margin: 20px 0;
+        padding: 12px;
+        border-radius: 8px;
+        background: var(--inset);
+        font:
+          600 26px/1 ui-monospace,
+          "Cascadia Mono",
+          Consolas,
+          monospace;
+        letter-spacing: 0.3em;
+      }
+      .button {
+        display: block;
+        width: 100%;
+        padding: 12px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--brand);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background 150ms;
+      }
+      .button:hover {
+        background: var(--brand-hover);
+      }
+      .button.secondary {
+        margin-top: 8px;
+        background: var(--inset);
+      }
+      .button.secondary:hover {
+        background: #404249;
+      }
+      .fallback {
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid rgb(255 255 255 / 0.06);
+        opacity: 0;
+        transition: opacity 300ms;
+      }
+      .fallback.show {
+        opacity: 1;
+      }
+      .fallback p {
+        margin-bottom: 12px;
+        font-size: 14px;
+      }
+      small {
+        display: block;
+        margin-top: 16px;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="logo" src="../logo.svg" alt="SquadView" />
+      <div id="ok">
+        <h1>Te chamaram para uma sala</h1>
+        <p>Entre e assista a tela da galera, com som do jogo e sem servidor no meio.</p>
+        <div class="code" id="code" aria-label="Código da sala"></div>
+        <a class="button" id="open">Abrir no SquadView</a>
+        <div class="fallback" id="fallback">
+          <p>Não abriu? Você ainda não tem o SquadView. Baixe, instale e clique em "Abrir no SquadView" de novo.</p>
+          <a class="button secondary" href="https://github.com/Kaique292/squadview/releases/latest">
+            Baixar o SquadView para Windows
+          </a>
+        </div>
+      </div>
+      <div id="invalid" hidden>
+        <h1>Convite inválido</h1>
+        <p>Este link não tem um código de sala válido. Peça o link de novo para quem te convidou.</p>
+        <a class="button secondary" style="margin-top: 20px" href="https://github.com/Kaique292/squadview">
+          Conhecer o SquadView
+        </a>
+      </div>
+      <small>SquadView é gratuito e de código aberto.</small>
+    </main>
+    <script>
+      // Mesmo alfabeto da sinalização: 6 caracteres, sem letras que se confundem (I, L, O, 0, 1).
+      const ALPHABET = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+      const raw = new URLSearchParams(location.search).get("sala") || "";
+      const code = raw.replace(/[\s-]/g, "").toUpperCase();
+
+      if (!ALPHABET.test(code)) {
+        document.getElementById("ok").hidden = true;
+        document.getElementById("invalid").hidden = false;
+      } else {
+        const deepLink = "squadview://join/" + code;
+        document.getElementById("code").textContent = code;
+        const open = document.getElementById("open");
+        open.href = deepLink;
+        // Tenta abrir o app sozinho; se nada acontecer, mostra o download.
+        const showFallback = () => document.getElementById("fallback").classList.add("show");
+        let left = false;
+        window.addEventListener("blur", () => (left = true));
+        location.href = deepLink;
+        setTimeout(() => {
+          if (!left) showFallback();
+        }, 1500);
+        open.addEventListener("click", () => setTimeout(showFallback, 1500));
+      }
+    </script>
+  </body>
+</html>
