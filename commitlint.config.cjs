@@ -1,9 +1,15 @@
 // Commits semânticos do SquadView: https://www.conventionalcommits.org/pt-br/
 // Regras completas em docs/git-e-versionamento.md.
 
-/** O projeto tem um único autor: nenhum commit pode trazer coautoria. */
+/** Trailer de coautoria de um robô do GitHub (ex.: `dependabot[bot]`). */
+const BOT_CO_AUTHOR = /^co-authored-by:\s*[^<]*\[bot\]\s*</i;
+
+/**
+ * O projeto tem um único autor: nenhum commit pode trazer coautoria (de pessoa ou de IA).
+ * A exceção são robôs do GitHub, que o próprio GitHub acrescenta ao fazer squash de um PR deles.
+ */
 const noCoAuthor = ({ raw }) => {
-  const found = /^co-authored-by:/im.test(raw ?? "");
+  const found = (raw ?? "").split(/\r?\n/).some((line) => /^co-authored-by:/i.test(line) && !BOT_CO_AUTHOR.test(line));
   return [!found, "o commit não pode ter trailer Co-authored-by (o projeto tem um único autor)"];
 };
 
