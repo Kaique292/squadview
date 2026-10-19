@@ -27,12 +27,12 @@ Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 
 ## Fase 1 — Pipeline local
 
-- [ ] `sv-capture`: captura de monitor e de janela via Windows.Graphics.Capture
-- [ ] `sv-capture`: áudio do processo do jogo via WASAPI process loopback
-- [ ] `sv-encode`: implementação NVENC (H.264 baixa latência, keyframe sob demanda)
-- [ ] `sv-media`: decode D3D11VA e exibição na janela
-- [ ] Preview local na interface com estatísticas (fps, bitrate, latência)
-- [ ] Medição com a skill `perf-check` em pelo menos 2 jogos
+- [x] `sv-capture`: captura de monitor e de janela via Windows.Graphics.Capture (segue o jogo quando ele troca de janela)
+- [x] `sv-capture`: áudio do processo do jogo via WASAPI process loopback (+ Opus, buffer de jitter e reprodução)
+- [x] `sv-encode`: encoder de hardware via Media Foundation (NVENC/AMF/QuickSync, H.264 baixa latência, keyframe sob demanda)
+- [x] `sv-media`: decode por GPU e exibição na janela
+- [x] Preview local na interface com estatísticas (fps, bitrate, latência, áudio) e registro local
+- [ ] Medição com a skill `perf-check` em pelo menos 2 jogos (1 feito: LoL, 74 fps mantidos, 5 ms de latência)
 
 ## Fase 2 — Transmissão 1:1
 

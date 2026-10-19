@@ -166,6 +166,8 @@ O SquadView é gratuito e open source. Se ele salvou a sua jogatina, considere p
 
 [MIT](LICENSE) © 2026 Kaique Amaral
 
+As miniaturas das janelas usam o crate `jpeg-encoder`: _this software is based in part on the work of the Independent JPEG Group_.
+
 ---
 
 ## 🇺🇸 In English

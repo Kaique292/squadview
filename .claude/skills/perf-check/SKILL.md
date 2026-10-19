@@ -13,6 +13,10 @@ O objetivo do projeto: transmitir 1080p60 com **menos de 5% de perda de FPS** no
 - Feche apps pesados; mesma resolução, mesmas configurações do jogo e mesmo trecho (replay, benchmark interno ou mapa vazio).
 - Ferramenta de FPS: PresentMon ou CapFrameX (frametimes); uso do encoder pelo Gerenciador de Tarefas (GPU → "Video Encode") ou `nvidia-smi dmon -s u`.
 
+## Registro automático
+
+O app grava `%LOCALAPPDATA%\io.github.kaique292.squadview\logs\sessao-*.jsonl` (uma linha JSON por medição): `system` a cada 1 s desde a abertura (GPU 3D, encoder, decoder e CPU, que servem de base antes de transmitir), `stream` a cada 500 ms durante a transmissão (`sourceFps` = quadros que o jogo entregou, limitado ao refresh do monitor; `fps`, `bitrateKbps`, `encodeMs`, `latencyMs`, `latencyP95Ms`, `dropped`) e os eventos `stream-start`/`stream-end`. Leia o arquivo mais recente e compare as janelas "antes" e "durante". O FPS real do jogo acima do refresh só aparece com PresentMon.
+
 ## Roteiro
 
 1. **Base:** jogue 2 min sem o SquadView. Anote FPS médio e 1% low.

@@ -1,6 +1,6 @@
 # 0004. Encoder atrás de uma trait, NVENC primeiro
 
-- **Status:** aceita
+- **Status:** aceita (primeira implementação alterada pela [0007](0007-media-foundation-para-encode-e-decode.md))
 - **Data:** 2026-10-19
 
 ## Contexto
