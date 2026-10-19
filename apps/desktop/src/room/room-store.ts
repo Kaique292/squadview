@@ -65,6 +65,8 @@ interface RoomState {
   code: string | null;
   /** Nome da sala (`null`: sem nome, aparece o código). */
   roomName: string | null;
+  /** A ligação com a sala caiu e o app está tentando voltar. */
+  reconnecting: boolean;
   /** Quando entramos na sala (ms), para o tempo conectado. */
   joinedAt: number | null;
   /** Membros da sala, nós primeiro. */
@@ -96,6 +98,7 @@ interface RoomState {
 export const useRoomStore = create<RoomState>((set, get) => ({
   code: null,
   roomName: null,
+  reconnecting: false,
   invite: null,
   watchVolume: savedVolume(),
   joinedAt: null,
@@ -212,6 +215,27 @@ export function useMe() {
 export async function listenToRoomEvents() {
   const offs = await Promise.all([
     listen<string | null>("room-name", (e) => useRoomStore.setState({ roomName: e.payload })),
+    listen<"reconnecting" | "connected" | "lost">("room-connection", (e) => {
+      if (e.payload === "reconnecting") {
+        useRoomStore.setState({ reconnecting: true });
+        toast.warning("A conexão com a sala caiu. Tentando voltar…", "Reconectando");
+      } else if (e.payload === "connected") {
+        useRoomStore.setState({ reconnecting: false });
+        toast.success("De volta à sala.", "Reconectado");
+      } else {
+        useRoomStore.setState({
+          code: null,
+          roomName: null,
+          reconnecting: false,
+          joinedAt: null,
+          members: [],
+          watching: null,
+          watchStats: null,
+          pendingWatch: null,
+        });
+        toast.error("Não deu para voltar para a sala. Entre de novo pelo código ou pelo link.", "Conexão perdida");
+      }
+    }),
     listen<Member[]>("room-members", (e) => {
       const members = e.payload;
       const { watching } = useRoomStore.getState();

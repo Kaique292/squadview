@@ -343,13 +343,18 @@ function MemberRow(props: {
 function ConnectedPanel(props: { code: string }) {
   const leave = useRoomStore((s) => s.leave);
   const roomName = useRoomStore((s) => s.roomName);
+  const reconnecting = useRoomStore((s) => s.reconnecting);
   const live = useStreamStore((s) => s.status === "live");
   return (
     <div className="shrink-0 border-b border-white/[0.06] px-2 pt-2 pb-2">
       <div className="flex items-center gap-2 px-1">
         <Signal size={18} className="shrink-0 text-online" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-online">{live ? "Transmitindo" : "Conectado à sala"}</p>
+          {reconnecting ? (
+            <p className="text-sm font-semibold text-warning">Reconectando…</p>
+          ) : (
+            <p className="text-sm font-semibold text-online">{live ? "Transmitindo" : "Conectado à sala"}</p>
+          )}
           <p className="truncate text-xs text-text-muted">{roomTitle(props.code, roomName)}</p>
         </div>
         <Tooltip label="Sair da sala" side="top">

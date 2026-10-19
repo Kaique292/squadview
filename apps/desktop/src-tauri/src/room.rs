@@ -12,6 +12,8 @@ use crate::preview::{self, FULLSCREEN_EVENT};
 
 /// Lista de membros (nós primeiro).
 pub const MEMBERS_EVENT: &str = "room-members";
+/// Estado da ligação com a sala: "reconnecting", "connected" (voltou) ou "lost" (saímos).
+pub const ROOM_CONNECTION_EVENT: &str = "room-connection";
 /// Nome da sala (texto, ou `null` sem nome) quando alguém renomeia.
 pub const ROOM_NAME_EVENT: &str = "room-name";
 /// Erro ou queda da sala (texto para o usuário).
@@ -253,8 +255,34 @@ fn on_update(app: &AppHandle, update: RoomUpdate) {
         RoomUpdate::Error(message) => {
             let _ = app.emit(ROOM_ERROR_EVENT, message);
         }
+        RoomUpdate::Reconnecting => {
+            app.state::<Diagnostics>()
+                .write("room-connection", &json!({ "state": "reconnecting" }));
+            let _ = app.emit(ROOM_CONNECTION_EVENT, "reconnecting");
+        }
+        RoomUpdate::Reconnected => {
+            app.state::<Diagnostics>()
+                .write("room-connection", &json!({ "state": "connected" }));
+            let _ = app.emit(ROOM_CONNECTION_EVENT, "connected");
+        }
         RoomUpdate::Disconnected => {
-            let _ = app.emit(ROOM_ERROR_EVENT, "Perdemos a conexão com a sala. Entre de novo.");
+            app.state::<Diagnostics>()
+                .write("room-connection", &json!({ "state": "lost" }));
+            // Não deu para voltar: sai da sala de verdade (fora desta thread de rede), para a
+            // interface não mostrar uma sala em que a gente já não está.
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let state = app.state::<RoomState>();
+                let (watching, room) = {
+                    let mut running = lock(&state);
+                    (running.watching.take(), running.room.take())
+                };
+                drop(watching);
+                drop(room);
+                preview::set_watching(&app, false);
+                preview::restart_for_room(&app);
+                let _ = app.emit(ROOM_CONNECTION_EVENT, "lost");
+            });
         }
     }
 }

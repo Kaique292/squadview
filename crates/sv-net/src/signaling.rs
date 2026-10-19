@@ -13,6 +13,12 @@ use crate::protocol::Signal;
 /// Versão do contrato da sinalização (o Worker recusa versões diferentes).
 pub const SIGNALING_PROTOCOL: u32 = 1;
 
+/// De quanto em quanto tempo mandar um ping para a sala. Sem tráfego, a conexão pode ser
+/// fechada no meio do caminho (e às vezes o fechamento nem chega até aqui).
+const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+/// Sem receber nada (nem o pong) por esse tempo, a conexão é dada como perdida.
+const SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// Letras dos códigos de sala: fáceis de ditar (sem 0/O, 1/I/L). Igual ao `room-code.ts`.
 pub const ROOM_CODE_ALPHABET: &str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 pub const ROOM_CODE_LENGTH: usize = 6;
@@ -177,7 +183,16 @@ impl RoomClient {
             .map_err(|e| e.to_string())?;
 
         tokio::spawn(async move {
-            while let Some(msg) = out_rx.recv().await {
+            let mut ping = tokio::time::interval(PING_EVERY);
+            ping.tick().await;
+            loop {
+                let msg = tokio::select! {
+                    msg = out_rx.recv() => match msg {
+                        Some(msg) => msg,
+                        None => break,
+                    },
+                    _ = ping.tick() => Message::Ping(Vec::new().into()),
+                };
                 let leaving = matches!(&msg, Message::Close(_));
                 if write.send(msg).await.is_err() || leaving {
                     break;
@@ -186,7 +201,8 @@ impl RoomClient {
             let _ = write.close().await;
         });
         tokio::spawn(async move {
-            while let Some(Ok(msg)) = read.next().await {
+            // Qualquer coisa que chega (mensagem ou pong) prova que a conexão está viva.
+            while let Ok(Some(Ok(msg))) = tokio::time::timeout(SILENCE_LIMIT, read.next()).await {
                 let Message::Text(text) = msg else { continue };
                 let Ok(incoming) = serde_json::from_str::<Incoming>(&text) else {
                     continue;

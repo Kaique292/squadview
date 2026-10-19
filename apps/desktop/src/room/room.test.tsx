@@ -35,6 +35,7 @@ beforeEach(async () => {
   useRoomStore.setState({
     code: null,
     roomName: null,
+    reconnecting: false,
     members: [],
     joining: false,
     joinError: null,
@@ -340,6 +341,30 @@ describe("nome da sala e apelido", () => {
     fireEvent.contextMenu(within(screen.getByRole("list", { name: "Membros da sala" })).getByText(ANA.name));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Assistir a transmissão/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_watch", { memberId: ANA.id }));
+  });
+});
+
+describe("queda da conexão com a sala", () => {
+  beforeEach(() => useRoomStore.setState({ code: "B8RJ2Q", joinedAt: Date.now() }));
+
+  it("avisa que está reconectando e quando volta", async () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("room-connection", "reconnecting");
+    expect(await screen.findByText("Reconectando…")).toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "warning", title: "Reconectando" });
+    emit("room-connection", "connected");
+    expect(screen.queryByText("Reconectando…")).not.toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: "De volta à sala." });
+  });
+
+  it("se não der para voltar, sai da sala e explica", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("room-connection", "lost");
+    expect(useRoomStore.getState().code).toBeNull();
+    expect(screen.getByRole("button", { name: "Entrar com código" })).toBeInTheDocument();
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "error", title: "Conexão perdida" });
   });
 });
 
