@@ -91,9 +91,19 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// Mantém só os `keep` registros mais novos (o nome ordena por data).
-fn prune(dir: &Path, keep: usize) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+/// Os `n` registros mais novos de `dir`, do mais novo para o mais antigo.
+pub fn recent_logs(dir: &Path, n: usize) -> Vec<PathBuf> {
+    let mut logs = list_logs(dir);
+    logs.reverse();
+    logs.truncate(n);
+    logs
+}
+
+/// Registros de `dir` em ordem de data (o nome ordena por data).
+fn list_logs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut logs: Vec<PathBuf> = entries
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
@@ -103,6 +113,12 @@ fn prune(dir: &Path, keep: usize) {
         })
         .collect();
     logs.sort();
+    logs
+}
+
+/// Mantém só os `keep` registros mais novos.
+fn prune(dir: &Path, keep: usize) {
+    let logs = list_logs(dir);
     let excess = logs.len().saturating_sub(keep);
     for old in &logs[..excess] {
         let _ = fs::remove_file(old);
@@ -160,6 +176,30 @@ mod tests {
         let left: Vec<_> = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
         assert_eq!(left.len(), 21, "20 registros + o arquivo que não é registro");
         assert!(!dir.join("sessao-20260100-000000Z.jsonl").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lista_os_registros_mais_novos_primeiro() {
+        let dir = temp_dir("recentes");
+        fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "sessao-20260101-000000Z.jsonl",
+            "sessao-20260103-000000Z.jsonl",
+            "sessao-20260102-000000Z.jsonl",
+            "outro.txt",
+        ] {
+            File::create(dir.join(name)).unwrap();
+        }
+        let names: Vec<_> = recent_logs(&dir, 2)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["sessao-20260103-000000Z.jsonl", "sessao-20260102-000000Z.jsonl"]
+        );
+        assert!(recent_logs(&dir.join("nao-existe"), 3).is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 }

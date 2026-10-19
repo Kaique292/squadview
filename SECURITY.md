@@ -13,7 +13,7 @@ Apenas a versão mais recente recebe correções.
 ### Seus dados
 
 - **Sem telemetria.** O app não envia estatísticas nem dados de uso.
-- **Registro de desempenho só local.** Cada abertura do app grava um arquivo em `%LOCALAPPDATA%\io.github.kaique292.squadview\logs` com uso de GPU/CPU e estatísticas do stream (fps, bitrate, latência), além do nome da placa, do build do Windows e do nome da janela transmitida. Ele nunca é enviado; serve para você (ou para quem você escolher mandar o arquivo) entender o desempenho. Só os 20 mais recentes são mantidos.
+- **Registro de desempenho só local.** Cada abertura do app grava um arquivo em `%LOCALAPPDATA%\io.github.kaique292.squadview\logs` com uso de GPU/CPU e estatísticas do stream (fps, bitrate, latência), além do nome da placa, do build do Windows e do nome da janela transmitida. Ele nunca é enviado; serve para você (ou para quem você escolher mandar o arquivo) entender o desempenho. Só os 20 mais recentes são mantidos. Dá para desligar em Configurações → Desempenho, onde também há o botão "Copiar registros" para colar os arquivos numa conversa.
 - O app fala só com: o serviço de sinalização (para entrar em salas), os outros membros da sala, o GitHub (para conferir atualizações) e, se você usar, o Discord.
 - **Login com o Discord (opcional).** Usa OAuth2 com PKCE e só o escopo `identify` (perfil público). O token é descartado logo depois de ler o perfil; só o id, o nome e a foto ficam salvos em `discord.json`, na pasta de dados do app. O app não vê mensagens, servidores nem amigos.
 - **Status no Discord (Rich Presence).** Com o Discord aberto no PC, o app avisa pelo canal local dele que você está numa sala. O link da sala só aparece no perfil se você ligar o botão "Entrar na sala" em Configurações.

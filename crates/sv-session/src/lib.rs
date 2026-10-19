@@ -20,7 +20,7 @@ pub use sv_media::{Bounds, WindowEvent, WindowTarget};
 use std::fmt;
 
 pub use audio::{AudioPacket, AudioReceiver, AudioSender, ReceiverEvent};
-pub use log::SessionLog;
+pub use log::{SessionLog, recent_logs};
 pub use preview::{KeyframeHandle, LocalPreview, StreamTap};
 pub use remote::RemoteView;
 pub use room::{Room, RoomUpdate};

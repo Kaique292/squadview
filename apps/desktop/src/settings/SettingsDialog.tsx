@@ -4,11 +4,12 @@ import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { Modal, ModalClose } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
+import { DiagnosticsSection } from "./DiagnosticsSection";
 import { usePresenceSettings } from "./presence-store";
 import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 
-/** Configurações do app. Por enquanto, a aparência (intensidade do vidro). */
+/** Configurações do app: conta, status no Discord, registro de desempenho e aparência. */
 export function SettingsDialog(props: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   const glass = useAppearanceStore((s) => s.glass);
@@ -32,6 +33,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
     >
       <AccountSection />
       <PresenceSection />
+      <DiagnosticsSection />
       <section aria-labelledby="aparencia" className="mt-5 flex flex-col gap-3 text-left">
         <h3 id="aparencia" className="text-xs font-semibold tracking-wide text-text-faint uppercase">
           Aparência
