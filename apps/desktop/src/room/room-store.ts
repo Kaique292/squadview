@@ -44,8 +44,27 @@ function saveName(name: string) {
   }
 }
 
+/** Nome que aparece para a sala: o que deram para ela ou, sem nome, o código. */
+export function roomTitle(code: string, name: string | null | undefined): string {
+  return name?.trim() || `Sala ${code}`;
+}
+
+/** Até 3 iniciais do nome da sala, para o ícone na barra de salas ("Galera do LoL" → "GDL"). */
+export function roomInitials(code: string, name: string | null | undefined): string {
+  const words = name?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (words.length === 0) return code.slice(0, 3);
+  if (words.length === 1) return [...words[0]].slice(0, 3).join("").toUpperCase();
+  return words
+    .slice(0, 3)
+    .map((w) => [...w][0])
+    .join("")
+    .toUpperCase();
+}
+
 interface RoomState {
   code: string | null;
+  /** Nome da sala (`null`: sem nome, aparece o código). */
+  roomName: string | null;
   /** Quando entramos na sala (ms), para o tempo conectado. */
   joinedAt: number | null;
   /** Membros da sala, nós primeiro. */
@@ -64,7 +83,9 @@ interface RoomState {
   /** Código de um convite por link, esperando a pessoa confirmar a entrada. */
   invite: string | null;
   setInvite: (code: string | null) => void;
-  join: (code: string | null, name: string) => Promise<boolean>;
+  join: (code: string | null, name: string, roomName?: string | null) => Promise<boolean>;
+  renameRoom: (name: string) => Promise<void>;
+  setNickname: (name: string) => Promise<void>;
   leave: () => Promise<void>;
   watch: (member: Member) => Promise<void>;
   stopWatching: () => Promise<void>;
@@ -74,6 +95,7 @@ interface RoomState {
 
 export const useRoomStore = create<RoomState>((set, get) => ({
   code: null,
+  roomName: null,
   invite: null,
   watchVolume: savedVolume(),
   joinedAt: null,
@@ -85,12 +107,36 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   watchStats: null,
   watchListening: true,
 
-  async join(code, name) {
+  async renameRoom(name) {
+    try {
+      await invoke("room_rename", { name });
+    } catch (e) {
+      toast.error(String(e), "Nome da sala");
+    }
+  },
+
+  async setNickname(name) {
+    try {
+      await invoke("room_set_name", { name });
+      saveName(name.trim());
+    } catch (e) {
+      toast.error(String(e), "Apelido");
+    }
+  },
+
+  async join(code, name, roomName = null) {
     set({ joining: true, joinError: null });
     try {
-      const info = await invoke<{ code: string }>("room_join", { code, name });
+      const info = await invoke<{ code: string; roomName?: string | null }>("room_join", { code, name, roomName });
       saveName(name.trim());
-      set({ code: info.code, joinedAt: Date.now(), joining: false, watching: null, watchStats: null });
+      set({
+        code: info.code,
+        roomName: info.roomName ?? null,
+        joinedAt: Date.now(),
+        joining: false,
+        watching: null,
+        watchStats: null,
+      });
       toast.success(`Mande o código ${info.code} para a galera entrar.`, "Você está na sala");
       return true;
     } catch (e) {
@@ -109,7 +155,15 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 
   async leave() {
     await invoke("room_leave").catch(() => {});
-    set({ code: null, joinedAt: null, members: [], watching: null, watchStats: null, pendingWatch: null });
+    set({
+      code: null,
+      roomName: null,
+      joinedAt: null,
+      members: [],
+      watching: null,
+      watchStats: null,
+      pendingWatch: null,
+    });
   },
 
   async watch(member) {
@@ -157,6 +211,7 @@ export function useMe() {
 /** Liga os eventos da sala vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
 export async function listenToRoomEvents() {
   const offs = await Promise.all([
+    listen<string | null>("room-name", (e) => useRoomStore.setState({ roomName: e.payload })),
     listen<Member[]>("room-members", (e) => {
       const members = e.payload;
       const { watching } = useRoomStore.getState();

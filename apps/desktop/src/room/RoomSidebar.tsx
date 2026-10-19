@@ -9,6 +9,7 @@ import {
   LogIn,
   LogOut,
   MonitorUp,
+  Pencil,
   PhoneOff,
   Plus,
   Radio,
@@ -29,7 +30,9 @@ import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
 import { RoomDialog } from "./RoomDialog";
 import { inviteUrl } from "./invite";
-import { type Member, useRoomStore } from "./room-store";
+import { MemberMenu } from "./MemberMenu";
+import { NameDialog } from "./NameDialog";
+import { type Member, roomTitle, useRoomStore } from "./room-store";
 
 /**
  * Barra lateral no estilo da lista de canais do Discord: cabeçalho da sala com menu e a sala como
@@ -94,15 +97,28 @@ async function copyInvite(code: string) {
 
 function RoomHeader(props: { code: string }) {
   const leave = useRoomStore((s) => s.leave);
+  const roomName = useRoomStore((s) => s.roomName);
+  const renameRoom = useRoomStore((s) => s.renameRoom);
+  const [renaming, setRenaming] = useState(false);
+  const title = roomTitle(props.code, roomName);
   return (
     <div className="flex h-12 shrink-0 items-center border-b border-white/[0.06]">
+      <NameDialog
+        open={renaming}
+        onOpenChange={setRenaming}
+        title="Nome da sala"
+        description="Todo mundo na sala vê o nome novo na hora."
+        label="Nome da sala"
+        initial={roomName ?? ""}
+        onSave={(name) => void renameRoom(name)}
+      />
       <Menu.Root>
         <Menu.Trigger asChild>
           <button
             type="button"
             className="group flex h-full min-w-0 flex-1 items-center justify-between gap-2 px-4 text-left font-semibold transition-colors hover:bg-surface-hover data-[state=open]:bg-surface-hover"
           >
-            <span className="truncate">Sala {props.code}</span>
+            <span className="truncate">{title}</span>
             <ChevronDown
               size={18}
               className="shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180"
@@ -117,6 +133,9 @@ function RoomHeader(props: { code: string }) {
           >
             <MenuItem icon={<UserPlus size={16} />} onSelect={() => void copyInvite(props.code)} accent>
               Convidar pessoas
+            </MenuItem>
+            <MenuItem icon={<Pencil size={16} />} onSelect={() => setRenaming(true)}>
+              Editar nome da sala
             </MenuItem>
             <MenuItem icon={<Copy size={16} />} onSelect={() => void copyCode(props.code)}>
               Copiar código da sala
@@ -205,7 +224,7 @@ function NoRoom() {
 
 /** A sala como um "canal de voz": categoria recolhível, nome com o tempo conectado e os membros. */
 function RoomChannel() {
-  const { code, members, pendingWatch, watching, watch, joinedAt } = useRoomStore();
+  const { code, roomName, members, pendingWatch, watching, watch, joinedAt } = useRoomStore();
   const [open, setOpen] = useState(true);
   const [me, ...others] = members;
 
@@ -223,7 +242,7 @@ function RoomChannel() {
 
       <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-text">
         <Volume2 size={18} className="shrink-0 text-online" />
-        <span className="min-w-0 flex-1 truncate font-medium">Sala {code}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{code && roomTitle(code, roomName)}</span>
         {joinedAt && <Elapsed since={joinedAt} />}
       </div>
 
@@ -279,48 +298,51 @@ function MemberRow(props: {
   const profile = useAccountStore((s) => s.profile);
   const canWatch = member.live && !props.isMe;
   return (
-    <li
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 transition-colors ${
-        props.watching ? "bg-surface-hover" : "hover:bg-surface-hover/70"
-      }`}
-    >
-      <Avatar
-        name={member.name}
-        size={24}
-        live={member.live}
-        src={props.isMe && profile ? avatarUrl(profile, 64) : undefined}
-      />
-      <span
-        className={`min-w-0 flex-1 truncate text-sm ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
+    <MemberMenu member={member} isMe={!!props.isMe} onWatch={props.onWatch}>
+      <li
+        className={`group flex items-center gap-2 rounded-md px-2 py-1 transition-colors ${
+          props.watching ? "bg-surface-hover" : "hover:bg-surface-hover/70"
+        }`}
       >
-        {member.name}
-        {props.isMe && <span className="text-text-faint"> (você)</span>}
-      </span>
-      {member.live && (
-        <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
-          <Radio size={10} /> AO VIVO
+        <Avatar
+          name={member.name}
+          size={24}
+          live={member.live}
+          src={props.isMe && profile ? avatarUrl(profile, 64) : undefined}
+        />
+        <span
+          className={`min-w-0 flex-1 truncate text-sm ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
+        >
+          {member.name}
+          {props.isMe && <span className="text-text-faint"> (você)</span>}
         </span>
-      )}
-      {canWatch && !props.watching && (
-        <Tooltip label={`Assistir ${member.name}`} side="top">
-          <button
-            type="button"
-            onClick={props.onWatch}
-            disabled={props.pending}
-            aria-label={`Assistir ${member.name}`}
-            className="shrink-0 rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text focus-visible:opacity-100 disabled:opacity-100"
-          >
-            {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
-          </button>
-        </Tooltip>
-      )}
-    </li>
+        {member.live && (
+          <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
+            <Radio size={10} /> AO VIVO
+          </span>
+        )}
+        {canWatch && !props.watching && (
+          <Tooltip label={`Assistir ${member.name}`} side="top">
+            <button
+              type="button"
+              onClick={props.onWatch}
+              disabled={props.pending}
+              aria-label={`Assistir ${member.name}`}
+              className="shrink-0 rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text focus-visible:opacity-100 disabled:opacity-100"
+            >
+              {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+            </button>
+          </Tooltip>
+        )}
+      </li>
+    </MemberMenu>
   );
 }
 
 /** Painel "Conectado à sala", como o "Voz conectada" do Discord. */
 function ConnectedPanel(props: { code: string }) {
   const leave = useRoomStore((s) => s.leave);
+  const roomName = useRoomStore((s) => s.roomName);
   const live = useStreamStore((s) => s.status === "live");
   return (
     <div className="shrink-0 border-b border-white/[0.06] px-2 pt-2 pb-2">
@@ -328,7 +350,7 @@ function ConnectedPanel(props: { code: string }) {
         <Signal size={18} className="shrink-0 text-online" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-online">{live ? "Transmitindo" : "Conectado à sala"}</p>
-          <p className="truncate text-xs text-text-muted">Sala {props.code}</p>
+          <p className="truncate text-xs text-text-muted">{roomTitle(props.code, roomName)}</p>
         </div>
         <Tooltip label="Sair da sala" side="top">
           <button

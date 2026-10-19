@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import logo from "../assets/logo.svg";
 import { Tooltip } from "../ui/Tooltip";
 import { RoomDialog } from "./RoomDialog";
-import { useRoomStore } from "./room-store";
+import { roomInitials, roomTitle, useRoomStore } from "./room-store";
 
 /**
  * Barra de salas (a coluna da esquerda, como a de servidores do Discord): ícones redondos que
@@ -11,6 +11,7 @@ import { useRoomStore } from "./room-store";
  */
 export function ServerRail(props: { hidden: boolean }) {
   const code = useRoomStore((s) => s.code);
+  const roomName = useRoomStore((s) => s.roomName);
   const someoneLive = useRoomStore((s) => s.members.slice(1).some((m) => m.live));
 
   return (
@@ -25,9 +26,9 @@ export function ServerRail(props: { hidden: boolean }) {
       </RailItem>
       <div className="h-0.5 w-8 rounded-full bg-surface-3" />
       {code && (
-        <RailItem label={`Sala ${code}`} active badge={someoneLive}>
+        <RailItem label={roomTitle(code, roomName)} active badge={someoneLive}>
           <span className="grid size-12 place-items-center bg-surface-3 font-mono text-[11px] font-bold tracking-wider">
-            {code.slice(0, 3)}
+            {roomInitials(code, roomName)}
           </span>
         </RailItem>
       )}

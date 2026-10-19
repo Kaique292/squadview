@@ -1,7 +1,7 @@
 import { AppWindow, ChevronLeft, Loader2, Monitor, Radio } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Modal, ModalClose } from "../ui/Modal";
-import { useRoomStore } from "../room/room-store";
+import { roomTitle, useRoomStore } from "../room/room-store";
 import { AudioSection } from "./AudioSection";
 import { StreamIllustration } from "./StreamIllustration";
 import {
@@ -266,7 +266,7 @@ function QualityStep(props: {
 
 /** Para quem vai a transmissão: a sala (se estivermos numa) ou só a prévia neste PC. */
 function Destination() {
-  const { code, members } = useRoomStore();
+  const { code, roomName, members } = useRoomStore();
   const friends = Math.max(0, members.length - 1);
   return (
     <div className="flex items-center gap-3 rounded-md bg-surface-1 px-3 py-2.5">
@@ -274,7 +274,7 @@ function Destination() {
       <div className="min-w-0">
         {code ? (
           <>
-            <p className="text-sm font-medium">Sala {code}</p>
+            <p className="text-sm font-medium">{roomTitle(code, roomName)}</p>
             <p className="text-xs text-text-faint">
               {friends === 0
                 ? "Ninguém mais na sala ainda: mande o código para a galera."

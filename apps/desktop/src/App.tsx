@@ -3,7 +3,7 @@ import { RoomDialog } from "./room/RoomDialog";
 import { RoomSidebar, UserDock } from "./room/RoomSidebar";
 import { ServerRail } from "./room/ServerRail";
 import { WatchView } from "./room/WatchView";
-import { useRoomStore } from "./room/room-store";
+import { roomTitle, useRoomStore } from "./room/room-store";
 import { StreamDialog } from "./stream/StreamDialog";
 import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
@@ -21,6 +21,7 @@ export function App() {
   const fullscreen = useStreamStore((s) => s.fullscreen);
   const watching = useRoomStore((s) => s.watching);
   const code = useRoomStore((s) => s.code);
+  const roomName = useRoomStore((s) => s.roomName);
   usePresenceSync();
 
   return (
@@ -34,7 +35,7 @@ export function App() {
       <InvitePrompt />
       <Dissolve />
       <Toaster anchor={(watching || live) && !fullscreen ? "sidebar" : "center"} />
-      {!fullscreen && <TitleBar title={code ? `Sala ${code}` : undefined} />}
+      {!fullscreen && <TitleBar title={code ? roomTitle(code, roomName) : undefined} />}
       <ServerRail hidden={fullscreen} />
       {/* Moldura da lateral: o canto arredondado e a borda fina do Discord. */}
       {!fullscreen && (
