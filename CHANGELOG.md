@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.2.0](https://github.com/Kaique292/squadview/compare/v0.1.0...v0.2.0) (2026-10-19)
+
+
+### ✨ Novidades
+
+* **app:** mostra a atualização como no Discord, com o ícone verde na barra de título ([9dc88d5](https://github.com/Kaique292/squadview/commit/9dc88d5ae41c51dcb59bdd8d21e8ecf2434f48ba))
+* **media:** lista microfones e saídas e captura o microfone ([057f183](https://github.com/Kaique292/squadview/commit/057f1833ab238d4a737065bf494f1221648d5d8e))
+* **media:** tira a foto do último quadro ao parar o vídeo ([c777ed0](https://github.com/Kaique292/squadview/commit/c777ed01e5c30a9f5d21d2f4acf9325873874c10))
+* **net:** entra com o nome da sala, recebe renomeações e troca o apelido ([8582c58](https://github.com/Kaique292/squadview/commit/8582c5884cf1c35197dcc94544e7577ce8546788))
+* **signal:** guarda o nome da sala e deixa trocar o apelido ([077e5a3](https://github.com/Kaique292/squadview/commit/077e5a3a186220d623bc740547f9d8d964ff02ef))
+* **ui:** adiciona o controle de volume de quem você assiste, como no Discord ([2de8cc9](https://github.com/Kaique292/squadview/commit/2de8cc9be848c4d7b4af5928c40f1e35f5a3daaa))
+* **ui:** deixa escolher o nome da sala e trocar o apelido pelo botão direito ([e8c3d2a](https://github.com/Kaique292/squadview/commit/e8c3d2aae11a77f46e4638aac1493b73c2e98f5a))
+* **ui:** desfaz o vídeo em poeira ao parar, como o Safari do iOS ([35b42be](https://github.com/Kaique292/squadview/commit/35b42beeae5ccd802b3ecdd89e3d9b524910bf69))
+
+
+### 🐛 Correções
+
+* **app:** abre a janela no centro da tela ([41295d7](https://github.com/Kaique292/squadview/commit/41295d7f3b0553a4c112369ccb4c9974d9ad12e5))
+* **app:** baixa o instalador direto pelo botão do site e do convite ([87ea442](https://github.com/Kaique292/squadview/commit/87ea44266a950bcb20362c057c9ce18ecdf93fc7))
+* **app:** mostra a splash só depois de desenhada ([7d8efa5](https://github.com/Kaique292/squadview/commit/7d8efa520bfd6270bce0a5df4cf83ab49d0212a9))
+* **net:** mantém a ligação com a sala viva e reconecta sozinho quando cai ([d3524b8](https://github.com/Kaique292/squadview/commit/d3524b826cfbd26cb9199ee10defbacff7e0126f))
+* **net:** mantém a porta pública viva e explica quando o NAT é simétrico ([1cae7c4](https://github.com/Kaique292/squadview/commit/1cae7c44aed3dd5225169f6640d7a331c2199557))
+* **ui:** tira a piscada entre o vídeo e a animação de saída ([9a8c47e](https://github.com/Kaique292/squadview/commit/9a8c47eefdd174aec5730e9c295c9e346c471c6f))
+
+
+### 📝 Documentação
+
+* atualiza README e roadmap para a 0.1.0, com telas reais ([b6d37ca](https://github.com/Kaique292/squadview/commit/b6d37ca7c6e89ac52d70f96112a463a3959a60b0))
+* cria o site do projeto com prévia para links no Discord ([9e21ef3](https://github.com/Kaique292/squadview/commit/9e21ef33bc3864dffb55f44bd644ce0b9e00fb57))
+* lista a ADR 0010 no índice ([4349891](https://github.com/Kaique292/squadview/commit/4349891e3cded98b8dae45c38dfddad7fa9a6211))
+
+
+### 📦 Build
+
+* **deps:** bump getrandom from 0.3.4 to 0.4.3 ([#4](https://github.com/Kaique292/squadview/issues/4)) ([4650974](https://github.com/Kaique292/squadview/commit/46509741d796cd691a9b13abbe901845ce408fcb))
+
 ## 0.1.0 (2026-10-19)
 
 
