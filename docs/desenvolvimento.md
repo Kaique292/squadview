@@ -30,17 +30,18 @@ yarn dev          # abre o app em modo desenvolvimento
 
 ## Comandos
 
-| Comando                                   | O que faz                                                  |
-| ----------------------------------------- | ---------------------------------------------------------- |
-| `yarn dev`                                | Abre o app com recarga automática da interface             |
-| `yarn build`                              | Gera o instalador NSIS em `target/release/bundle/nsis/`    |
-| `yarn lint`                               | Prettier, ESLint, TypeScript, `cargo fmt` e `cargo clippy` |
-| `yarn format`                             | Formata tudo (Prettier + rustfmt)                          |
-| `yarn test`                               | Testes de Rust e TypeScript com cobertura                  |
-| `yarn test:rs`                            | Só Rust (`cargo llvm-cov`)                                 |
-| `yarn test:js`                            | Só interface e sinalização (Vitest)                        |
-| `yarn coverage:badge`                     | Junta as coberturas e gera `build/badges/coverage.json`    |
-| `yarn workspace @squadview/signaling dev` | Sobe o Worker de sinalização localmente                    |
+| Comando                                   | O que faz                                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `yarn dev`                                | Abre o app com recarga automática da interface                                                                        |
+| `yarn build`                              | Gera o instalador NSIS em `target/release/bundle/nsis/`                                                               |
+| `yarn build:release`                      | Como o `build`, mas assina para a atualização automática (precisa de `TAURI_SIGNING_PRIVATE_KEY`; usado pela esteira) |
+| `yarn lint`                               | Prettier, ESLint, TypeScript, `cargo fmt` e `cargo clippy`                                                            |
+| `yarn format`                             | Formata tudo (Prettier + rustfmt)                                                                                     |
+| `yarn test`                               | Testes de Rust e TypeScript com cobertura                                                                             |
+| `yarn test:rs`                            | Só Rust (`cargo llvm-cov`)                                                                                            |
+| `yarn test:js`                            | Só interface e sinalização (Vitest)                                                                                   |
+| `yarn coverage:badge`                     | Junta as coberturas e gera `build/badges/coverage.json`                                                               |
+| `yarn workspace @squadview/signaling dev` | Sobe o Worker de sinalização localmente                                                                               |
 
 ## Estrutura
 

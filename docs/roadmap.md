@@ -9,7 +9,7 @@ Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 | 2. Transmissão 1:1 | ⬜     | QUIC, hole punching, sinalização                              | 2 PCs em redes diferentes, < 100 ms ponta a ponta                                      |
 | 3. Malha da sala   | ⬜     | Árvore de repasse, medição, pai reserva, 2 camadas, NACK/FEC  | Sala com 6+ pessoas; troca de pai < 1 s; membro fraco recebe 720p sem afetar os outros |
 | 4. App completo    | ⬜     | Salas, vários streams, configurações, login Discord, UI final | Fluxo completo sem terminal; prints reais no README                                    |
-| 5. Distribuição    | ⬜     | AMF (AMD), auto-update, Rich Presence, bot de aviso           | `v1.0.0`                                                                               |
+| 5. Distribuição    | ⬜     | AMF (AMD), Rich Presence, bot de aviso                        | `v1.0.0`                                                                               |
 | 6. Futuro          | ⬜     | Discord Activity, QuickSync (Intel), gravação local           | —                                                                                      |
 
 ## Fase 0 — Fundação
@@ -21,6 +21,7 @@ Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 - [x] Docs, ADRs e roadmap
 - [x] Agentes e skills do Claude
 - [x] CI, release-please, instalador NSIS e badge de cobertura
+- [x] Atualização automática assinada (OTA)
 - [ ] CI verde em `dev` e `main`
 - [ ] Release `v0.1.0`
 
@@ -58,6 +59,6 @@ Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 ## Fase 5 — Distribuição
 
 - [ ] Encoder AMF
-- [ ] Auto-update assinado
+
 - [ ] Rich Presence com botão "Assistir"
 - [ ] Bot de aviso no servidor do Discord

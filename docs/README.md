@@ -14,10 +14,11 @@
 
 ## Decisões registradas
 
-| #                                                  | Decisão                                      |
-| -------------------------------------------------- | -------------------------------------------- |
-| [0001](adr/0001-tauri-rust-react.md)               | Tauri + Rust no núcleo + React na interface  |
-| [0002](adr/0002-p2p-quic-sem-servidor-de-midia.md) | P2P sobre QUIC, sem servidor de mídia        |
-| [0003](adr/0003-sinalizacao-cloudflare-worker.md)  | Sinalização num Cloudflare Worker            |
-| [0004](adr/0004-abstracao-de-encoder.md)           | Encoder atrás de uma trait, NVENC primeiro   |
-| [0005](adr/0005-ui-estilo-discord.md)              | Interface com a hierarquia visual do Discord |
+| #                                                  | Decisão                                               |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| [0001](adr/0001-tauri-rust-react.md)               | Tauri + Rust no núcleo + React na interface           |
+| [0002](adr/0002-p2p-quic-sem-servidor-de-midia.md) | P2P sobre QUIC, sem servidor de mídia                 |
+| [0003](adr/0003-sinalizacao-cloudflare-worker.md)  | Sinalização num Cloudflare Worker                     |
+| [0004](adr/0004-abstracao-de-encoder.md)           | Encoder atrás de uma trait, NVENC primeiro            |
+| [0005](adr/0005-ui-estilo-discord.md)              | Interface com a hierarquia visual do Discord          |
+| [0006](adr/0006-atualizacao-automatica.md)         | Atualização automática assinada pelas GitHub Releases |

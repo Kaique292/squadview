@@ -31,5 +31,6 @@ Apenas a versão mais recente recebe correções.
 
 ### Atualizações e dependências
 
-- Atualizações só vêm das releases deste repositório.
+- Atualizações só vêm das releases deste repositório e são **assinadas**: o app confere a assinatura com a chave pública embutida e recusa qualquer pacote que não tenha sido assinado pela chave do mantenedor.
+- A atualização só é instalada quando você clica em "Atualizar e reiniciar".
 - As GitHub Actions são fixadas por commit, o `cargo-deny` confere licenças e vulnerabilidades conhecidas a cada PR, e o Dependabot avisa sobre atualizações.

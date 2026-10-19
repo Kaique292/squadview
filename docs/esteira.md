@@ -31,7 +31,8 @@ Roda em todo PR e em todo push na `dev` e na `main`.
 
 1. Todo push na `main` roda o **release-please**, que abre ou atualiza um PR "chore(release): versão X.Y.Z" com a versão nova e o changelog.
 2. Ao fazer merge desse PR, o release-please cria a **tag** `vX.Y.Z` e a **GitHub Release**.
-3. O job de build (Windows) gera o instalador NSIS e anexa à Release: `SquadView_X.Y.Z_x64-setup.exe` e `SHA256SUMS.txt`.
+3. O job de build (Windows) roda `yarn build:release`, que gera o instalador NSIS **assinado**, e `scripts/updater-manifest.mjs`, que monta o `latest.json`. Tudo é anexado à Release: `SquadView_X.Y.Z_x64-setup.exe`, `.sig`, `latest.json` e `SHA256SUMS.txt`.
+4. Os apps instalados consultam o `latest.json` da última Release ao abrir e oferecem a atualização (ver [ADR 0006](adr/0006-atualizacao-automatica.md)).
 
 ### Como publicar uma versão
 
@@ -43,11 +44,11 @@ Roda em todo PR e em todo push na `dev` e na `main`.
 
 ## Segredos e permissões
 
-| Item                                                               | Para quê                                  | Quando                                          |
-| ------------------------------------------------------------------ | ----------------------------------------- | ----------------------------------------------- |
-| `GITHUB_TOKEN` (automático)                                        | release-please, Releases, branch `badges` | já                                              |
-| `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Assinar os pacotes do auto-update         | Fase 5 (gerar com `yarn tauri signer generate`) |
-| Certificado de assinatura de código                                | Evitar o aviso do SmartScreen             | Opcional, quando houver orçamento               |
+| Item                                                               | Para quê                                           | Quando                                              |
+| ------------------------------------------------------------------ | -------------------------------------------------- | --------------------------------------------------- |
+| `GITHUB_TOKEN` (automático)                                        | release-please, Releases, branch `badges`          | já                                                  |
+| `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Assinar o instalador para a atualização automática | já (chave guardada fora do repositório, com backup) |
+| Certificado de assinatura de código                                | Evitar o aviso do SmartScreen                      | Opcional, quando houver orçamento                   |
 
 Em **Settings → Actions → General**, deixe ativo "Allow GitHub Actions to create and approve pull requests" para o release-please conseguir abrir o PR.
 

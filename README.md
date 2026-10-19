@@ -45,6 +45,7 @@
 - **Internet fraca não derruba ninguém.** Quem está com conexão ruim recebe 720p, e o resto da sala continua em 1080p.
 - **Vários streams ao mesmo tempo**, como no Discord: cada um transmite o seu jogo e você escolhe quem assistir.
 - **Só o áudio do jogo.** O som da call não vai junto no stream.
+- **Sempre atualizado.** O app avisa quando sai versão nova e se atualiza com um clique, com pacotes assinados.
 - **Visual que você já conhece.** Interface inspirada na organização do Discord, com identidade própria.
 - **Integração com o Discord** (planejada): login com a conta do Discord, botão "Assistir" no perfil e aviso no servidor quando alguém começar a transmitir.
 
@@ -129,14 +130,14 @@ Não. O SquadView é um projeto independente e open source, sem ligação com o 
 
 ## 🗺️ Roadmap
 
-| Fase | Entrega                                    | Status |
-| ---- | ------------------------------------------ | ------ |
-| 0    | Fundação: estrutura, docs e esteira        | 🟨     |
-| 1    | Captura + NVENC + preview local            | ⬜     |
-| 2    | Transmissão entre 2 PCs                    | ⬜     |
-| 3    | Malha da sala (repasse entre membros)      | ⬜     |
-| 4    | App completo + login com Discord           | ⬜     |
-| 5    | AMD, auto-update, Rich Presence → **v1.0** | ⬜     |
+| Fase | Entrega                                                     | Status |
+| ---- | ----------------------------------------------------------- | ------ |
+| 0    | Fundação: estrutura, docs, esteira e atualização automática | 🟨     |
+| 1    | Captura + NVENC + preview local                             | ⬜     |
+| 2    | Transmissão entre 2 PCs                                     | ⬜     |
+| 3    | Malha da sala (repasse entre membros)                       | ⬜     |
+| 4    | App completo + login com Discord                            | ⬜     |
+| 5    | AMD, Rich Presence, bot → **v1.0**                          | ⬜     |
 
 Roadmap completo em [docs/roadmap.md](docs/roadmap.md).
 
