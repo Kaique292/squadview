@@ -15,6 +15,7 @@ mod surface;
 mod system;
 mod viewer;
 mod voice;
+mod voice_mesh;
 
 pub use sv_media::{Bounds, WindowEvent, WindowTarget};
 

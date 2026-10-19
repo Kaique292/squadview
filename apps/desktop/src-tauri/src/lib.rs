@@ -6,6 +6,7 @@ mod invite;
 mod presence;
 mod preview;
 mod room;
+mod voice;
 
 /// Versão do app, exibida na interface e usada pelo auto-update.
 #[tauri::command]
@@ -116,6 +117,12 @@ pub fn run() {
             room::room_stop_watching,
             room::set_watch_listening,
             room::set_watch_volume,
+            voice::voice_devices,
+            voice::voice_set_muted,
+            voice::voice_set_deafened,
+            voice::voice_set_settings,
+            voice::voice_set_peer_volume,
+            voice::voice_set_peer_muted,
             preview::stop_preview,
         ])
         .run(tauri::generate_context!())

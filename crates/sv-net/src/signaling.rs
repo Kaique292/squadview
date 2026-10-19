@@ -28,6 +28,12 @@ pub struct Member {
     pub id: String,
     pub name: String,
     pub live: bool,
+    /// Microfone silenciado (para todos). Ausente no Worker antigo.
+    #[serde(default)]
+    pub muted: bool,
+    /// Ensurdecido (não ouve ninguém). Ausente no Worker antigo.
+    #[serde(default)]
+    pub deafened: bool,
 }
 
 /// Mensagens que mandamos.
@@ -43,6 +49,8 @@ enum Outgoing<'a> {
     },
     Status {
         live: bool,
+        muted: bool,
+        deafened: bool,
     },
     /// Renomeia a sala.
     Room {
@@ -220,7 +228,12 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.send(&Outgoing::Status { live });
+        self.set_status(live, false, false);
+    }
+
+    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado e ensurdecido.
+    pub fn set_status(&self, live: bool, muted: bool, deafened: bool) {
+        self.send(&Outgoing::Status { live, muted, deafened });
     }
 
     /// Renomeia a sala (todos recebem [`RoomEvent::RoomRenamed`], inclusive nós).
@@ -306,8 +319,13 @@ mod tests {
             serde_json::to_string(&Outgoing::Rename { name: "K.A" }).unwrap(),
             r#"{"type":"rename","name":"K.A"}"#
         );
-        let status = serde_json::to_string(&Outgoing::Status { live: true }).unwrap();
-        assert_eq!(status, r#"{"type":"status","live":true}"#);
+        let status = serde_json::to_string(&Outgoing::Status {
+            live: true,
+            muted: false,
+            deafened: true,
+        })
+        .unwrap();
+        assert_eq!(status, r#"{"type":"status","live":true,"muted":false,"deafened":true}"#);
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
         };
@@ -333,7 +351,9 @@ mod tests {
                 members: vec![Member {
                     id: "bb".into(),
                     name: "Beto".into(),
-                    live: true
+                    live: true,
+                    muted: false,
+                    deafened: false,
                 }],
                 room: None,
             })

@@ -4047,6 +4047,7 @@ dependencies = [
  "sv-core",
  "sv-encode",
  "sv-gpu",
+ "sv-media",
  "sv-net",
  "sv-session",
  "tauri",
@@ -4191,6 +4192,7 @@ dependencies = [
 name = "sv-session"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "quinn",
  "serde",
  "serde_json",

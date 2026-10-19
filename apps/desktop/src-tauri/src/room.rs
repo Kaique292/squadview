@@ -38,8 +38,8 @@ fn signaling_url() -> String {
 pub struct RoomState(Mutex<Running>);
 
 #[derive(Default)]
-struct Running {
-    room: Option<Room>,
+pub(crate) struct Running {
+    pub(crate) room: Option<Room>,
     watching: Option<Watching>,
 }
 
@@ -65,7 +65,7 @@ fn clean_name(value: &str) -> Option<String> {
     ((1..=32).contains(&len) && !name.chars().any(char::is_control)).then(|| name.to_owned())
 }
 
-fn lock(state: &RoomState) -> std::sync::MutexGuard<'_, Running> {
+pub(crate) fn lock(state: &RoomState) -> std::sync::MutexGuard<'_, Running> {
     state.0.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -77,6 +77,7 @@ pub async fn room_join(
     code: Option<String>,
     name: String,
     room_name: Option<String>,
+    voice: Option<crate::voice::VoicePrefs>,
 ) -> Result<RoomInfo, String> {
     let code = match code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         Some(c) => sv_net::signaling::normalize_room_code(c).ok_or("Código inválido: são 6 letras e números.")?,
@@ -88,9 +89,25 @@ pub async fn room_join(
     let events_app = app.clone();
     let (join_code, join_url) = (code.clone(), url.clone());
     let room = tauri::async_runtime::spawn_blocking(move || {
-        Room::join(&join_url, &join_code, &name, room_name.as_deref(), move |update| {
-            on_update(&events_app, update)
-        })
+        let settings = voice.as_ref().map(crate::voice::VoicePrefs::settings);
+        let joined = Room::join(
+            &join_url,
+            &join_code,
+            &name,
+            room_name.as_deref(),
+            settings,
+            move |update| on_update(&events_app, update),
+        )?;
+        // Entra com o mudo e o surdo que estavam ligados (como no Discord).
+        if let Some(v) = &voice {
+            if v.muted {
+                joined.set_muted(true);
+            }
+            if v.deafened {
+                joined.set_deafened(true);
+            }
+        }
+        Ok::<_, String>(joined)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -245,6 +262,18 @@ fn on_update(app: &AppHandle, update: RoomUpdate) {
         }
         RoomUpdate::RoomName(name) => {
             let _ = app.emit(ROOM_NAME_EVENT, name);
+        }
+        RoomUpdate::Voice(event) => crate::voice::emit_event(app, event),
+        RoomUpdate::VoicePeers(peers) => {
+            let _ = app.emit(crate::voice::PEERS_EVENT, peers);
+        }
+        RoomUpdate::VoiceFailed { member_id, reason } => {
+            app.state::<Diagnostics>()
+                .write("voice-failed", &json!({ "reason": reason }));
+            let _ = app.emit(
+                crate::voice::FAILED_EVENT,
+                crate::voice::VoiceFailed { member_id, reason },
+            );
         }
         RoomUpdate::WatchReady { member, conn, desc } => start_watching(app, member, conn, desc),
         RoomUpdate::WatchFailed { member_id, reason } => {

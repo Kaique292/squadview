@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sv_net::protocol::FrameHeader;
-use sv_net::{Broadcaster, Peer, Receiver, ReceiverSink, VideoFrame};
+use sv_net::{Broadcaster, Peer, Purpose, Receiver, ReceiverSink, VideoFrame};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -57,7 +57,10 @@ async fn assiste_um_stream_de_ponta_a_ponta() {
     let keyframes = Arc::new(Mutex::new(0u32));
     let broadcaster = Broadcaster::new();
     let accept = async {
-        let conn = streamer.accept().await.expect("aceitar");
+        let accepted = streamer.accept().await.expect("aceitar");
+        assert_eq!(accepted.purpose, Purpose::Stream);
+        assert_eq!(accepted.fingerprint.as_deref(), Some(viewer.fingerprint()));
+        let conn = accepted.conn;
         let k = keyframes.clone();
         broadcaster.add(conn, Arc::new(move || *k.lock().unwrap() += 1));
     };
@@ -142,4 +145,27 @@ async fn nao_conecta_em_quem_tem_outra_fingerprint() {
     let fake = "00".repeat(32);
     let result = viewer.connect(streamer.candidates(), &fake).await;
     assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conexao_de_voz_chega_marcada_como_voz_e_com_quem_e() {
+    let ana = Peer::bind(&[]).await.unwrap();
+    let beto = Peer::bind(&[]).await.unwrap();
+    ana.allowed().allow(beto.fingerprint());
+
+    let accept = ana.accept();
+    let connect = beto.connect_for(ana.candidates(), ana.fingerprint(), Purpose::Voice);
+    let (accepted, conn) = tokio::join!(accept, connect);
+    let accepted = accepted.expect("aceitar");
+    let conn = conn.expect("conectar");
+    assert_eq!(accepted.purpose, Purpose::Voice);
+    assert_eq!(accepted.fingerprint.as_deref(), Some(beto.fingerprint()));
+
+    // Voz vai em datagramas, nos dois sentidos.
+    conn.send_datagram(bytes::Bytes::from_static(b"oi")).unwrap();
+    let got = tokio::time::timeout(Duration::from_secs(5), accepted.conn.read_datagram())
+        .await
+        .expect("nada chegou")
+        .expect("datagrama");
+    assert_eq!(&got[..], b"oi");
 }

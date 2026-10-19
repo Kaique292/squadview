@@ -26,6 +26,16 @@ pub enum Signal {
     },
     /// Quem transmite recusou (não está ao vivo, ou atingiu o limite de espectadores).
     WatchDeny { reason: String },
+    /// Voz (ADR 0010): quem tem o id menor chama, com seus endereços e fingerprint.
+    VoiceOffer {
+        candidates: Vec<SocketAddr>,
+        fingerprint: String,
+    },
+    /// Voz: o outro aceita, manda os dele e "fura" o NAT; quem chamou conecta.
+    VoiceAnswer {
+        candidates: Vec<SocketAddr>,
+        fingerprint: String,
+    },
 }
 
 /// O que quem assiste precisa saber para preparar o decoder.

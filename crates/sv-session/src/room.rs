@@ -17,7 +17,8 @@ use sv_net::{Broadcaster, Member, Peer, RoomClient, RoomEvent as WireEvent, Vide
 use tokio::runtime::Runtime;
 
 use crate::surface::lock;
-use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap};
+use crate::voice_mesh::VoiceMesh;
+use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
 
 /// O que a interface precisa saber da sala.
 pub enum RoomUpdate {
@@ -25,6 +26,12 @@ pub enum RoomUpdate {
     Members(Vec<Member>),
     /// Nome da sala (`None`: sem nome; a interface mostra o código).
     RoomName(Option<String>),
+    /// Algo da voz: quem está falando, nível do microfone, falha de dispositivo.
+    Voice(VoiceEvent),
+    /// Com quem a voz está ligada (mudou: alguém conectou ou caiu).
+    VoicePeers(Vec<String>),
+    /// Não deu para ligar a voz com `member_id` (sem conexão direta).
+    VoiceFailed { member_id: String, reason: String },
     /// A conexão com quem pedimos para assistir abriu.
     WatchReady {
         member: Member,
@@ -48,6 +55,13 @@ impl std::fmt::Debug for RoomUpdate {
         match self {
             Self::Members(m) => f.debug_tuple("Members").field(m).finish(),
             Self::RoomName(n) => f.debug_tuple("RoomName").field(n).finish(),
+            Self::Voice(e) => f.debug_tuple("Voice").field(e).finish(),
+            Self::VoicePeers(p) => f.debug_tuple("VoicePeers").field(p).finish(),
+            Self::VoiceFailed { member_id, reason } => f
+                .debug_struct("VoiceFailed")
+                .field("member_id", member_id)
+                .field("reason", reason)
+                .finish(),
             Self::WatchReady { member, .. } => f.debug_struct("WatchReady").field("member", member).finish(),
             Self::WatchFailed { member_id, reason } => f
                 .debug_struct("WatchFailed")
@@ -84,6 +98,8 @@ struct Inner {
     keyframes: Mutex<Option<KeyframeHandle>>,
     /// Quem pedimos para assistir, esperando resposta.
     pending_watch: Mutex<Option<String>>,
+    voice: Arc<VoiceMesh>,
+    runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
 }
 
@@ -107,6 +123,7 @@ impl Room {
         code: &str,
         name: &str,
         room_name: Option<&str>,
+        voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let runtime = Arc::new(
@@ -118,6 +135,8 @@ impl Room {
                 .map_err(|e| e.to_string())?,
         );
         let on_update: OnUpdate = Arc::new(on_update);
+        let voice_update = on_update.clone();
+        let voice = Arc::new(VoiceMesh::start(voice, move |e| voice_update(RoomUpdate::Voice(e))));
         let (inner, events) = runtime.block_on(async {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
@@ -139,6 +158,8 @@ impl Room {
                     id: you,
                     name: name.to_owned(),
                     live: false,
+                    muted: false,
+                    deafened: false,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -146,6 +167,8 @@ impl Room {
                 stream: Mutex::new(None),
                 keyframes: Mutex::new(None),
                 pending_watch: Mutex::new(None),
+                voice,
+                runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
             });
             Ok::<_, String>((inner, events))
@@ -153,6 +176,7 @@ impl Room {
 
         inner.publish_members();
         (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
+        inner.offer_voice_to_all();
         runtime.spawn(run_session(inner.clone(), events));
         runtime.spawn(accept_viewers(inner.clone()));
         Ok(Self {
@@ -199,7 +223,7 @@ impl Room {
     pub fn stream_started(&self, keyframes: KeyframeHandle) {
         *lock(&self.inner.keyframes) = Some(keyframes);
         lock(&self.inner.me).live = true;
-        lock(&self.inner.client).set_live(true);
+        self.inner.send_status();
         self.inner.publish_members();
     }
 
@@ -209,7 +233,7 @@ impl Room {
         *lock(&self.inner.stream) = None;
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
-        lock(&self.inner.client).set_live(false);
+        self.inner.send_status();
         self.inner.publish_members();
     }
 
@@ -249,6 +273,31 @@ impl Room {
         self.inner.peer.nat()
     }
 
+    /// O motor de voz (`None`: a sala entrou sem voz ou o áudio falhou).
+    pub fn voice(&self) -> Option<&VoiceEngine> {
+        self.inner.voice.engine()
+    }
+
+    /// Silencia o nosso microfone para todos (e avisa a sala, para aparecer o ícone).
+    pub fn set_muted(&self, muted: bool) {
+        if let Some(v) = self.voice() {
+            v.set_muted(muted);
+        }
+        lock(&self.inner.me).muted = muted;
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
+    /// Ensurdece: não ouvimos ninguém e o microfone também fica mudo.
+    pub fn set_deafened(&self, deafened: bool) {
+        if let Some(v) = self.voice() {
+            v.set_deafened(deafened);
+        }
+        lock(&self.inner.me).deafened = deafened;
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
     /// Quantos amigos estão assistindo a gente.
     pub fn viewer_count(&self) -> usize {
         self.inner.broadcaster.viewer_count()
@@ -258,11 +307,41 @@ impl Room {
 impl Drop for Room {
     fn drop(&mut self) {
         self.inner.broadcaster.close();
+        self.inner.voice.close();
         self.inner.peer.close();
     }
 }
 
 impl Inner {
+    /// Manda para a sala o nosso estado (ao vivo, mudo, surdo).
+    fn send_status(&self) {
+        let me = lock(&self.me).clone();
+        lock(&self.client).set_status(me.live, me.muted, me.deafened);
+    }
+
+    /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
+    fn offer_voice_to(&self, member: &str) {
+        let me = lock(&self.me).id.clone();
+        if self.voice.should_offer(&me, member) {
+            let offer = Signal::VoiceOffer {
+                candidates: self.peer.candidates().to_vec(),
+                fingerprint: self.peer.fingerprint().to_owned(),
+            };
+            lock(&self.client).signal(member, &offer);
+        }
+    }
+
+    fn offer_voice_to_all(&self) {
+        let members: Vec<String> = lock(&self.members).keys().cloned().collect();
+        for m in members {
+            self.offer_voice_to(&m);
+        }
+    }
+
+    fn publish_voice_peers(&self) {
+        (self.on_update)(RoomUpdate::VoicePeers(self.voice.connected()));
+    }
+
     fn publish_members(&self) {
         let me = lock(&self.me).clone();
         let mut list = vec![me];
@@ -315,6 +394,8 @@ impl Inner {
                         id: from.clone(),
                         name: "?".into(),
                         live: true,
+                        muted: false,
+                        deafened: false,
                     });
                     match result {
                         Ok(conn) => (inner.on_update)(RoomUpdate::WatchReady {
@@ -323,6 +404,47 @@ impl Inner {
                             desc: stream,
                         }),
                         Err(e) => (inner.on_update)(RoomUpdate::WatchFailed {
+                            member_id: from,
+                            reason: connect_failure(&e, inner.peer.nat()),
+                        }),
+                    }
+                });
+            }
+            Signal::VoiceOffer {
+                candidates,
+                fingerprint,
+            } => {
+                if self.voice.engine().is_none() {
+                    return;
+                }
+                self.peer.allowed().allow(&fingerprint);
+                self.voice.expect(&from, &fingerprint);
+                self.peer.punch(&candidates);
+                let answer = Signal::VoiceAnswer {
+                    candidates: self.peer.candidates().to_vec(),
+                    fingerprint: self.peer.fingerprint().to_owned(),
+                };
+                lock(&self.client).signal(&from, &answer);
+            }
+            Signal::VoiceAnswer {
+                candidates,
+                fingerprint,
+            } => {
+                if !self.voice.answered(&from) {
+                    return;
+                }
+                let inner = self.clone();
+                tokio::spawn(async move {
+                    match inner
+                        .peer
+                        .connect_for(&candidates, &fingerprint, sv_net::Purpose::Voice)
+                        .await
+                    {
+                        Ok(conn) => {
+                            inner.voice.register(&inner.runtime, from, conn);
+                            inner.publish_voice_peers();
+                        }
+                        Err(e) => (inner.on_update)(RoomUpdate::VoiceFailed {
                             member_id: from,
                             reason: connect_failure(&e, inner.peer.nat()),
                         }),
@@ -360,13 +482,21 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 *lock(&inner.room_name) = Some(name.clone());
                 (inner.on_update)(RoomUpdate::RoomName(Some(name)));
             }
-            WireEvent::MemberJoined(m) | WireEvent::MemberUpdated(m) => {
+            WireEvent::MemberJoined(m) => {
+                let id = m.id.clone();
+                lock(&inner.members).insert(id.clone(), m);
+                inner.publish_members();
+                inner.offer_voice_to(&id);
+            }
+            WireEvent::MemberUpdated(m) => {
                 lock(&inner.members).insert(m.id.clone(), m);
                 inner.publish_members();
             }
             WireEvent::MemberLeft(id) => {
                 lock(&inner.members).remove(&id);
+                inner.voice.unregister(&id);
                 inner.publish_members();
+                inner.publish_voice_peers();
             }
             WireEvent::Signal { from, signal } => inner.on_signal(from, signal),
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
@@ -410,10 +540,10 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
                 if room.is_some() {
                     *lock(&inner.room_name) = room;
                 }
-                if live {
-                    lock(&inner.client).set_live(true);
-                }
+                let _ = live;
+                inner.send_status();
                 inner.publish_members();
+                inner.offer_voice_to_all();
                 (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
                 (inner.on_update)(RoomUpdate::Reconnected);
                 return Some(events);
@@ -428,7 +558,19 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
 }
 
 async fn accept_viewers(inner: Arc<Inner>) {
-    while let Some(conn) = inner.peer.accept().await {
+    while let Some(accepted) = inner.peer.accept().await {
+        if accepted.purpose == sv_net::Purpose::Voice {
+            // Voz: quem é vem da fingerprint que a pessoa mandou no voice-offer.
+            match accepted.fingerprint.as_deref().and_then(|f| inner.voice.member_for(f)) {
+                Some(member) => {
+                    inner.voice.register(&inner.runtime, member, accepted.conn);
+                    inner.publish_voice_peers();
+                }
+                None => accepted.conn.close(quinn::VarInt::from_u32(2), b"desconhecido"),
+            }
+            continue;
+        }
+        let conn = accepted.conn;
         let keyframes = lock(&inner.keyframes).clone();
         let Some(keyframes) = keyframes else {
             conn.close(quinn::VarInt::from_u32(1), b"nao esta transmitindo");

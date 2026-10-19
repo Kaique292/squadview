@@ -23,6 +23,7 @@ sv-capture.workspace = true
 sv-core.workspace = true
 sv-encode.workspace = true
 sv-gpu.workspace = true
+sv-media.workspace = true
 sv-net.workspace = true
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 sv-session.workspace = true
