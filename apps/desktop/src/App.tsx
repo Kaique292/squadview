@@ -11,7 +11,6 @@ import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
-import { UpdateBanner } from "./update/UpdateBanner";
 
 /**
  * Layout principal, na hierarquia do Discord: barra de título, barra de salas, barra lateral com
@@ -47,7 +46,6 @@ export function App() {
       <div
         className={`z-[1] flex min-h-0 min-w-0 flex-col ${fullscreen ? "" : "col-3 row-[2/4] border-t border-white/[0.06]"}`}
       >
-        <UpdateBanner />
         <main
           className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
             fullscreen ? "bg-surface-2 p-0" : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
