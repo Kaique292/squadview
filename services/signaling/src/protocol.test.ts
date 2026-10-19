@@ -24,7 +24,16 @@ describe("mensagens do cliente", () => {
       type: "join",
       name: "Ana",
       protocol: 1,
+      room: null,
     });
+    expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
+      type: "join",
+      name: "Ana",
+      protocol: 1,
+      room: "Galera do LoL",
+    });
+    expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
+    expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });
     expect(parseClientMessage('{"type":"status","live":true}')).toEqual({ type: "status", live: true });
     expect(parseClientMessage(`{"type":"signal","to":"${PEER}","payload":{"candidates":[]}}`)).toEqual({
       type: "signal",
@@ -43,6 +52,9 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1.5}')).toBeNull();
     expect(parseClientMessage('{"type":"join","name":"","protocol":1}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":"sim"}')).toBeNull();
+    expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
+    expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
+    expect(parseClientMessage('{"type":"rename"}')).toBeNull();
   });
 
   it("recusa signal com destino inválido ou payload que não é objeto", () => {

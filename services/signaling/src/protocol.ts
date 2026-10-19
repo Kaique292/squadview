@@ -22,7 +22,9 @@ export interface Member {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string; protocol: number }
+  | { type: "join"; name: string; protocol: number; room: string | null }
+  | { type: "room"; name: string }
+  | { type: "rename"; name: string }
   | { type: "status"; live: boolean }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   | { type: "leave" };
@@ -31,7 +33,8 @@ export type ErrorCode =
   "room-full" | "invalid-message" | "version-mismatch" | "not-joined" | "unknown-peer" | "rate-limited";
 
 export type ServerMessage =
-  | { type: "welcome"; you: PeerId; members: Member[] }
+  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null }
+  | { type: "room-updated"; name: string }
   | { type: "member-joined"; member: Member }
   | { type: "member-updated"; member: Member }
   | { type: "member-left"; id: PeerId }
@@ -76,7 +79,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "join": {
       const name = cleanName(data.name);
       if (name === null || typeof data.protocol !== "number" || !Number.isInteger(data.protocol)) return null;
-      return { type: "join", name, protocol: data.protocol };
+      // Nome da sala: opcional (apps da versão 0.1.0 não mandam); se vier, precisa ser válido.
+      const room = data.room === undefined || data.room === null ? null : cleanName(data.room);
+      if (room === null && data.room !== undefined && data.room !== null) return null;
+      return { type: "join", name, protocol: data.protocol, room };
+    }
+    case "room":
+    case "rename": {
+      const name = cleanName(data.name);
+      return name === null ? null : { type: data.type, name };
     }
     case "status":
       return typeof data.live === "boolean" ? { type: "status", live: data.live } : null;

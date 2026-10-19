@@ -88,13 +88,14 @@ function idOf(c: FakeConnection) {
 describe("entrar na sala", () => {
   it("recebe o próprio id e a lista de quem já está na sala", () => {
     const ana = join("Ana");
-    expect(ana.last()).toEqual({ type: "welcome", you: idOf(ana), members: [] });
+    expect(ana.last()).toEqual({ type: "welcome", you: idOf(ana), members: [], room: null });
 
     const beto = join("Beto");
     expect(beto.last()).toEqual({
       type: "welcome",
       you: idOf(beto),
       members: [{ id: idOf(ana), name: "Ana", live: false }],
+      room: null,
     });
   });
 
@@ -139,6 +140,49 @@ describe("entrar na sala", () => {
     const beto = join("Beto");
     expect(idOf(ana)).toBe("aaaaaaaaaaaaaaaa");
     expect(idOf(beto)).toBe("bbbbbbbbbbbbbbbb");
+  });
+});
+
+describe("nome da sala e apelido", () => {
+  function joinNaming(name: string, roomName: string) {
+    const c = connect();
+    send(c, { type: "join", name, protocol: 1, room: roomName });
+    return c;
+  }
+
+  it("quem cria a sala escolhe o nome, e quem chega depois recebe esse nome", () => {
+    const ana = joinNaming("Ana", "Galera do LoL");
+    expect(ana.last()).toMatchObject({ type: "welcome", room: "Galera do LoL" });
+    // Quem entra numa sala que já existe não troca o nome dela.
+    const beto = joinNaming("Beto", "Outro nome");
+    expect(beto.last()).toMatchObject({ type: "welcome", room: "Galera do LoL" });
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ type: "welcome", room: "Galera do LoL" });
+  });
+
+  it("qualquer membro renomeia a sala e todos ficam sabendo, inclusive quem chega depois", () => {
+    const ana = joinNaming("Ana", "Sala 1");
+    const beto = join("Beto");
+    send(beto, { type: "room", name: "Squad" });
+    expect(ana.last()).toEqual({ type: "room-updated", name: "Squad" });
+    expect(beto.last()).toEqual({ type: "room-updated", name: "Squad" });
+    expect(join("Caio").last()).toMatchObject({ type: "welcome", room: "Squad" });
+  });
+
+  it("troca o apelido e avisa os outros", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "rename", name: "Betão" });
+    expect(ana.last()).toEqual({ type: "member-updated", member: { id: idOf(beto), name: "Betão", live: false } });
+    expect(join("Caio").last()).toMatchObject({
+      members: expect.arrayContaining([{ id: idOf(beto), name: "Betão", live: false }]),
+    });
+  });
+
+  it("a sala esvaziada esquece o nome", () => {
+    const ana = joinNaming("Ana", "Sala antiga");
+    send(ana, { type: "leave" });
+    expect(join("Beto").last()).toMatchObject({ type: "welcome", room: null });
   });
 });
 
