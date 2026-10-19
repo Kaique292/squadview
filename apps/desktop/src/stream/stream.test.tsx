@@ -1,0 +1,466 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
+import { App } from "../App";
+import { StatsCard } from "./StatsCard";
+import { StreamDialog } from "./StreamDialog";
+import { StreamView } from "./StreamView";
+import { openOverlays } from "../ui/overlay";
+import {
+  DEFAULT_QUALITY,
+  estimatedMbps,
+  listenToStreamEvents,
+  type Source,
+  type StreamStats,
+  useStreamStore,
+} from "./stream-store";
+
+const { invoke, listen, handlers } = vi.hoisted(() => {
+  const handlers = new Map<string, (e: { payload: unknown }) => void>();
+  return {
+    handlers,
+    invoke: vi.fn(),
+    listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      handlers.set(name, cb);
+      return () => handlers.delete(name);
+    }),
+  };
+});
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
+
+const SOURCES: Source[] = [
+  { id: { kind: "monitor", handle: 1 }, name: "Monitor 1 (principal)", processId: null, processName: null },
+  { id: { kind: "window", handle: 42 }, name: "Counter-Strike 2", processId: 7, processName: "cs2.exe" },
+];
+
+const STATS: StreamStats = {
+  rttMs: 0,
+  audioActive: true,
+  audioError: null,
+  audioKbps: 128,
+  audioLevel: 0.5,
+  audioLost: 0,
+  sourceFps: 74,
+  fps: 60,
+  bitrateKbps: 8000,
+  encodeMs: 2.1,
+  latencyMs: 12,
+  latencyP95Ms: 20,
+  dropped: 0,
+  width: 1920,
+  height: 1080,
+  encoder: "NVIDIA H.264 Encoder MFT",
+};
+
+beforeEach(() => {
+  invoke.mockReset();
+  handlers.clear();
+  useStreamStore.setState({
+    status: "idle",
+    sources: [],
+    loadingSources: false,
+    thumbnails: {},
+    quality: DEFAULT_QUALITY,
+    stats: null,
+    system: null,
+    notice: null,
+    listening: false,
+    fullscreen: false,
+    logPath: null,
+    error: null,
+  });
+});
+
+function mockBackend(start: () => Promise<unknown> = async () => undefined) {
+  invoke.mockImplementation((cmd: string, args?: { source?: { handle: number } }) => {
+    if (cmd === "list_sources") return Promise.resolve(SOURCES);
+    if (cmd === "source_thumbnail") {
+      // A janela do jogo tem miniatura; o monitor não manda imagem.
+      return Promise.resolve(args?.source?.handle === 42 ? "data:image/jpeg;base64,AAAA" : null);
+    }
+    if (cmd === "start_preview") return start();
+    return Promise.resolve();
+  });
+}
+
+async function openDialog() {
+  render(<StreamDialog />);
+  fireEvent.click(screen.getByRole("button", { name: "Transmitir minha tela" }));
+  return screen.findByRole("dialog");
+}
+
+describe("transmitir a tela: escolher a fonte", () => {
+  it("separa aplicativos e telas em abas, começando por aplicativos", async () => {
+    mockBackend();
+    await openDialog();
+    expect(await screen.findByRole("button", { name: "Counter-Strike 2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Monitor 1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Aplicativos" })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
+    expect(screen.getByRole("button", { name: /Monitor 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Counter-Strike 2" })).not.toBeInTheDocument();
+  });
+
+  it("mostra a miniatura quando chega e um ícone quando a fonte não manda imagem", async () => {
+    mockBackend();
+    await openDialog();
+    const card = await screen.findByRole("button", { name: "Counter-Strike 2" });
+    await waitFor(() => expect(card.querySelector("img")).toHaveAttribute("src", "data:image/jpeg;base64,AAAA"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
+    await waitFor(() => expect(useStreamStore.getState().thumbnails["monitor-1"]).toBeNull());
+    const monitor = screen.getByRole("button", { name: /Monitor 1/ });
+    expect(monitor.querySelector("img")).toBeNull();
+    expect(monitor.querySelector("[data-testid=miniatura-carregando]")).toBeNull();
+  });
+
+  it("mostra carregando enquanto a miniatura não chega", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "list_sources" ? Promise.resolve(SOURCES) : new Promise(() => {}),
+    );
+    await openDialog();
+    const card = await screen.findByRole("button", { name: "Counter-Strike 2" });
+    expect(card.querySelector("[data-testid=miniatura-carregando]")).not.toBeNull();
+  });
+
+  it("guarda a miniatura como vazia quando o pedido falha", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "list_sources" ? Promise.resolve(SOURCES) : Promise.reject(new Error("falhou")),
+    );
+    await useStreamStore.getState().loadSources();
+    expect(useStreamStore.getState().thumbnails).toEqual({ "monitor-1": null, "window-42": null });
+  });
+
+  it("avisa quando não há aplicativos abertos", async () => {
+    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "list_sources" ? [SOURCES[0]] : null));
+    await openDialog();
+    expect(await screen.findByText("Nenhum aplicativo aberto para transmitir.")).toBeInTheDocument();
+  });
+
+  it("não deixa ficar ao vivo sem escolher uma fonte", async () => {
+    mockBackend();
+    await openDialog();
+    expect(screen.getByRole("button", { name: "Ficar ao vivo" })).toBeDisabled();
+  });
+
+  it("avisa quando não consegue listar as fontes", async () => {
+    invoke.mockRejectedValue(new Error("falhou"));
+    await useStreamStore.getState().loadSources();
+    expect(useStreamStore.getState().error).toMatch(/Não deu para listar/);
+  });
+});
+
+describe("transmitir a tela: qualidade", () => {
+  async function pickGame() {
+    mockBackend();
+    await openDialog();
+    fireEvent.click(await screen.findByRole("button", { name: "Counter-Strike 2" }));
+  }
+
+  it("mostra o que vai transmitir, com 1080p e 60 fps marcados e tudo liberado", async () => {
+    await pickGame();
+    expect(screen.getByText("O que você está transmitindo")).toBeInTheDocument();
+    expect(screen.getByText("Counter-Strike 2")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "1080p" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "60" })).toHaveAttribute("aria-checked", "true");
+    for (const name of ["720p", "1440p", "Fonte", "15", "30"]) {
+      expect(screen.getByRole("radio", { name })).toBeEnabled();
+    }
+    expect(screen.queryByText(/nitro/i)).not.toBeInTheDocument();
+  });
+
+  it("volta para a escolha da fonte com Trocar ou Voltar", async () => {
+    await pickGame();
+    fireEvent.click(screen.getByRole("button", { name: "Trocar" }));
+    expect(screen.getByRole("tab", { name: "Aplicativos" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Counter-Strike 2" }));
+    fireEvent.click(screen.getByRole("button", { name: /Voltar/ }));
+    expect(screen.getByRole("tab", { name: "Telas" })).toBeInTheDocument();
+  });
+
+  it("fica ao vivo com a fonte e a qualidade escolhidas e fecha o modal", async () => {
+    await pickGame();
+    fireEvent.click(screen.getByRole("radio", { name: "1440p" }));
+    fireEvent.click(screen.getByRole("radio", { name: "30" }));
+    expect(screen.getByText(/Mbps de upload/)).toHaveTextContent("7.1");
+    fireEvent.click(screen.getByRole("button", { name: "Ficar ao vivo" }));
+
+    await waitFor(() => expect(useStreamStore.getState().status).toBe("live"));
+    expect(invoke).toHaveBeenCalledWith("start_preview", {
+      source: { kind: "window", handle: 42 },
+      quality: { resolution: "1440", fps: 30 },
+      audioPid: 7,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("lembra a qualidade escolhida na próxima vez", async () => {
+    await pickGame();
+    fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+    expect(useStreamStore.getState().quality).toEqual({ resolution: "720", fps: 60 });
+  });
+
+  it("explica a opção Fonte", async () => {
+    await pickGame();
+    fireEvent.click(screen.getByRole("radio", { name: "Fonte" }));
+    expect(screen.getByText(/tamanho original/)).toBeInTheDocument();
+  });
+
+  it("mostra o erro do Rust e continua com o modal aberto", async () => {
+    mockBackend(() => Promise.reject("Não deu para iniciar o encoder de vídeo: sem placa"));
+    await openDialog();
+    fireEvent.click(await screen.findByRole("button", { name: "Counter-Strike 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ficar ao vivo" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("sem placa");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("usa uma mensagem genérica quando o erro não é texto", async () => {
+    invoke.mockRejectedValue(new Error("objeto"));
+    await useStreamStore.getState().start({ kind: "monitor", handle: 1 }, DEFAULT_QUALITY);
+    expect(useStreamStore.getState()).toMatchObject({ status: "idle", error: "Não deu para começar a transmissão." });
+  });
+});
+
+describe("estimativa de upload", () => {
+  it("segue a fórmula do Rust e respeita piso e teto", () => {
+    expect(estimatedMbps({ resolution: "1080", fps: 60 })).toBeCloseTo(7.96, 1);
+    expect(estimatedMbps({ resolution: "1440", fps: 30 })).toBeCloseTo(7.08, 1);
+    expect(estimatedMbps({ resolution: "720", fps: 15 })).toBe(1.5);
+    expect(estimatedMbps({ resolution: "source", fps: 60 })).toBe(25);
+    // Fonte menor que a resolução escolhida: não aumenta.
+    expect(estimatedMbps({ resolution: "1440", fps: 60 }, 1080)).toBeCloseTo(7.96, 1);
+  });
+});
+
+describe("transmitir a tela: áudio", () => {
+  it("numa janela, manda o som do próprio jogo por padrão e deixa desligar", async () => {
+    mockBackend();
+    await openDialog();
+    fireEvent.click(await screen.findByRole("button", { name: "Counter-Strike 2" }));
+    const sw = screen.getByRole("switch", { name: "Transmitir o som de cs2.exe" });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(sw);
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Ficar ao vivo" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_preview", expect.objectContaining({ audioPid: null })),
+    );
+  });
+
+  it("numa tela, começa sem som e deixa escolher o aplicativo", async () => {
+    mockBackend();
+    await openDialog();
+    fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
+    fireEvent.click(screen.getByRole("button", { name: /Monitor 1/ }));
+    const select = screen.getByRole("combobox", { name: "Som de qual aplicativo?" });
+    expect(select).toHaveValue("");
+    fireEvent.change(select, { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ficar ao vivo" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_preview", expect.objectContaining({ audioPid: 7 })));
+  });
+});
+
+describe("prévia ao vivo", () => {
+  it("mostra o medidor do áudio e liga o som da prévia", async () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", stats: { ...STATS, audioLost: 2 } });
+    render(<StatsCard />);
+    expect(screen.getByRole("meter", { name: "Nível do áudio" })).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText(/128 kbps · 2 perdidos/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Ouvir o som da prévia" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_preview_listening", { listening: true }));
+    expect(useStreamStore.getState().listening).toBe(true);
+  });
+
+  it("volta a chave se o Rust recusar ligar o som", async () => {
+    invoke.mockRejectedValue(new Error("falhou"));
+    await useStreamStore.getState().setListening(true);
+    expect(useStreamStore.getState().listening).toBe(false);
+  });
+
+  it("explica quando não há som ou deu erro na captura", () => {
+    useStreamStore.setState({ status: "live", stats: { ...STATS, audioActive: false } });
+    const { rerender } = render(<StatsCard />);
+    expect(screen.getByText(/Sem som: escolha um aplicativo/)).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    useStreamStore.setState({
+      stats: { ...STATS, audioActive: false, audioError: "não deu para capturar o áudio desse aplicativo" },
+    });
+    rerender(<StatsCard />);
+    expect(screen.getByText(/não deu para capturar o áudio/)).toBeInTheDocument();
+  });
+
+  it("mostra 'Medindo…' até chegar a primeira estatística", () => {
+    render(<StatsCard />);
+    expect(screen.getByText("Medindo…")).toBeInTheDocument();
+  });
+
+  it("segue funcionando se o caminho do registro não vier", async () => {
+    invoke.mockRejectedValue(new Error("sem registro"));
+    const unlisten = await listenToStreamEvents();
+    expect(useStreamStore.getState().logPath).toBeNull();
+    unlisten();
+  });
+
+  it("mostra os números e destaca latência alta", () => {
+    useStreamStore.setState({ status: "live", stats: { ...STATS, latencyMs: 80 } });
+    render(<StatsCard />);
+    expect(screen.getByText("1920×1080")).toBeInTheDocument();
+    expect(screen.getByText("8.0")).toBeInTheDocument();
+    expect(screen.getByText("80")).toHaveClass("text-warning");
+    expect(screen.getByText(/NVIDIA H.264 Encoder MFT/)).toBeInTheDocument();
+  });
+
+  it("para a prévia pelo botão", async () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", stats: STATS });
+    render(<StreamView />);
+    fireEvent.click(screen.getByRole("button", { name: "Parar" }));
+    await waitFor(() => expect(useStreamStore.getState().status).toBe("idle"));
+    expect(invoke).toHaveBeenCalledWith("stop_preview");
+  });
+
+  it("recebe estatísticas, uso do sistema e o fim da prévia pelos eventos do Rust", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "session_log_path" ? "D:/SquadView/logs/sessao.jsonl" : undefined),
+    );
+    const unlisten = await listenToStreamEvents();
+    useStreamStore.setState({ status: "live" });
+    render(<App />);
+
+    act(() => handlers.get("stream-stats")!({ payload: STATS }));
+    act(() => handlers.get("system-load")!({ payload: { gpu3d: 71, gpuEncode: 9, gpuDecode: 3, cpu: 22 } }));
+    expect(screen.getByRole("region", { name: "Prévia ao vivo" })).toHaveTextContent("60 fps · 12 ms · 8.0 Mbps");
+    fireEvent.click(screen.getByRole("button", { name: "Detalhes da transmissão" }));
+    const card = screen.getByRole("region", { name: "Estatísticas da transmissão" });
+    expect(card).toHaveTextContent("Quadros do jogo74");
+    expect(card).toHaveTextContent("Encoder da GPU9");
+    expect(card).toHaveTextContent("D:/SquadView/logs/sessao.jsonl");
+
+    act(() =>
+      handlers.get("stream-notice")!({
+        payload: { kind: "source-changed", message: "O jogo trocou de janela. Agora transmitindo “LoL”." },
+      }),
+    );
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Agora transmitindo “LoL”");
+    act(() => handlers.get("stream-notice")!({ payload: { kind: "no-frames", message: "A imagem parou de chegar." } }));
+    const view = screen.getByRole("region", { name: "Prévia ao vivo" });
+    expect(view).toHaveTextContent("A imagem parou de chegar.");
+    act(() => handlers.get("stream-notice")!({ payload: null }));
+    expect(view).not.toHaveTextContent("A imagem parou de chegar.");
+
+    act(() => handlers.get("stream-ended")!({ payload: null }));
+    expect(screen.getByRole("heading", { name: "Ninguém está transmitindo ainda" })).toBeInTheDocument();
+    unlisten();
+    expect(handlers.size).toBe(0);
+  });
+});
+
+describe("vídeo dentro do app", () => {
+  it("entra e sai da tela cheia pelo botão, escondendo as barras laterais", async () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", stats: STATS });
+    render(<App />);
+    expect(screen.getByRole("navigation", { name: "Salas" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: true }));
+    expect(screen.getByRole("navigation", { name: "Salas", hidden: true })).toHaveClass("hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair da tela cheia" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false }));
+  });
+
+  it("obedece aos dois cliques/F11 e ao Esc feitos dentro do vídeo nativo", async () => {
+    invoke.mockResolvedValue(undefined);
+    const unlisten = await listenToStreamEvents();
+    act(() => handlers.get("video-fullscreen")!({ payload: "toggle" }));
+    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
+    act(() => handlers.get("video-fullscreen")!({ payload: "exit" }));
+    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));
+
+    act(() => handlers.get("video-fullscreen")!({ payload: "toggle" }));
+    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));
+    unlisten();
+  });
+
+  it("desfaz a tela cheia se o Rust recusar", async () => {
+    invoke.mockRejectedValue(new Error("falhou"));
+    await useStreamStore.getState().setFullscreen(true);
+    expect(useStreamStore.getState().fullscreen).toBe(false);
+  });
+
+  it("parar a transmissão sai da tela cheia", async () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", fullscreen: true });
+    await useStreamStore.getState().stop();
+    expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false });
+    expect(useStreamStore.getState().fullscreen).toBe(false);
+  });
+
+  it("esconde o vídeo nativo enquanto um modal está aberto", async () => {
+    mockBackend();
+    expect(openOverlays()).toBe(0);
+    await openDialog();
+    expect(openOverlays()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(openOverlays()).toBe(0));
+  });
+});
+
+describe("posição do vídeo nativo", () => {
+  let observed: (() => void) | null = null;
+  beforeEach(() => {
+    observed = null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: () => void) {
+          observed = cb;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    vi.stubGlobal("devicePixelRatio", 1.5);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  });
+
+  it("manda a área do vídeo em pixels físicos, só quando muda, e esconde ao sair", () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", stats: STATS });
+    const rect = { left: 100, top: 40, width: 800, height: 450 };
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ ...rect, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect,
+    );
+    const { unmount } = render(<StreamView />);
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675 });
+
+    invoke.mockClear();
+    act(() => observed!());
+    expect(invoke).not.toHaveBeenCalled();
+
+    rect.width = 1000;
+    act(() => observed!());
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1500, height: 675 });
+
+    unmount();
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0 });
+  });
+
+  it("pede para esconder o vídeo enquanto um modal está aberto", async () => {
+    mockBackend();
+    await openDialog();
+    expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: true });
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: false }));
+  });
+});

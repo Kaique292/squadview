@@ -1,15 +1,31 @@
 @import "tailwindcss";
+@import "@fontsource-variable/figtree";
 
 /*
  * Tokens do SquadView (ver docs/design/ui.md).
  * Tema escuro em camadas, inspirado na hierarquia visual do Discord, com paleta própria.
  */
 @theme {
-  --color-surface-0: #111214; /* barra de salas */
-  --color-surface-1: #1a1b1e; /* barra lateral */
-  --color-surface-2: #232428; /* área principal */
-  --color-surface-3: #2e3035; /* cards, inputs */
-  --color-surface-hover: #35373c;
+  /* Camadas do mais escuro (fundo) para o mais claro, nos mesmos tons do tema escuro do Discord. */
+  --color-surface-float: #111214; /* menus e dicas */
+  --color-surface-0: #1e1f22; /* barra de título, barra de salas, inputs */
+  --color-surface-1: #2b2d31; /* barra lateral, cards dentro de modais */
+  --color-surface-panel: #232428; /* painel flutuante do usuário */
+  --color-surface-2: #313338; /* área principal, modais */
+  --color-surface-3: #383a40; /* botões neutros */
+  --color-surface-hover: #404249;
+
+  /*
+   * Vidro: as camadas da estrutura ficam translúcidas conforme `--glass` (0 a 1, ajustado em
+   * Configurações). Com 0, são as mesmas cores sólidas de cima. O desfoque do que está atrás da
+   * janela vem do Acrylic do Windows (ver `settings/appearance-store.ts`).
+   */
+  --color-glass-0: color-mix(in srgb, #1e1f22 calc(100% - var(--glass) * 70%), transparent);
+  --color-glass-1: color-mix(in srgb, #2b2d31 calc(100% - var(--glass) * 60%), transparent);
+  --color-glass-2: color-mix(in srgb, #313338 calc(100% - var(--glass) * 65%), transparent);
+  --color-glass-panel: color-mix(in srgb, #232428 calc(100% - var(--glass) * 40%), transparent);
+  --color-glass-modal: color-mix(in srgb, #313338 calc(100% - var(--glass) * 30%), transparent);
+  --color-glass-modal-footer: color-mix(in srgb, #2b2d31 calc(100% - var(--glass) * 30%), transparent);
 
   --color-text: #f2f3f5;
   --color-text-muted: #b5bac1;
@@ -21,9 +37,102 @@
   --color-online: #23a55a;
   --color-warning: #f0b232;
 
-  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Figtree Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 
   --radius-card: 0.75rem;
+
+  /* Modais: entrada um pouco mais lenta e suave, saída rápida (ver docs/design/ui.md, "Movimento"). */
+  --animate-overlay-in: overlay-in 180ms ease-out;
+  --animate-overlay-out: overlay-out 140ms ease-in forwards;
+  --animate-modal-in: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-modal-out: modal-out 140ms ease-in forwards;
+  --animate-step-in: step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Menus e dicas: aparecem crescendo um pouco a partir do ponto de origem. */
+  --animate-menu-in: menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-tooltip-in: menu-in 120ms ease-out;
+  /* Barra de rolagem sobreposta: aparece rápido, some devagar. */
+  --animate-scrollbar-in: overlay-in 150ms ease-out;
+  --animate-scrollbar-out: overlay-out 300ms ease-in forwards;
+  /* Notificações: descem do topo com um leve "quique"; saem subindo e sumindo. */
+  --animate-toast-in: toast-in 380ms cubic-bezier(0.21, 1.02, 0.73, 1);
+  --animate-toast-out: toast-out 220ms ease-in forwards;
+  /* Barra do tempo: esvazia da direita para a esquerda (duração definida em cada notificação). */
+  --animate-toast-timer: toast-timer linear forwards;
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      translate: 0 -120%;
+      scale: 0.9;
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      translate: 0 -40%;
+      scale: 0.92;
+    }
+  }
+  @keyframes toast-timer {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      scale: 0.95;
+    }
+  }
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes overlay-out {
+    to {
+      opacity: 0;
+    }
+  }
+  /* Só `transform`: o centralizado usa a propriedade `translate` do Tailwind, que se soma a ele. */
+  @keyframes modal-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+  }
+  @keyframes modal-out {
+    to {
+      opacity: 0;
+      transform: translateY(6px) scale(0.97);
+    }
+  }
+  /* Troca de passo dentro de um modal (ex.: escolher a fonte → qualidade). */
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+  }
+}
+
+/* Quem pediu menos movimento no Windows não vê animações. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Intensidade do vidro (0 = sólido). Quem muda é `applyGlass`. */
+:root {
+  --glass: 0;
 }
 
 html,
@@ -32,11 +141,38 @@ body,
   height: 100%;
 }
 
+/* Fundo transparente: a janela é transparente para o vidro; as camadas do app pintam o resto. */
 body {
   margin: 0;
-  background: var(--color-surface-2);
+  background: transparent;
   color: var(--color-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   user-select: none;
+}
+
+/* Controle deslizante no estilo do Discord: trilho preenchido na cor da marca e bolinha branca. */
+.glass-slider {
+  appearance: none;
+  height: 8px;
+  border-radius: 9999px;
+  background: linear-gradient(to right, var(--color-brand) var(--fill, 0%), var(--color-surface-3) var(--fill, 0%));
+  cursor: pointer;
+}
+.glass-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  transition: scale 150ms ease-out;
+}
+.glass-slider:hover::-webkit-slider-thumb,
+.glass-slider:active::-webkit-slider-thumb {
+  scale: 1.15;
+}
+.glass-slider:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 4px;
 }

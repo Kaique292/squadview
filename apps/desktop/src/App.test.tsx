@@ -7,13 +7,14 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Ninguém está transmitindo ainda" })).toBeInTheDocument();
   });
 
-  it("deixa o botão de transmitir desabilitado até existir uma sala", () => {
+  it("oferece o botão de transmitir quando ninguém está ao vivo", () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: "Transmitir minha tela" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Transmitir minha tela" })).toBeEnabled();
   });
 
-  it("tem a navegação de salas acessível", () => {
+  it("tem a navegação de salas acessível, com o mascote no topo", () => {
     render(<App />);
     expect(screen.getByRole("navigation", { name: "Salas" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "SquadView" })).toBeInTheDocument();
   });
 });

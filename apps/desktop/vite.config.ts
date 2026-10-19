@@ -7,7 +7,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "chrome120" },
+  build: {
+    target: "chrome120",
+    // Duas páginas: o app e a splash de abertura.
+    rollupOptions: { input: { main: "index.html", splash: "splash.html" } },
+  },
   test: {
     globals: true,
     environment: "jsdom",
