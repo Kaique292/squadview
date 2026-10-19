@@ -8,6 +8,7 @@ import { StreamDialog } from "./stream/StreamDialog";
 import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
+import { Dissolve } from "./ui/Dissolve";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
 import { UpdateBanner } from "./update/UpdateBanner";
@@ -32,6 +33,7 @@ export function App() {
       }`}
     >
       <InvitePrompt />
+      <Dissolve />
       <Toaster anchor={(watching || live) && !fullscreen ? "sidebar" : "center"} />
       {!fullscreen && <TitleBar title={code ? `Sala ${code}` : undefined} />}
       <ServerRail hidden={fullscreen} />

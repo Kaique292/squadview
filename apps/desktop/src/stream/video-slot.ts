@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
+import { rememberVideoRect } from "../ui/dissolve-effect";
 
 /**
  * Informa ao Rust onde está a área do vídeo, em pixels físicos, sempre que ela muda de lugar ou de
@@ -13,6 +14,8 @@ export function useVideoSlot() {
     let last = "";
     const report = () => {
       const r = el.getBoundingClientRect();
+      // Guarda onde o vídeo está: a animação de saída aparece exatamente ali.
+      rememberVideoRect({ x: r.left, y: r.top, width: r.width, height: r.height });
       const dpr = window.devicePixelRatio || 1;
       const b = {
         x: Math.round(r.left * dpr),

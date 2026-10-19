@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { playVideoExit } from "../ui/dissolve-effect";
 
 /** Espelha `sv_capture::CaptureSource` (serde: { kind, handle }). */
 export type CaptureSource = { kind: "monitor" | "window"; handle: number };
@@ -165,8 +166,10 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   async stop() {
     await get().setFullscreen(false);
-    await invoke("stop_preview");
+    // O Rust devolve a foto do último quadro: o vídeo some se desfazendo em poeira.
+    const photo = await invoke<string | null>("stop_preview");
     set({ status: "idle", stats: null });
+    playVideoExit(photo);
   },
 }));
 

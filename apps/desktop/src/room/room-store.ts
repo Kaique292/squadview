@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { StreamStats } from "../stream/stream-store";
+import { playVideoExit } from "../ui/dissolve-effect";
 import { toast } from "../ui/toast-store";
 
 /** Espelha `sv_net::Member`. */
@@ -106,8 +107,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
 
   async stopWatching() {
-    await invoke("room_stop_watching").catch(() => {});
+    const photo = await invoke<string | null>("room_stop_watching").catch(() => null);
     set({ watching: null, watchStats: null });
+    playVideoExit(photo);
   },
 
   async setWatchListening(listening) {
@@ -139,7 +141,7 @@ export async function listenToRoomEvents() {
       useRoomStore.setState({ watching: e.payload, pendingWatch: null, watchStats: null, watchListening: true });
       toast.success(`Conectado direto com ${e.payload.name}.`, "Assistindo");
     }),
-    listen<{ memberId: string; reason: string }>("watch-ended", (e) => {
+    listen<{ memberId: string; reason: string; snapshot?: string | null }>("watch-ended", (e) => {
       const { watching, pendingWatch } = useRoomStore.getState();
       const wasWatching = watching?.id === e.payload.memberId;
       const wasPending = pendingWatch === e.payload.memberId;
@@ -149,6 +151,8 @@ export async function listenToRoomEvents() {
         watchStats: wasWatching ? null : useRoomStore.getState().watchStats,
         pendingWatch: null,
       });
+      // Quem transmitia parou: o vídeo some se desfazendo, como para quem transmitia.
+      if (wasWatching) playVideoExit(e.payload.snapshot);
       // Fim normal da transmissão é informação; não conseguir conectar é erro.
       if (wasWatching) toast.info(e.payload.reason);
       else toast.error(e.payload.reason, "Não deu para assistir");
