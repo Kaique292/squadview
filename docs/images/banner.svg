@@ -17,13 +17,30 @@
     <circle cx="900" cy="90" r="12"/><circle cx="1040" cy="170" r="16"/><circle cx="1180" cy="110" r="10"/>
     <circle cx="1000" cy="300" r="12"/><circle cx="1160" cy="300" r="10"/><circle cx="860" cy="240" r="10"/>
   </g>
-  <g transform="translate(110 112) scale(0.34)">
-    <rect width="512" height="512" rx="120" fill="url(#logo)"/>
-    <rect x="104" y="116" width="304" height="200" rx="28" fill="none" stroke="#fff" stroke-width="28"/>
-    <path d="M232 176 L296 216 L232 256 Z" fill="#fff"/>
-    <g stroke="#fff" stroke-width="16" stroke-linecap="round"><line x1="256" y1="316" x2="256" y2="372"/><line x1="256" y1="372" x2="160" y2="400"/><line x1="256" y1="372" x2="352" y2="400"/></g>
-    <circle cx="256" cy="380" r="26" fill="#fff"/><circle cx="148" cy="404" r="26" fill="#fff"/><circle cx="364" cy="404" r="26" fill="#fff"/>
-  </g>
+  <g transform="translate(104 108) scale(0.36)">
+  <defs>
+    <g id="bn-mascote">
+      
+      <path d="M214 132 L156 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none"/>
+      <path d="M298 132 L356 52" stroke="#fff" stroke-width="26" stroke-linecap="round" fill="none"/>
+      <circle cx="150" cy="46" r="30"/>
+      <circle cx="362" cy="46" r="30"/>
+      
+      <path fill-rule="evenodd" d="
+        M136 128 H376 C430 128 470 168 470 222 V330 C470 384 430 424 376 424 H136 C82 424 42 384 42 330 V222 C42 168 82 128 136 128 Z
+        M188 230 a34 38 0 1 0 0.1 0 Z
+        M324 230 a34 38 0 1 0 0.1 0 Z
+        M180 326 C210 372 302 372 332 326 C318 350 194 350 180 326 Z"/>
+      
+      <rect x="128" y="404" width="72" height="56" rx="28"/>
+      <rect x="312" y="404" width="72" height="56" rx="28"/>
+    </g>
+    <clipPath id="bn-esq"><path d="M0 0 H262 L238 120 L272 220 L240 320 L270 420 L252 512 H0 Z"/></clipPath>
+    <clipPath id="bn-dir"><path d="M274 0 H512 V512 H264 L282 420 L252 320 L284 220 L250 120 Z"/></clipPath>
+  </defs>
+  <use href="#bn-mascote" fill="#fff" clip-path="url(#bn-esq)"/>
+  <use href="#bn-mascote" fill="#fff" opacity=".3" clip-path="url(#bn-dir)"/>
+</g>
   <text x="310" y="200" fill="#f2f3f5" font-family="Segoe UI, Inter, sans-serif" font-size="84" font-weight="700">SquadView</text>
   <text x="314" y="256" fill="#b5bac1" font-family="Segoe UI, Inter, sans-serif" font-size="30">Compartilhe a tela com a galera da call.</text>
   <text x="314" y="296" fill="#b5bac1" font-family="Segoe UI, Inter, sans-serif" font-size="30">Qualidade de jogo, sem servidor.</text>
