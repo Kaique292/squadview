@@ -33,7 +33,19 @@
     "shortDescription": "Compartilhe a tela com a galera da call, sem servidor.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {
-      "nsis": { "installMode": "currentUser", "languages": ["PortugueseBR", "English"] }
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["PortugueseBR", "English"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCQkJGNUNDRUFEQjM5MDMKUldRRE9kdnF6UFc3eS8rc1BZY0RCVnhNYnJqbkRGOENHZi9QR2RMWE5XREN0UXpmMHJvTGcwalYK",
+      "endpoints": ["https://github.com/Kaique292/squadview/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

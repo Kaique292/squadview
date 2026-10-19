@@ -17,8 +17,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
+serde_json = "1.0.154"
 sv-core.workspace = true
 tauri = { version = "2.12.4", features = [] }
+tauri-plugin-process = "2.4.0"
+# Sem a feature "zip": no Windows a atualização é o próprio instalador NSIS (.exe).
+tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 
 [lints]
 workspace = true

@@ -1,4 +1,5 @@
 import { MonitorUp, Plus, Settings, Users } from "lucide-react";
+import { UpdateBanner } from "./update/UpdateBanner";
 
 /**
  * Esqueleto do layout principal (Fase 0). As salas, os membros e os streams
@@ -41,20 +42,23 @@ export function App() {
         </footer>
       </aside>
 
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-2 text-center">
-        <MonitorUp size={56} className="text-text-faint" />
-        <h1 className="text-2xl font-semibold">Ninguém está transmitindo ainda</h1>
-        <p className="max-w-sm text-text-muted">
-          Crie uma sala, chame a galera e compartilhe a tela. A própria sala distribui o vídeo entre vocês.
-        </p>
-        <button
-          type="button"
-          disabled
-          className="rounded-md bg-brand px-4 py-2 font-medium transition-colors hover:bg-brand-hover disabled:opacity-50"
-        >
-          Transmitir minha tela
-        </button>
-      </main>
+      <div className="flex flex-1 flex-col">
+        <UpdateBanner />
+        <main className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface-2 text-center">
+          <MonitorUp size={56} className="text-text-faint" />
+          <h1 className="text-2xl font-semibold">Ninguém está transmitindo ainda</h1>
+          <p className="max-w-sm text-text-muted">
+            Crie uma sala, chame a galera e compartilhe a tela. A própria sala distribui o vídeo entre vocês.
+          </p>
+          <button
+            type="button"
+            disabled
+            className="rounded-md bg-brand px-4 py-2 font-medium transition-colors hover:bg-brand-hover disabled:opacity-50"
+          >
+            Transmitir minha tela
+          </button>
+        </main>
+      </div>
     </div>
   );
 }

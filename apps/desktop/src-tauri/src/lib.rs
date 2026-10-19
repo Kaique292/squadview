@@ -9,6 +9,9 @@ fn app_version() -> &'static str {
 /// Inicia o app Tauri.
 pub fn run() {
     tauri::Builder::default()
+        // Atualização automática assinada (ver docs/adr/0006-atualizacao-automatica.md).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![app_version])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o SquadView");
