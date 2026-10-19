@@ -31,6 +31,11 @@ allow = [
   "0BSD",
 ]
 
+# IJG (permissiva) só no encoder das miniaturas; o crédito exigido está no README, em "Licença".
+[[licenses.exceptions]]
+crate = "jpeg-encoder"
+allow = ["IJG"]
+
 [licenses.private]
 ignore = true
 
