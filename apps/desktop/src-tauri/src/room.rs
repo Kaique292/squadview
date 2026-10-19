@@ -76,6 +76,8 @@ pub async fn room_join(app: AppHandle, code: Option<String>, name: String) -> Re
     })
     .await
     .map_err(|e| e.to_string())??;
+    // Tipo de NAT no registro (sem o IP): ajuda a entender quando alguém não consegue assistir.
+    let nat = room.nat();
 
     // Se já estávamos transmitindo, os amigos da sala nova passam a poder assistir.
     let state = app.state::<RoomState>();
@@ -91,7 +93,8 @@ pub async fn room_join(app: AppHandle, code: Option<String>, name: String) -> Re
         preview::restart_for_room(&restart_app);
     })
     .await?;
-    app.state::<Diagnostics>().write("room-join", &json!({ "code": code }));
+    app.state::<Diagnostics>()
+        .write("room-join", &json!({ "code": code, "nat": nat }));
     Ok(RoomInfo { code, url })
 }
 

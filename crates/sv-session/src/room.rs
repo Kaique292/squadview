@@ -184,6 +184,11 @@ impl Room {
         self.inner.client.signal(member_id, &signal);
     }
 
+    /// Como o nosso roteador mapeia portas (para o registro e para explicar falhas de conexão).
+    pub fn nat(&self) -> sv_net::NatMapping {
+        self.inner.peer.nat()
+    }
+
     /// Quantos amigos estão assistindo a gente.
     pub fn viewer_count(&self) -> usize {
         self.inner.broadcaster.viewer_count()
@@ -259,7 +264,7 @@ impl Inner {
                         }),
                         Err(e) => (inner.on_update)(RoomUpdate::WatchFailed {
                             member_id: from,
-                            reason: e.to_string(),
+                            reason: connect_failure(&e, inner.peer.nat()),
                         }),
                     }
                 });
@@ -273,6 +278,17 @@ impl Inner {
                 }
             }
         }
+    }
+}
+
+/// Explica por que não deu para conectar. Se o nosso NAT é simétrico, a causa é quase certa.
+fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping) -> String {
+    match (error, nat) {
+        (sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric) => {
+            "não deu para conectar direto: a sua internet troca de porta a cada conexão (NAT simétrico,              comum em CGNAT de operadora e em 4G). Tente por outra rede, como o roteador de casa ou o              celular. A ponte por outro membro da sala chega numa próxima versão."
+                .into()
+        }
+        _ => error.to_string(),
     }
 }
 

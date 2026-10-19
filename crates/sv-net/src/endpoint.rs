@@ -4,6 +4,7 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -16,6 +17,33 @@ use crate::{ALPN, stun};
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Por quanto tempo mandar pacotes de "furo" depois de combinar a conexão.
 const PUNCH_FOR: Duration = Duration::from_secs(4);
+/// De quanto em quanto tempo "lembrar" o roteador da nossa porta. Sem tráfego, muitos roteadores
+/// esquecem o mapeamento em 30 a 120 s e o endereço que mandamos aos amigos deixa de valer.
+const NAT_KEEPALIVE: Duration = Duration::from_secs(15);
+
+/// Como o roteador escolhe a porta pública do nosso socket (visto por dois servidores STUN).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NatMapping {
+    /// Não deu para saber (só um servidor respondeu, ou nenhum).
+    Unknown,
+    /// A mesma porta para qualquer destino: o "furo" funciona.
+    EndpointIndependent,
+    /// Uma porta diferente para cada destino (NAT simétrico, comum em CGNAT): conexão direta
+    /// quase nunca funciona; só a ponte por outro membro resolve.
+    Symmetric,
+}
+
+impl NatMapping {
+    /// Compara o endereço público visto por dois servidores diferentes.
+    pub fn from_observations(a: Option<SocketAddr>, b: Option<SocketAddr>) -> Self {
+        match (a, b) {
+            (Some(a), Some(b)) if a == b => Self::EndpointIndependent,
+            (Some(_), Some(_)) => Self::Symmetric,
+            _ => Self::Unknown,
+        }
+    }
+}
 
 /// Por que a conexão não saiu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +76,9 @@ pub struct Peer {
     identity: Arc<Identity>,
     allowed: Allowed,
     candidates: Vec<SocketAddr>,
+    nat: NatMapping,
+    /// Liga o "mantenha vivo" do NAT; desliga quando o ponto fecha.
+    keepalive: Arc<AtomicBool>,
 }
 
 impl Peer {
@@ -57,9 +88,14 @@ impl Peer {
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         let port = socket.local_addr()?.port();
         let servers: Vec<&'static str> = stun_servers.to_vec();
-        let (socket, public) = tokio::task::spawn_blocking(move || {
-            let public = stun::discover(&socket, &servers, Duration::from_millis(1500));
-            (socket, public)
+        let (socket, public, nat) = tokio::task::spawn_blocking(move || {
+            // Pergunta a dois servidores separados: se cada um vê uma porta, o NAT é simétrico.
+            let first = stun::discover(&socket, &servers[..servers.len().min(1)], Duration::from_millis(1500));
+            let second = servers
+                .get(1..2)
+                .and_then(|s| stun::discover(&socket, s, Duration::from_millis(1000)));
+            let public = first.or(second);
+            (socket, public, NatMapping::from_observations(first, second))
         })
         .await
         .map_err(io::Error::other)?;
@@ -68,6 +104,10 @@ impl Peer {
         let identity = Arc::new(Identity::generate());
         let allowed = Allowed::default();
         let punch = socket.try_clone()?;
+        let keepalive = Arc::new(AtomicBool::new(true));
+        if let Some(server) = stun_servers.first() {
+            spawn_nat_keepalive(punch.try_clone()?, server, keepalive.clone());
+        }
         socket.set_nonblocking(true)?;
         let endpoint = Endpoint::new(
             EndpointConfig::default(),
@@ -81,7 +121,14 @@ impl Peer {
             identity,
             allowed,
             candidates,
+            nat,
+            keepalive,
         })
+    }
+
+    /// Como o nosso roteador mapeia portas (ver [`NatMapping`]).
+    pub fn nat(&self) -> NatMapping {
+        self.nat
     }
 
     /// Endereços por onde os outros podem nos alcançar (público, rede local e o próprio PC).
@@ -153,8 +200,42 @@ impl Peer {
     }
 
     pub fn close(&self) {
+        self.keepalive.store(false, Ordering::Relaxed);
         self.endpoint.close(VarInt::from_u32(0), b"tchau");
     }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        self.keepalive.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Manda um pedido STUN (20 bytes) de tempos em tempos pelo mesmo socket do QUIC, para o
+/// roteador manter a nossa porta pública. A resposta chega no QUIC, que a descarta.
+fn spawn_nat_keepalive(socket: UdpSocket, server: &'static str, alive: Arc<AtomicBool>) {
+    let _ = std::thread::Builder::new()
+        .name("sv-nat-keepalive".into())
+        .spawn(move || {
+            let Some(target) = std::net::ToSocketAddrs::to_socket_addrs(server)
+                .ok()
+                .and_then(|mut a| a.find(SocketAddr::is_ipv4))
+            else {
+                return;
+            };
+            let request = stun::binding_request([0x53; 12]);
+            // Dorme em passos curtos para parar logo quando o ponto fecha.
+            let step = Duration::from_millis(500);
+            let mut waited = Duration::ZERO;
+            while alive.load(Ordering::Relaxed) {
+                std::thread::sleep(step);
+                waited += step;
+                if waited >= NAT_KEEPALIVE {
+                    waited = Duration::ZERO;
+                    let _ = socket.send_to(&request, target);
+                }
+            }
+        });
 }
 
 fn transport() -> Arc<TransportConfig> {
@@ -229,6 +310,19 @@ pub(crate) fn candidates(public: Option<SocketAddr>, local: Option<IpAddr>, port
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nat_simetrico_e_quando_cada_servidor_ve_uma_porta() {
+        let a: SocketAddr = "200.1.2.3:40000".parse().unwrap();
+        let b: SocketAddr = "200.1.2.3:40007".parse().unwrap();
+        assert_eq!(
+            NatMapping::from_observations(Some(a), Some(a)),
+            NatMapping::EndpointIndependent
+        );
+        assert_eq!(NatMapping::from_observations(Some(a), Some(b)), NatMapping::Symmetric);
+        assert_eq!(NatMapping::from_observations(Some(a), None), NatMapping::Unknown);
+        assert_eq!(NatMapping::from_observations(None, None), NatMapping::Unknown);
+    }
 
     #[test]
     fn candidatos_em_ordem_sem_repetir() {

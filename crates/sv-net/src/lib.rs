@@ -17,7 +17,7 @@ pub mod protocol;
 pub mod signaling;
 pub mod stun;
 
-pub use endpoint::{ConnectError, Peer};
+pub use endpoint::{ConnectError, NatMapping, Peer};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
 pub use signaling::{Member, RoomClient, RoomEvent};
 
