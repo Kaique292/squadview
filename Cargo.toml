@@ -12,6 +12,45 @@ repository = "https://github.com/Kaique292/squadview"
 
 [workspace.dependencies]
 sv-core = { path = "crates/sv-core" }
+sv-gpu = { path = "crates/sv-gpu" }
+sv-capture = { path = "crates/sv-capture" }
+sv-encode = { path = "crates/sv-encode" }
+sv-media = { path = "crates/sv-media" }
+sv-session = { path = "crates/sv-session" }
+sv-net = { path = "crates/sv-net" }
+
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Foundation",
+  "Graphics",
+  "Graphics_Capture",
+  "Graphics_DirectX",
+  "Graphics_DirectX_Direct3D11",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Media_MediaFoundation",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
+  "Win32_System_Performance",
+  "Win32_System_Variant",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Direct3D11",
+  "Win32_System_WinRT_Graphics_Capture",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+serde = { version = "1", features = ["derive"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

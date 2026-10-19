@@ -17,11 +17,26 @@
         "height": 800,
         "minWidth": 940,
         "minHeight": 560,
-        "backgroundColor": "#232428"
+        "transparent": true,
+        "decorations": false,
+        "label": "main",
+        "visible": false
+      },
+      {
+        "label": "splash",
+        "title": "SquadView",
+        "url": "splash.html",
+        "width": 300,
+        "height": 340,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "center": true,
+        "backgroundColor": "#1e1f22"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -45,6 +60,11 @@
       "endpoints": ["https://github.com/Kaique292/squadview/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
+      }
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["squadview"]
       }
     }
   }

@@ -18,11 +18,31 @@ tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
 serde_json = "1.0.154"
+serde.workspace = true
+sv-capture.workspace = true
 sv-core.workspace = true
+sv-encode.workspace = true
+sv-gpu.workspace = true
+sv-net.workspace = true
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+sv-session.workspace = true
 tauri = { version = "2.12.4", features = [] }
 tauri-plugin-process = "2.4.0"
 # Sem a feature "zip": no Windows a atualização é o próprio instalador NSIS (.exe).
 tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+jpeg-encoder = "0.7.1"
+base64 = "0.23.1"
+# Login com o Discord: HTTPS com rustls (provedor ring, o mesmo do resto do app), PKCE e o
+# servidorzinho local que recebe o retorno do navegador.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+sha2 = "0.10"
+getrandom = "0.3"
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+tauri-plugin-opener = "2"
+# Convites por link (squadview://join/CODIGO) e uma instância só no app instalado.
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [lints]
 workspace = true
