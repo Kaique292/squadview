@@ -33,7 +33,8 @@
         "maximizable": false,
         "decorations": false,
         "center": true,
-        "backgroundColor": "#1e1f22"
+        "backgroundColor": "#1e1f22",
+        "visible": false
       }
     ],
     "security": {

@@ -1,5 +1,6 @@
 import "@fontsource-variable/figtree";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SPLASH_EVENT, type SplashProgress } from "./boot";
 
 /** Dicas que aparecem embaixo enquanto carrega (como as frases do Discord). */
@@ -28,6 +29,13 @@ function show(value: number, text?: string) {
 const creep = setInterval(() => show(Math.min(0.3, current + 0.03)), 250);
 
 if ("__TAURI_INTERNALS__" in window) {
+  // A janela abre escondida: só aparece com a página e a fonte prontas, para não piscar um
+  // retângulo vazio antes. Timer, e não requestAnimationFrame: janela escondida não desenha.
+  const reveal = () =>
+    void getCurrentWindow()
+      .show()
+      .catch(() => {});
+  void document.fonts.ready.then(() => setTimeout(reveal, 30), reveal);
   void listen<SplashProgress>(SPLASH_EVENT, (e) => {
     clearInterval(creep);
     show(e.payload.value, e.payload.text);
