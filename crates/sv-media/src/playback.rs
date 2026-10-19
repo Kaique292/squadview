@@ -18,6 +18,7 @@ use windows::Win32::Media::Audio::{
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
+use crate::devices::{Flow, open_device};
 use crate::opus::{CHANNELS, SAMPLE_RATE};
 
 /// Maior atraso aceito na fila de reprodução.
@@ -42,7 +43,13 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
+    /// Toca na saída padrão do Windows.
     pub fn start() -> windows::core::Result<Self> {
+        Self::start_on(None)
+    }
+
+    /// Toca na saída `device` (ou na padrão, se `None` ou se ela sumiu).
+    pub fn start_on(device: Option<String>) -> windows::core::Result<Self> {
         let queue = Arc::new(Mutex::new(Queue {
             samples: VecDeque::new(),
             volume: 1.0,
@@ -52,7 +59,7 @@ impl AudioPlayer {
         let (q, s) = (queue.clone(), stop.clone());
         let thread = std::thread::Builder::new()
             .name("sv-audio-playback".into())
-            .spawn(move || match open() {
+            .spawn(move || match open(device.as_deref()) {
                 Ok(out) => {
                     let _ = ready_tx.send(Ok(()));
                     out.run(&q, &s);
@@ -164,12 +171,18 @@ impl Drop for Output {
     }
 }
 
-fn open() -> windows::core::Result<Output> {
+fn open(device: Option<&str>) -> windows::core::Result<Output> {
     // SAFETY: COM iniciado nesta thread; estruturas vivem até o fim das chamadas.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = devices.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let device = match device {
+            Some(id) => open_device(Flow::Output, Some(id))?,
+            // Sem escolha: a saída padrão geral (a mesma de antes, para o som do jogo).
+            None => {
+                let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+                devices.GetDefaultAudioEndpoint(eRender, eConsole)?
+            }
+        };
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         let block_align = CHANNELS as u16 * 4;
         let format = WAVEFORMATEX {

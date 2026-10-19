@@ -22,6 +22,8 @@ sv-net = { path = "crates/sv-net" }
 windows-core = "0.62"
 windows = { version = "0.62", features = [
   "Foundation",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_UI_Shell_PropertiesSystem",
   "Graphics",
   "Graphics_Capture",
   "Graphics_DirectX",
