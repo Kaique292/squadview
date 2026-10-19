@@ -37,6 +37,11 @@ if ("__TAURI_INTERNALS__" in window) {
   });
 }
 
+// Só em desenvolvimento: cenas de exemplo para as capturas do README (`#demo=sala`).
+if (import.meta.env.DEV && location.hash.startsWith("#demo=")) {
+  void import("./dev/demo").then((m) => m.runDemo(location.hash.slice("#demo=".length)));
+}
+
 // Só em desenvolvimento: mexer no app pelo console (`__sv.toast.error("teste")`, `__sv.room.setState(...)`).
 if (import.meta.env.DEV) {
   Object.assign(window, {

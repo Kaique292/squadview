@@ -1,0 +1,85 @@
+/**
+ * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
+ * `http://localhost:1420/#demo=sala`, `#demo=transmitir` ou `#demo=config`.
+ * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
+ */
+import { useAppearanceStore } from "../settings/appearance-store";
+import { useRoomStore } from "../room/room-store";
+import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
+
+const MEMBERS = [
+  { id: "eu", name: "Kaique", live: false },
+  { id: "a", name: "Minato", live: true },
+  { id: "b", name: "Lobo", live: false },
+  { id: "c", name: "Yondaime", live: false },
+];
+
+const SOURCES: Source[] = [
+  {
+    id: { kind: "window", handle: 1 },
+    name: "League of Legends (TM) Client",
+    processId: 1,
+    processName: "League of Legends.exe",
+  },
+  { id: { kind: "window", handle: 2 }, name: "VALORANT", processId: 2, processName: "VALORANT.exe" },
+  { id: { kind: "window", handle: 3 }, name: "Spotify Premium", processId: 3, processName: "Spotify.exe" },
+  { id: { kind: "monitor", handle: 4 }, name: "Tela 1", processId: null, processName: null },
+];
+
+/** Miniatura de mentira: um degradê com cara de jogo. */
+function thumbnail(from: string, to: string, label: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs>
+    <rect width="320" height="180" fill="url(#g)"/>
+    <circle cx="250" cy="40" r="60" fill="#fff" opacity=".08"/>
+    <text x="16" y="164" font-family="Segoe UI" font-size="14" font-weight="700" fill="#fff" opacity=".85">${label}</text>
+  </svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+const THUMBS = [
+  thumbnail("#0a3d62", "#c89b3c", "LEAGUE OF LEGENDS"),
+  thumbnail("#ff4655", "#1f2731", "VALORANT"),
+  thumbnail("#1db954", "#121212", "SPOTIFY"),
+  thumbnail("#3a1c71", "#d76d77", "ÁREA DE TRABALHO"),
+];
+
+function click(label: string) {
+  const button = [...document.querySelectorAll("button")].find(
+    (b) => b.textContent?.trim() === label || b.getAttribute("aria-label") === label,
+  );
+  button?.click();
+}
+
+/** Respostas de mentira do Rust, para as telas que perguntam algo a ele. */
+const FAKE_COMMANDS: Record<string, unknown> = {
+  diagnostics_status: { enabled: true, files: 3 },
+};
+
+export function runDemo(scene: string) {
+  useAppearanceStore.getState().setGlass(0);
+  useRoomStore.setState({
+    code: "F5B6S9",
+    joinedAt: Date.now() - (1 * 3600 + 24 * 60 + 9) * 1000,
+    members: MEMBERS,
+  });
+  useStreamStore.setState({
+    loadSources: async () => {
+      useStreamStore.setState({
+        sources: SOURCES,
+        loadingSources: false,
+        error: null,
+        thumbnails: Object.fromEntries(SOURCES.map((s, i) => [sourceKey(s.id), THUMBS[i]])),
+      });
+    },
+  });
+  // Por último (o vidro acima mexeria na janela "de verdade"): só as telas usam este invoke.
+  Object.assign(window, {
+    __TAURI_INTERNALS__: { invoke: async (cmd: string) => FAKE_COMMANDS[cmd] ?? null },
+  });
+  // Espera a interface montar antes de abrir os modais.
+  setTimeout(() => {
+    if (scene === "transmitir") click("Transmitir minha tela");
+    if (scene === "config") click("Configurações");
+  }, 300);
+}

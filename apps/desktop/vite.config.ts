@@ -19,7 +19,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/main.tsx", "src/**/*.test.{ts,tsx}", "src/test-setup.ts"],
+      exclude: ["src/main.tsx", "src/dev/**", "src/**/*.test.{ts,tsx}", "src/test-setup.ts"],
       reporter: ["text", "json-summary"],
       reportsDirectory: "../../build/coverage-desktop",
     },
