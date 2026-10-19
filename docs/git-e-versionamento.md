@@ -60,7 +60,7 @@ Padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/), conf
 
 ### Escopos permitidos
 
-`core`, `capture`, `encode`, `media`, `net`, `mesh`, `signal`, `ui`, `app`, `docs`, `ci`, `deps`, `release`. O escopo é opcional, mas recomendado.
+`core`, `capture`, `encode`, `media`, `net`, `mesh`, `signal`, `ui`, `app`, `docs`, `ci`, `deps`, `deps-dev`, `release`. O escopo é opcional, mas recomendado. `deps-dev` é o que o Dependabot usa para dependências de desenvolvimento.
 
 ### Exemplos
 

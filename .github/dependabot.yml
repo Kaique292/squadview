@@ -17,6 +17,9 @@ updates:
       prefix: build
       include: scope
     groups:
+      # O windows-core anda junto com o crate windows: subir só um quebra a build.
+      windows:
+        patterns: ["windows", "windows-core"]
       rust:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -32,3 +35,7 @@ updates:
       javascript:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # O typescript-eslint ainda não suporta o TypeScript 7.
+      - dependency-name: typescript
+        versions: [">=7"]

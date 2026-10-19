@@ -17,7 +17,22 @@ module.exports = {
     "scope-enum": [
       2,
       "always",
-      ["core", "capture", "encode", "media", "net", "mesh", "signal", "ui", "app", "docs", "ci", "deps", "release"],
+      [
+        "core",
+        "capture",
+        "encode",
+        "media",
+        "net",
+        "mesh",
+        "signal",
+        "ui",
+        "app",
+        "docs",
+        "ci",
+        "deps",
+        "deps-dev",
+        "release",
+      ],
     ],
   },
 };
