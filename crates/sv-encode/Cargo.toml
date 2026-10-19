@@ -1,6 +1,6 @@
 [package]
 name = "sv-encode"
-description = "Codificação de vídeo por hardware atrás da trait Encoder (NVENC primeiro, AMF depois)."
+description = "Codificação de vídeo por hardware atrás da trait Encoder (Media Foundation: NVENC, AMF, QuickSync)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,8 @@ publish = false
 
 [dependencies]
 sv-core.workspace = true
+sv-gpu.workspace = true
+windows.workspace = true
 
 [lints]
 workspace = true
