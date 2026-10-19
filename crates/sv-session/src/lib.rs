@@ -14,6 +14,7 @@ mod stats;
 mod surface;
 mod system;
 mod viewer;
+mod voice;
 
 pub use sv_media::{Bounds, WindowEvent, WindowTarget};
 
@@ -29,6 +30,7 @@ pub use stats::{StatsMeter, StreamStats};
 pub use sv_net::Member;
 pub use system::{SystemLoad, SystemMonitor};
 pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
+pub use voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};
 
 /// O que pode dar errado ao começar uma sessão, com mensagem para o usuário.
 #[derive(Debug, Clone, PartialEq, Eq)]
