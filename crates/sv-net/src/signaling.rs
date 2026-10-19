@@ -28,9 +28,28 @@ pub struct Member {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum Outgoing<'a> {
-    Join { name: &'a str, protocol: u32 },
-    Status { live: bool },
-    Signal { to: &'a str, payload: &'a Signal },
+    Join {
+        name: &'a str,
+        protocol: u32,
+        /// Nome da sala; só vale para quem cria (entra na sala vazia).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        room: Option<&'a str>,
+    },
+    Status {
+        live: bool,
+    },
+    /// Renomeia a sala.
+    Room {
+        name: &'a str,
+    },
+    /// Troca o nosso apelido.
+    Rename {
+        name: &'a str,
+    },
+    Signal {
+        to: &'a str,
+        payload: &'a Signal,
+    },
     Leave,
 }
 
@@ -38,12 +57,32 @@ enum Outgoing<'a> {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum Incoming {
-    Welcome { you: String, members: Vec<Member> },
-    MemberJoined { member: Member },
-    MemberUpdated { member: Member },
-    MemberLeft { id: String },
-    Signal { from: String, payload: serde_json::Value },
-    Error { code: String },
+    Welcome {
+        you: String,
+        members: Vec<Member>,
+        /// Ausente no Worker antigo.
+        #[serde(default)]
+        room: Option<String>,
+    },
+    RoomUpdated {
+        name: String,
+    },
+    MemberJoined {
+        member: Member,
+    },
+    MemberUpdated {
+        member: Member,
+    },
+    MemberLeft {
+        id: String,
+    },
+    Signal {
+        from: String,
+        payload: serde_json::Value,
+    },
+    Error {
+        code: String,
+    },
 }
 
 /// O que acontece na sala.
@@ -52,7 +91,11 @@ pub enum RoomEvent {
     Joined {
         you: String,
         members: Vec<Member>,
+        /// Nome da sala (`None`: sem nome, mostra o código).
+        room: Option<String>,
     },
+    /// Alguém renomeou a sala.
+    RoomRenamed(String),
     MemberJoined(Member),
     MemberUpdated(Member),
     MemberLeft(String),
@@ -69,7 +112,8 @@ pub enum RoomEvent {
 impl RoomEvent {
     fn from_incoming(msg: Incoming) -> Option<Self> {
         Some(match msg {
-            Incoming::Welcome { you, members } => Self::Joined { you, members },
+            Incoming::Welcome { you, members, room } => Self::Joined { you, members, room },
+            Incoming::RoomUpdated { name } => Self::RoomRenamed(name),
             Incoming::MemberJoined { member } => Self::MemberJoined(member),
             Incoming::MemberUpdated { member } => Self::MemberUpdated(member),
             Incoming::MemberLeft { id } => Self::MemberLeft(id),
@@ -102,11 +146,13 @@ pub struct RoomClient {
 
 impl RoomClient {
     /// Entra na sala `code` em `base_url` (ex.: `wss://squadview-signaling.exemplo.workers.dev`).
-    /// Os eventos chegam por `events`. Precisa rodar dentro de um runtime tokio.
+    /// `room` dá nome à sala, se formos os primeiros a entrar. Os eventos chegam por `events`.
+    /// Precisa rodar dentro de um runtime tokio.
     pub async fn join(
         base_url: &str,
         code: &str,
         name: &str,
+        room: Option<&str>,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
             return Err("Código de sala inválido.".into());
@@ -122,6 +168,7 @@ impl RoomClient {
         let join = serde_json::to_string(&Outgoing::Join {
             name,
             protocol: SIGNALING_PROTOCOL,
+            room,
         })
         .expect("json");
         write
@@ -158,6 +205,16 @@ impl RoomClient {
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
         self.send(&Outgoing::Status { live });
+    }
+
+    /// Renomeia a sala (todos recebem [`RoomEvent::RoomRenamed`], inclusive nós).
+    pub fn set_room_name(&self, name: &str) {
+        self.send(&Outgoing::Room { name });
+    }
+
+    /// Troca o nosso apelido (os outros recebem [`RoomEvent::MemberUpdated`]).
+    pub fn set_name(&self, name: &str) {
+        self.send(&Outgoing::Rename { name });
     }
 
     pub fn signal(&self, to: &str, signal: &Signal) {
@@ -213,9 +270,26 @@ mod tests {
         let join = serde_json::to_string(&Outgoing::Join {
             name: "Ana",
             protocol: 1,
+            room: None,
         })
         .unwrap();
+        // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
         assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1}"#);
+        let creating = serde_json::to_string(&Outgoing::Join {
+            name: "Ana",
+            protocol: 1,
+            room: Some("Galera"),
+        })
+        .unwrap();
+        assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Room { name: "Squad" }).unwrap(),
+            r#"{"type":"room","name":"Squad"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Rename { name: "K.A" }).unwrap(),
+            r#"{"type":"rename","name":"K.A"}"#
+        );
         let status = serde_json::to_string(&Outgoing::Status { live: true }).unwrap();
         assert_eq!(status, r#"{"type":"status","live":true}"#);
         let sig = Signal::WatchDeny {
@@ -244,8 +318,21 @@ mod tests {
                     id: "bb".into(),
                     name: "Beto".into(),
                     live: true
-                }]
+                }],
+                room: None,
             })
+        );
+        assert_eq!(
+            parse(r#"{"type":"welcome","you":"aa","members":[],"room":"Galera"}"#),
+            Some(RoomEvent::Joined {
+                you: "aa".into(),
+                members: vec![],
+                room: Some("Galera".into()),
+            })
+        );
+        assert_eq!(
+            parse(r#"{"type":"room-updated","name":"Squad"}"#),
+            Some(RoomEvent::RoomRenamed("Squad".into()))
         );
         assert_eq!(
             parse(r#"{"type":"member-left","id":"bb"}"#),

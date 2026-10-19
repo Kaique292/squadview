@@ -21,17 +21,27 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     let url = std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into());
     let code = new_room_code();
 
-    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana").await.unwrap();
-    let RoomEvent::Joined { you: ana_id, members } = next(&mut ana_rx).await else {
+    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", Some("Galera")).await.unwrap();
+    let RoomEvent::Joined {
+        you: ana_id, members, ..
+    } = next(&mut ana_rx).await
+    else {
         panic!("sem welcome")
     };
     assert!(members.is_empty());
 
-    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto").await.unwrap();
-    let RoomEvent::Joined { you: beto_id, members } = next(&mut beto_rx).await else {
+    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None).await.unwrap();
+    let RoomEvent::Joined {
+        you: beto_id,
+        members,
+        room,
+    } = next(&mut beto_rx).await
+    else {
         panic!("sem welcome")
     };
     assert_eq!(members[0].name, "Ana");
+    // Ana criou a sala com nome; Beto recebe o nome ao entrar.
+    assert_eq!(room.as_deref(), Some("Galera"));
     assert!(matches!(next(&mut ana_rx).await, RoomEvent::MemberJoined(m) if m.name == "Beto"));
 
     ana.set_live(true);

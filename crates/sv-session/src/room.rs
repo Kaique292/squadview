@@ -23,6 +23,8 @@ use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap};
 pub enum RoomUpdate {
     /// Lista completa de membros (nós primeiro).
     Members(Vec<Member>),
+    /// Nome da sala (`None`: sem nome; a interface mostra o código).
+    RoomName(Option<String>),
     /// A conexão com quem pedimos para assistir abriu.
     WatchReady {
         member: Member,
@@ -41,6 +43,7 @@ impl std::fmt::Debug for RoomUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Members(m) => f.debug_tuple("Members").field(m).finish(),
+            Self::RoomName(n) => f.debug_tuple("RoomName").field(n).finish(),
             Self::WatchReady { member, .. } => f.debug_struct("WatchReady").field("member", member).finish(),
             Self::WatchFailed { member_id, reason } => f
                 .debug_struct("WatchFailed")
@@ -59,6 +62,7 @@ struct Inner {
     client: RoomClient,
     peer: Peer,
     me: Mutex<Member>,
+    room_name: Mutex<Option<String>>,
     members: Mutex<BTreeMap<String, Member>>,
     broadcaster: Broadcaster,
     /// Formato do que estamos transmitindo (None: não estamos ao vivo ou o encoder ainda não começou).
@@ -88,6 +92,7 @@ impl Room {
         signaling_url: &str,
         code: &str,
         name: &str,
+        room_name: Option<&str>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let runtime = Arc::new(
@@ -103,14 +108,14 @@ impl Room {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
                 .map_err(|e| format!("rede indisponível: {e}"))?;
-            let (client, mut events) = RoomClient::join(signaling_url, code, name).await?;
+            let (client, mut events) = RoomClient::join(signaling_url, code, name, room_name).await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
-                Some(WireEvent::Joined { you, members }) => (you, members),
+                Some(WireEvent::Joined { you, members, room }) => (you, members, room),
                 Some(WireEvent::Error(code)) => return Err(error_message(&code).to_owned()),
                 _ => return Err("o serviço de salas não respondeu".to_owned()),
             };
-            let (you, members) = me;
+            let (you, members, room) = me;
             let inner = Arc::new(Inner {
                 client,
                 peer,
@@ -119,6 +124,7 @@ impl Room {
                     name: name.to_owned(),
                     live: false,
                 }),
+                room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
                 broadcaster: Broadcaster::new(),
                 stream: Mutex::new(None),
@@ -130,6 +136,7 @@ impl Room {
         })?;
 
         inner.publish_members();
+        (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
         runtime.spawn(handle_events(inner.clone(), events));
         runtime.spawn(accept_viewers(inner.clone()));
         Ok(Self {
@@ -141,6 +148,23 @@ impl Room {
 
     pub fn code(&self) -> &str {
         &self.code
+    }
+
+    /// Nome da sala, se ela tiver um.
+    pub fn room_name(&self) -> Option<String> {
+        lock(&self.inner.room_name).clone()
+    }
+
+    /// Renomeia a sala para todos. A confirmação volta como [`RoomUpdate::RoomName`].
+    pub fn rename_room(&self, name: &str) {
+        self.inner.client.set_room_name(name);
+    }
+
+    /// Troca o nosso apelido na sala.
+    pub fn set_name(&self, name: &str) {
+        lock(&self.inner.me).name = name.to_owned();
+        self.inner.client.set_name(name);
+        self.inner.publish_members();
     }
 
     /// Runtime da rede: [`crate::RemoteView::start`] precisa rodar dentro dele.
@@ -296,6 +320,10 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
     while let Some(event) = events.recv().await {
         match event {
             WireEvent::Joined { .. } => {}
+            WireEvent::RoomRenamed(name) => {
+                *lock(&inner.room_name) = Some(name.clone());
+                (inner.on_update)(RoomUpdate::RoomName(Some(name)));
+            }
             WireEvent::MemberJoined(m) | WireEvent::MemberUpdated(m) => {
                 lock(&inner.members).insert(m.id.clone(), m);
                 inner.publish_members();
