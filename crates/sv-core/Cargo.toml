@@ -1,0 +1,16 @@
+[package]
+name = "sv-core"
+description = "Tipos comuns do SquadView: identificadores, camadas de qualidade e erros."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+
+[lints]
+workspace = true

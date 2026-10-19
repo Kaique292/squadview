@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.0.0" # x-release-please-version
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Kaique Amaral"]
+repository = "https://github.com/Kaique292/squadview"
+
+[workspace.dependencies]
+sv-core = { path = "crates/sv-core" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
