@@ -104,6 +104,22 @@ pub async fn source_thumbnail(source: CaptureSource) -> Option<String> {
     .flatten()
 }
 
+/// Evento com a foto do último quadro (JPEG em data URL): a interface põe a foto no lugar do
+/// vídeo e faz a animação de saída.
+pub const VIDEO_EXIT_EVENT: &str = "video-exit";
+/// Tempo para a interface desenhar a foto por baixo do vídeo antes de ele fechar. Assim a troca
+/// do vídeo nativo pela foto não pisca.
+const EXIT_HANDOFF: Duration = Duration::from_millis(160);
+
+/// Manda a foto do último quadro para a interface e dá tempo de ela aparecer. Chame fora da
+/// thread principal, logo antes de fechar o vídeo.
+pub(crate) fn hand_off_exit(app: &AppHandle, photo: Option<sv_capture::Thumbnail>) {
+    if let Some(url) = photo.as_ref().and_then(jpeg_data_url) {
+        let _ = app.emit(VIDEO_EXIT_EVENT, url);
+        std::thread::sleep(EXIT_HANDOFF);
+    }
+}
+
 pub(crate) fn jpeg_data_url(thumb: &sv_capture::Thumbnail) -> Option<String> {
     use base64::Engine;
     let mut jpeg = Vec::new();
@@ -189,9 +205,9 @@ pub fn set_preview_listening(state: State<'_, PreviewState>, listening: bool) {
 
 /// Para a prévia (fora da thread principal: ver [`off_main`]).
 #[tauri::command]
-/// Para a transmissão e devolve a foto do último quadro (JPEG em data URL), para a interface
-/// fazer a animação de saída no lugar do vídeo.
-pub async fn stop_preview(app: AppHandle) -> Result<Option<String>, String> {
+/// Para a transmissão. Antes de fechar o vídeo, manda a foto do último quadro para a animação
+/// de saída (evento `video-exit`).
+pub async fn stop_preview(app: AppHandle) -> Result<(), String> {
     off_main(move || {
         let state = app.state::<PreviewState>();
         let stopped = {
@@ -199,14 +215,13 @@ pub async fn stop_preview(app: AppHandle) -> Result<Option<String>, String> {
             running.generation += 1;
             running.preview.take()
         };
-        let preview = stopped?;
-        let photo = preview.snapshot().as_ref().and_then(jpeg_data_url);
+        let Some(preview) = stopped else { return };
+        hand_off_exit(&app, preview.snapshot());
         // Fecha vídeo, áudio, encoder e captura, sem segurar nenhum lock.
         drop(preview);
         crate::room::stream_changed(&app, None);
         app.state::<Diagnostics>()
             .write("stream-end", &json!({ "reason": "parado pela interface" }));
-        photo
     })
     .await
 }

@@ -2,8 +2,10 @@ import { useEffect, useRef } from "react";
 import {
   DUST_MS,
   GLOW_MS,
+  HOLD_MS,
   MARGIN,
   type Rect,
+  fitInside,
   gridStep,
   makeParticles,
   particleAt,
@@ -38,10 +40,16 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
     image.onload = () => {
       if (cancelled) return;
       const dpr = window.devicePixelRatio || 1;
-      const w = Math.round(rect.width);
-      const h = Math.round(rect.height);
-      el.width = Math.round((w + MARGIN) * dpr);
-      el.height = Math.round((h + MARGIN) * dpr);
+      el.width = Math.round((rect.width + MARGIN) * dpr);
+      el.height = Math.round((rect.height + MARGIN) * dpr);
+
+      // A foto ocupa a área do vídeo do mesmo jeito que o vídeo nativo: inteira, centralizada.
+      const area = fitInside(image.naturalWidth, image.naturalHeight, rect.width, rect.height);
+      const w = Math.max(1, Math.round(area.width));
+      const h = Math.max(1, Math.round(area.height));
+      const ox = area.x;
+      // Em cima fica a margem livre para a poeira voar.
+      const oy = MARGIN + area.y;
 
       // Pixels da foto no tamanho em que ela aparece, para tirar a cor de cada partícula.
       const sample = document.createElement("canvas");
@@ -54,22 +62,25 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
       const particles = makeParticles(sctx.getImageData(0, 0, w, h).data, w, h, step);
 
       ctx.scale(dpr, dpr);
-      // A imagem fica embaixo, com a margem livre em cima e à direita para a poeira voar.
-      const ox = 0;
-      const oy = MARGIN;
       const start = performance.now();
       const draw = (now: number) => {
         if (cancelled) return;
-        const elapsed = now - start;
-        ctx.clearRect(0, 0, w + MARGIN, h + MARGIN);
+        const elapsed = now - start - HOLD_MS;
+        ctx.clearRect(0, 0, rect.width + MARGIN, rect.height + MARGIN);
+        ctx.globalAlpha = 1;
+        if (elapsed < 0) {
+          // Parada, igual ao último quadro: quando o vídeo nativo fechar, a troca não aparece.
+          ctx.drawImage(image, ox, oy, w, h);
+          frame = requestAnimationFrame(draw);
+          return;
+        }
         if (elapsed < GLOW_MS) {
           // Brilho: a imagem inteira, um pouco mais clara, com a borda acesa.
-          const k = elapsed / GLOW_MS;
-          ctx.globalAlpha = 1;
-          ctx.filter = `brightness(${1 + 0.25 * Math.sin(k * Math.PI)})`;
+          const k = Math.sin((elapsed / GLOW_MS) * Math.PI);
+          ctx.filter = `brightness(${1 + 0.25 * k})`;
           ctx.drawImage(image, ox, oy, w, h);
           ctx.filter = "none";
-          ctx.strokeStyle = `rgba(255,255,255,${0.75 * Math.sin(k * Math.PI)})`;
+          ctx.strokeStyle = `rgba(255,255,255,${0.75 * k})`;
           ctx.lineWidth = 3;
           ctx.strokeRect(ox + 1.5, oy + 1.5, w - 3, h - 3);
           frame = requestAnimationFrame(draw);
@@ -78,7 +89,6 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
         const t = (elapsed - GLOW_MS) / DUST_MS;
         if (t >= 1) return done(id);
         // O que ainda não voou continua nítido: desenha a foto e apaga os blocos que já saíram.
-        ctx.globalAlpha = 1;
         ctx.drawImage(image, ox, oy, w, h);
         for (const p of particles) {
           if (particleAt(p, t) !== "waiting") ctx.clearRect(ox + p.x, oy + p.y, step, step);

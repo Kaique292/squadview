@@ -113,6 +113,7 @@ pub fn run() {
             room::room_watch,
             room::room_stop_watching,
             room::set_watch_listening,
+            room::set_watch_volume,
             preview::stop_preview,
         ])
         .run(tauri::generate_context!())

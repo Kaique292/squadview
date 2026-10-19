@@ -24,6 +24,9 @@ use crate::opus::{CHANNELS, SAMPLE_RATE};
 pub const MAX_BUFFERED_MS: usize = 120;
 const MAX_BUFFERED: usize = SAMPLE_RATE as usize * CHANNELS * MAX_BUFFERED_MS / 1000;
 
+/// Volume máximo (200%).
+pub const MAX_VOLUME: f32 = 2.0;
+
 #[derive(Debug, Default)]
 struct Queue {
     samples: VecDeque<f32>,
@@ -82,9 +85,9 @@ impl AudioPlayer {
         push_bounded(&mut q.samples, samples, MAX_BUFFERED);
     }
 
-    /// Volume de 0 (mudo) a 1.
+    /// Volume de 0 (mudo) a 2 (200%, como no Discord).
     pub fn set_volume(&self, volume: f32) {
-        self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, 1.0);
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, MAX_VOLUME);
     }
 }
 
@@ -110,7 +113,8 @@ pub(crate) fn push_bounded(queue: &mut VecDeque<f32>, samples: &[f32], max: usiz
 fn fill(queue: &mut Queue, out: &mut [f32]) {
     let n = out.len().min(queue.samples.len());
     for (dst, src) in out.iter_mut().zip(queue.samples.drain(..n)) {
-        *dst = src * queue.volume;
+        // Acima de 100% o som pode passar do limite: corta em vez de distorcer na placa.
+        *dst = (src * queue.volume).clamp(-1.0, 1.0);
     }
     out[n..].fill(0.0);
 }
@@ -221,6 +225,18 @@ mod tests {
         fill(&mut q, &mut out);
         assert_eq!(out, [0.5, -0.5, 0.0, 0.0]);
         assert!(q.samples.is_empty());
+    }
+
+    #[test]
+    fn volume_acima_de_100_corta_no_limite() {
+        let mut q = Queue {
+            samples: VecDeque::from(vec![0.3, -0.8]),
+            volume: 2.0,
+        };
+        let mut out = [0.0; 2];
+        fill(&mut q, &mut out);
+        assert!((out[0] - 0.6).abs() < 1e-6);
+        assert_eq!(out[1], -1.0);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Áudio do jogo: captura do processo → Opus (quem transmite) e Opus → buffer de jitter → saída
 //! (quem assiste).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -70,6 +70,8 @@ const JITTER_PACKETS: usize = 3;
 pub struct AudioReceiver {
     inbox: Option<SyncSender<AudioPacket>>,
     listening: Arc<AtomicBool>,
+    /// Volume (bits de um f32, de 0 a 2), lido pela thread a cada volta.
+    volume: Arc<AtomicU32>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -86,6 +88,8 @@ impl AudioReceiver {
         let (tx, rx) = mpsc::sync_channel::<AudioPacket>(INBOX);
         let flag = Arc::new(AtomicBool::new(listening));
         let thread_flag = flag.clone();
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let thread_volume = volume.clone();
         let mut decoder = AudioDecoder::new().map_err(|e| e.to_string())?;
         let on_event = Arc::new(Mutex::new(on_event));
         let thread = std::thread::Builder::new()
@@ -94,6 +98,8 @@ impl AudioReceiver {
                 let emit = |e| (on_event.lock().unwrap_or_else(|p| p.into_inner()))(e);
                 let mut jitter = JitterBuffer::new(JITTER_PACKETS);
                 let mut player: Option<AudioPlayer> = None;
+                // Volume já aplicado na saída atual (NaN = nenhum ainda).
+                let mut applied = f32::NAN;
                 let mut playback_failed = false;
                 let mut pcm = vec![0.0f32; FRAME_SAMPLES * CHANNELS];
                 loop {
@@ -114,6 +120,14 @@ impl AudioReceiver {
                         }
                     } else if !wants {
                         player = None;
+                        applied = f32::NAN;
+                    }
+                    let wanted = f32::from_bits(thread_volume.load(Ordering::Relaxed));
+                    if let Some(player) = &player
+                        && wanted != applied
+                    {
+                        player.set_volume(wanted);
+                        applied = wanted;
                     }
                     while let Some(next) = jitter.pop() {
                         let packet = match &next {
@@ -135,6 +149,7 @@ impl AudioReceiver {
         Ok(Self {
             inbox: Some(tx),
             listening: flag,
+            volume,
             thread: Some(thread),
         })
     }
@@ -150,6 +165,16 @@ impl AudioReceiver {
     /// Liga ou desliga a saída de áudio (a decodificação continua, para medir).
     pub fn set_listening(&self, listening: bool) {
         self.listening.store(listening, Ordering::Relaxed);
+    }
+
+    /// Volume de 0 (mudo) a 2 (200%).
+    pub fn set_volume(&self, volume: f32) {
+        let volume = if volume.is_finite() {
+            volume.clamp(0.0, sv_media::MAX_VOLUME)
+        } else {
+            1.0
+        };
+        self.volume.store(volume.to_bits(), Ordering::Relaxed);
     }
 }
 

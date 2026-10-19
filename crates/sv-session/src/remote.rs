@@ -146,6 +146,13 @@ impl RemoteView {
         }
     }
 
+    /// Volume do som do amigo, de 0 a 2 (200%).
+    pub fn set_volume(&self, volume: f32) {
+        if let Some(audio) = lock(&self.state.audio).as_ref() {
+            audio.set_volume(volume);
+        }
+    }
+
     pub fn request_keyframe(&self) {
         self.receiver.request_keyframe();
     }

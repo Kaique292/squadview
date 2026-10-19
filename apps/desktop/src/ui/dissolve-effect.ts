@@ -6,6 +6,8 @@ import { create } from "zustand";
  * a direita. O vídeo de verdade é uma janela nativa; a animação usa a foto do último quadro.
  */
 
+/** Foto parada enquanto o vídeo nativo ainda está por cima (o Rust espera isso antes de fechá-lo). */
+export const HOLD_MS = 160;
 /** Brilho antes de começar a desfazer. */
 export const GLOW_MS = 260;
 /** Duração da poeira (depois do brilho). */
@@ -36,6 +38,15 @@ export interface Particle {
   dy: number;
   /** Fase da oscilação lateral. */
   wobble: number;
+}
+
+/** Maior retângulo com a proporção da imagem que cabe na área, centralizado (como o vídeo nativo). */
+export function fitInside(imageW: number, imageH: number, areaW: number, areaH: number): Rect {
+  if (imageW <= 0 || imageH <= 0) return { x: 0, y: 0, width: areaW, height: areaH };
+  const scale = Math.min(areaW / imageW, areaH / imageH);
+  const width = imageW * scale;
+  const height = imageH * scale;
+  return { x: (areaW - width) / 2, y: (areaH - height) / 2, width, height };
 }
 
 /** Lado do bloco de cada partícula, para não passar do teto. */

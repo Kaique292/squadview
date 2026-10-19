@@ -166,10 +166,9 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
   async stop() {
     await get().setFullscreen(false);
-    // O Rust devolve a foto do último quadro: o vídeo some se desfazendo em poeira.
-    const photo = await invoke<string | null>("stop_preview");
+    // Antes de fechar o vídeo, o Rust manda a foto do último quadro (evento `video-exit`).
+    await invoke("stop_preview");
     set({ status: "idle", stats: null });
-    playVideoExit(photo);
   },
 }));
 
@@ -206,6 +205,8 @@ export async function listenToStreamEvents() {
   };
   window.addEventListener("keydown", onKey);
   const unlistenSystem = await listen<SystemLoad>("system-load", (e) => useStreamStore.setState({ system: e.payload }));
+  // Foto do último quadro, logo antes de um vídeo (o nosso ou o de quem assistimos) fechar.
+  const unlistenExit = await listen<string>("video-exit", (e) => playVideoExit(e.payload));
   try {
     useStreamStore.setState({ logPath: await invoke<string | null>("session_log_path") });
   } catch {
@@ -215,6 +216,7 @@ export async function listenToStreamEvents() {
     unlistenStats();
     unlistenEnded();
     unlistenSystem();
+    unlistenExit();
     unlistenNotice();
     unlistenFullscreen();
     window.removeEventListener("keydown", onKey);

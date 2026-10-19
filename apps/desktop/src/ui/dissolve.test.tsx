@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { Dissolve } from "./Dissolve";
 import {
+  fitInside,
   gridStep,
   makeParticles,
   particleAt,
@@ -22,6 +23,13 @@ function image() {
 beforeEach(() => useDissolveStore.setState({ effect: null }));
 
 describe("animação de saída do vídeo", () => {
+  it("encaixa a foto na área como o vídeo nativo, com faixas nas sobras", () => {
+    // 16:9 numa área mais alta: ocupa a largura e fica no meio na vertical.
+    expect(fitInside(1280, 720, 640, 480)).toEqual({ x: 0, y: 60, width: 640, height: 360 });
+    // Numa área mais larga: ocupa a altura e fica no meio na horizontal.
+    expect(fitInside(1280, 720, 1000, 360)).toEqual({ x: 180, y: 0, width: 640, height: 360 });
+  });
+
   it("limita a quantidade de partículas em vídeos grandes", () => {
     expect(gridStep(100, 100)).toBe(3);
     const step = gridStep(1920, 1080);

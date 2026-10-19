@@ -121,16 +121,17 @@ pub fn room_watch(state: State<'_, RoomState>, member_id: String) -> Result<(), 
     Ok(())
 }
 
-/// Para de assistir e devolve a foto do último quadro, para a animação de saída.
+/// Para de assistir. Antes de fechar o vídeo, manda a foto do último quadro (evento `video-exit`).
 #[tauri::command]
-pub async fn room_stop_watching(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn room_stop_watching(app: AppHandle) -> Result<(), String> {
     preview::off_main(move || {
         let state = app.state::<RoomState>();
-        let watching = lock(&state).watching.take()?;
-        let photo = watching.view.snapshot().as_ref().and_then(preview::jpeg_data_url);
+        let Some(watching) = lock(&state).watching.take() else {
+            return;
+        };
+        preview::hand_off_exit(&app, watching.view.snapshot());
         drop(watching);
         preview::set_watching(&app, false);
-        photo
     })
     .await
 }
@@ -140,6 +141,14 @@ pub async fn room_stop_watching(app: AppHandle) -> Result<Option<String>, String
 pub fn set_watch_listening(state: State<'_, RoomState>, listening: bool) {
     if let Some(w) = lock(&state).watching.as_ref() {
         w.view.set_listening(listening);
+    }
+}
+
+/// Volume de quem estamos assistindo, de 0 a 2 (200%).
+#[tauri::command]
+pub fn set_watch_volume(state: State<'_, RoomState>, volume: f32) {
+    if let Some(w) = lock(&state).watching.as_ref() {
+        w.view.set_volume(volume);
     }
 }
 
@@ -179,8 +188,6 @@ pub fn apply_layout(app: &AppHandle, bounds: sv_session::Bounds, hidden: bool) -
 struct WatchEnded {
     member_id: String,
     reason: String,
-    /// Foto do último quadro, quando a transmissão chegou a aparecer (para a animação de saída).
-    snapshot: Option<String>,
 }
 
 fn on_update(app: &AppHandle, update: RoomUpdate) {
@@ -192,14 +199,7 @@ fn on_update(app: &AppHandle, update: RoomUpdate) {
         RoomUpdate::WatchFailed { member_id, reason } => {
             app.state::<Diagnostics>()
                 .write("watch-failed", &json!({ "reason": reason }));
-            let _ = app.emit(
-                WATCH_ENDED_EVENT,
-                WatchEnded {
-                    member_id,
-                    reason,
-                    snapshot: None,
-                },
-            );
+            let _ = app.emit(WATCH_ENDED_EVENT, WatchEnded { member_id, reason });
         }
         RoomUpdate::Error(message) => {
             let _ = app.emit(ROOM_ERROR_EVENT, message);
@@ -219,7 +219,6 @@ fn start_watching(app: &AppHandle, member: Member, conn: quinn::Connection, desc
                 WatchEnded {
                     member_id: member.id,
                     reason: e,
-                    snapshot: None,
                 },
             );
             return;
@@ -247,11 +246,9 @@ fn start_watching(app: &AppHandle, member: Member, conn: quinn::Connection, desc
                 if running.watching.as_ref().is_some_and(|w| w.member.id == id) {
                     let ended = running.watching.take();
                     drop(running);
-                    let snapshot = ended
-                        .as_ref()
-                        .and_then(|w| w.view.snapshot())
-                        .as_ref()
-                        .and_then(preview::jpeg_data_url);
+                    if let Some(w) = ended.as_ref() {
+                        preview::hand_off_exit(&app, w.view.snapshot());
+                    }
                     drop(ended);
                     preview::set_watching(&app, false);
                     let _ = app.emit(
@@ -259,7 +256,6 @@ fn start_watching(app: &AppHandle, member: Member, conn: quinn::Connection, desc
                         WatchEnded {
                             member_id: id,
                             reason: "A transmissão terminou.".into(),
-                            snapshot,
                         },
                     );
                 }
