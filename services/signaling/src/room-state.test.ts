@@ -94,7 +94,7 @@ describe("entrar na sala", () => {
     expect(beto.last()).toEqual({
       type: "welcome",
       you: idOf(beto),
-      members: [{ id: idOf(ana), name: "Ana", live: false }],
+      members: [{ id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false }],
       room: null,
     });
   });
@@ -102,7 +102,10 @@ describe("entrar na sala", () => {
   it("avisa os outros quando alguém entra, mas não avisa a própria pessoa", () => {
     const ana = join("Ana");
     const beto = join("Beto");
-    expect(ana.last()).toEqual({ type: "member-joined", member: { id: idOf(beto), name: "Beto", live: false } });
+    expect(ana.last()).toEqual({
+      type: "member-joined",
+      member: { id: idOf(beto), name: "Beto", live: false, muted: false, deafened: false },
+    });
     expect(ana.sent.filter((m) => m.type === "member-joined")).toHaveLength(1);
     expect(beto.sent.filter((m) => m.type === "member-joined")).toHaveLength(0);
   });
@@ -173,9 +176,12 @@ describe("nome da sala e apelido", () => {
     const ana = join("Ana");
     const beto = join("Beto");
     send(beto, { type: "rename", name: "Betão" });
-    expect(ana.last()).toEqual({ type: "member-updated", member: { id: idOf(beto), name: "Betão", live: false } });
+    expect(ana.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false },
+    });
     expect(join("Caio").last()).toMatchObject({
-      members: expect.arrayContaining([{ id: idOf(beto), name: "Betão", live: false }]),
+      members: expect.arrayContaining([{ id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false }]),
     });
   });
 
@@ -221,11 +227,28 @@ describe("status ao vivo", () => {
     const ana = join("Ana");
     const beto = join("Beto");
     send(ana, { type: "status", live: true });
-    expect(beto.last()).toEqual({ type: "member-updated", member: { id: idOf(ana), name: "Ana", live: true } });
+    expect(beto.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false },
+    });
 
     const caio = join("Caio");
     const welcome = caio.last();
     expect(welcome?.type === "welcome" && welcome.members.find((m) => m.name === "Ana")?.live).toBe(true);
+  });
+});
+
+describe("estado de voz", () => {
+  it("avisa os outros quando alguém silencia o microfone ou ensurdece", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "status", live: false, muted: true, deafened: false });
+    expect(ana.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(beto), name: "Beto", live: false, muted: true, deafened: false },
+    });
+    send(beto, { type: "status", live: true, muted: true, deafened: true });
+    expect(ana.last()).toMatchObject({ member: { live: true, muted: true, deafened: true } });
   });
 });
 

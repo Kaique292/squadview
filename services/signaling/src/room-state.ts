@@ -85,7 +85,7 @@ export class RoomState {
 
     switch (msg.type) {
       case "status": {
-        const member = { ...me, live: msg.live };
+        const member = { ...me, live: msg.live, muted: msg.muted, deafened: msg.deafened };
         conn.setAttachment({ ...attachment, member });
         this.broadcast({ type: "member-updated", member }, conn);
         return;
@@ -143,7 +143,7 @@ export class RoomState {
     // Quem cria a sala (entra nela vazia) escolhe o nome; quem chega depois recebe o nome atual.
     const current = others.map(([c]) => c.getAttachment()?.room).find((r) => r) ?? null;
     const roomName = others.length === 0 ? room : current;
-    const member: Member = { id, name, live: false };
+    const member: Member = { id, name, live: false, muted: false, deafened: false };
     conn.setAttachment({ ...attachment, member, room: roomName });
     conn.send({ type: "welcome", you: id, members: others.map(([, m]) => m), room: roomName });
     this.broadcast({ type: "member-joined", member }, conn);

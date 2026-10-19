@@ -19,13 +19,17 @@ export interface Member {
   id: PeerId;
   name: string;
   live: boolean;
+  /** Microfone silenciado (chat de voz). */
+  muted: boolean;
+  /** Ensurdecido: não ouve ninguém. */
+  deafened: boolean;
 }
 
 export type ClientMessage =
   | { type: "join"; name: string; protocol: number; room: string | null }
   | { type: "room"; name: string }
   | { type: "rename"; name: string }
-  | { type: "status"; live: boolean }
+  | { type: "status"; live: boolean; muted: boolean; deafened: boolean }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   | { type: "leave" };
 
@@ -89,8 +93,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const name = cleanName(data.name);
       return name === null ? null : { type: data.type, name };
     }
-    case "status":
-      return typeof data.live === "boolean" ? { type: "status", live: data.live } : null;
+    case "status": {
+      if (typeof data.live !== "boolean") return null;
+      // muted e deafened são opcionais (o app 0.1.0 e o 0.2.0 só mandam live).
+      const flag = (v: unknown) => (v === undefined ? false : typeof v === "boolean" ? v : null);
+      const muted = flag(data.muted);
+      const deafened = flag(data.deafened);
+      if (muted === null || deafened === null) return null;
+      return { type: "status", live: data.live, muted, deafened };
+    }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;
       if (byteLength(JSON.stringify(data.payload)) > MAX_SIGNAL_PAYLOAD_BYTES) return null;

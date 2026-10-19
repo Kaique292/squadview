@@ -34,7 +34,19 @@ describe("mensagens do cliente", () => {
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });
-    expect(parseClientMessage('{"type":"status","live":true}')).toEqual({ type: "status", live: true });
+    // Apps antigos só mandam live: mudo e surdo ficam falsos.
+    expect(parseClientMessage('{"type":"status","live":true}')).toEqual({
+      type: "status",
+      live: true,
+      muted: false,
+      deafened: false,
+    });
+    expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
+      type: "status",
+      live: false,
+      muted: true,
+      deafened: true,
+    });
     expect(parseClientMessage(`{"type":"signal","to":"${PEER}","payload":{"candidates":[]}}`)).toEqual({
       type: "signal",
       to: PEER,
@@ -52,6 +64,7 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1.5}')).toBeNull();
     expect(parseClientMessage('{"type":"join","name":"","protocol":1}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":"sim"}')).toBeNull();
+    expect(parseClientMessage('{"type":"status","live":true,"muted":"sim"}')).toBeNull();
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();

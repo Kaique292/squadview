@@ -21,30 +21,30 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Cliente → servidor
 
-| Mensagem                                                    | Quando                                                                                                                                                                                                              |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}` | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
-| `{"type":"room","name":"Squad"}`                            | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
-| `{"type":"rename","name":"K.A"}`                            | Troca o próprio apelido. Os outros recebem `member-updated`.                                                                                                                                                        |
-| `{"type":"status","live":true}`                             | Começou ou parou de transmitir.                                                                                                                                                                                     |
-| `{"type":"signal","to":"<peerId>","payload":{...}}`         | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
-| `{"type":"leave"}`                                          | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
+| Mensagem                                                       | Quando                                                                                                                                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
+| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
+| `{"type":"rename","name":"K.A"}`                               | Troca o próprio apelido. Os outros recebem `member-updated`.                                                                                                                                                        |
+| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem).                                                                         |
+| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
+| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
 
 ### Servidor → cliente
 
-| Mensagem                                                                               | Quando                                                                                                        |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. |
-| `{"type":"room-updated","name":"Squad"}`                                               | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                             |
-| `{"type":"member-joined","member":{...}}`                                              | Alguém entrou (não é enviado para quem entrou).                                                               |
-| `{"type":"member-updated","member":{...}}`                                             | Alguém mudou o `live` ou o apelido.                                                                           |
-| `{"type":"member-left","id":"<peerId>"}`                                               | Alguém saiu, caiu ou foi desconectado por erro.                                                               |
-| `{"type":"signal","from":"<peerId>","payload":{...}}`                                  | Mensagem de outro membro.                                                                                     |
-| `{"type":"error","code":"..."}`                                                        | Ver abaixo.                                                                                                   |
+| Mensagem                                                                                                  | Quando                                                                                                        |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live","muted","deafened"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. |
+| `{"type":"room-updated","name":"Squad"}`                                                                  | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                             |
+| `{"type":"member-joined","member":{...}}`                                                                 | Alguém entrou (não é enviado para quem entrou).                                                               |
+| `{"type":"member-updated","member":{...}}`                                                                | Alguém mudou o `live`, o apelido ou o estado de voz.                                                          |
+| `{"type":"member-left","id":"<peerId>"}`                                                                  | Alguém saiu, caiu ou foi desconectado por erro.                                                               |
+| `{"type":"signal","from":"<peerId>","payload":{...}}`                                                     | Mensagem de outro membro.                                                                                     |
+| `{"type":"error","code":"..."}`                                                                           | Ver abaixo.                                                                                                   |
 
 `peerId` são 16 caracteres hexadecimais aleatórios, gerados pelo servidor a cada `join`.
 
-O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename` e `room-updated` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
+O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename`, `room-updated` e os campos `muted`/`deafened` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
 
 ## Erros
 
