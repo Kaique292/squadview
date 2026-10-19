@@ -6,6 +6,7 @@ pub mod jitter;
 mod mic;
 pub mod opus;
 mod playback;
+pub mod voice;
 mod window;
 
 pub use decode::Decoder;
