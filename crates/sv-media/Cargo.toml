@@ -1,6 +1,6 @@
 [package]
 name = "sv-media"
-description = "Decodificação por GPU (D3D11VA), renderização e áudio Opus."
+description = "Decodificação por GPU (Media Foundation/DXVA), janela de vídeo e áudio Opus."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+opus-rs = "0.1.37"
+sv-gpu.workspace = true
+windows.workspace = true
+
+[dev-dependencies]
 sv-core.workspace = true
+sv-encode.workspace = true
 
 [lints]
 workspace = true
