@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Falha de segurança
+    url: https://github.com/Kaique292/squadview/security/advisories/new
+    about: Reporte em particular, sem abrir issue pública.
