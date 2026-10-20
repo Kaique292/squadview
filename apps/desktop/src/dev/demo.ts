@@ -1,8 +1,9 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
- * `http://localhost:1420/#demo=sala`, `#demo=transmitir` ou `#demo=config`.
+ * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config` ou `#demo=amigos`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
+import { useFriendsStore } from "../friends/friends-store";
 import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
 import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
@@ -10,8 +11,23 @@ import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
 const MEMBERS = [
   { id: "eu", name: "Kaique", live: false },
   { id: "a", name: "Minato", live: true },
-  { id: "b", name: "Lobo", live: false },
+  { id: "b", name: "Lobo", live: false, muted: true },
   { id: "c", name: "Yondaime", live: false },
+];
+
+const online = (room: string | null, live = false) => ({ online: true, inRoom: room !== null, room, live });
+const FRIENDS = [
+  { id: "100000000000000001", name: "Minato", avatar: null, direct: true, presence: online("Galera do LoL", true) },
+  { id: "100000000000000002", name: "Lobo", avatar: null, direct: false, presence: online("Galera do LoL") },
+  { id: "100000000000000003", name: "Sakura", avatar: null, direct: false, presence: online(null) },
+  { id: "100000000000000004", name: "Itachi", avatar: null, direct: false, presence: online("Ranked da noite") },
+  {
+    id: "100000000000000005",
+    name: "Kakashi",
+    avatar: null,
+    direct: false,
+    presence: { online: false, inRoom: false, room: null, live: false },
+  },
 ];
 
 const SOURCES: Source[] = [
@@ -60,6 +76,7 @@ export function runDemo(scene: string) {
   useAppearanceStore.getState().setGlass(0);
   useRoomStore.setState({
     code: "F5B6S9",
+    roomName: "Galera do LoL",
     joinedAt: Date.now() - (1 * 3600 + 24 * 60 + 9) * 1000,
     members: MEMBERS,
   });
@@ -77,8 +94,21 @@ export function runDemo(scene: string) {
   Object.assign(window, {
     __TAURI_INTERNALS__: { invoke: async (cmd: string) => FAKE_COMMANDS[cmd] ?? null },
   });
+  if (scene === "amigos") {
+    useFriendsStore.setState({
+      status: "online",
+      open: true,
+      friends: FRIENDS,
+      incoming: [{ id: "100000000000000006", name: "Hinata", avatar: null }],
+      joinRequests: [{ id: "00000000000000aa", from: { id: "100000000000000007", name: "Naruto", avatar: null } }],
+    });
+  }
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
+    // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).
+    document
+      .querySelector('[aria-label="Canal de voz"]')
+      ?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
     if (scene === "transmitir") click("Transmitir minha tela");
     if (scene === "config") click("Configurações");
   }, 300);
