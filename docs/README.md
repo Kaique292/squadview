@@ -3,6 +3,7 @@
 | Documento                                     | Para quê                                                  |
 | --------------------------------------------- | --------------------------------------------------------- |
 | [Arquitetura](arquitetura.md)                 | Como as peças se encaixam: captura, encode, malha, decode |
+| [Captura](captura.md)                         | Qualquer modo de tela, seguindo o jogo entre janelas      |
 | [Protocolo da malha](protocolo-malha.md)      | Como a sala distribui o vídeo entre os membros            |
 | [Roadmap](roadmap.md)                         | Fases do projeto, entregas e critérios de saída           |
 | [Decisões (ADRs)](adr/)                       | Por que escolhemos cada tecnologia                        |
@@ -28,3 +29,4 @@
 | [0010](adr/0010-chat-de-voz-na-sala.md)                   | Chat de voz na sala: malha QUIC, Opus mono e supressão de ruído                     |
 | [0011](adr/0011-amigos-e-presenca.md)                     | Amigos, presença e pedido para entrar na sala, com identidade conferida pelo Worker |
 | [0012](adr/0012-malha-em-enxame.md)                       | Malha em enxame: várias árvores, paridade e repassador na nuvem de reserva          |
+| [0013](adr/0013-seguir-o-jogo-sem-injecao.md)             | Seguir o jogo entre janelas e para o monitor, sem injeção                           |
