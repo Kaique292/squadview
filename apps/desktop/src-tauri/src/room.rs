@@ -191,6 +191,14 @@ pub fn room_set_profile(state: State<'_, RoomState>, name: String, discord: Opti
     Ok(())
 }
 
+/// Entramos com o Discord já dentro da sala: a sala confere a sessão (vira conferido para os
+/// outros e entra nos recentes deles), sem sair e entrar.
+pub fn verify_in_room<R: Runtime>(app: &AppHandle<R>, session: &str) {
+    if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
+        room.verify(session);
+    }
+}
+
 /// Aceita ou recusa o pedido de entrada `id`.
 #[tauri::command]
 pub fn room_answer_join(state: State<'_, RoomState>, id: String, accept: bool) -> Result<(), String> {

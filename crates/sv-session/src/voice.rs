@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use sv_media::jitter::{JitterBuffer, Next};
 use sv_media::voice::{VOICE_FRAME, VoiceDecoder, VoiceEncoder, VoiceOptions};
-use sv_media::{AudioPlayer, MAX_VOLUME, MicCapture};
+use sv_media::{AudioPlayer, MicCapture};
 
 use crate::surface::lock;
 
@@ -37,6 +37,8 @@ pub struct VoiceSettings {
     /// Volume geral da saída, de 0 a 2.
     pub output_volume: f32,
     pub noise_suppression: bool,
+    /// Controle automático de ganho do microfone.
+    pub auto_gain: bool,
 }
 
 impl Default for VoiceSettings {
@@ -47,6 +49,7 @@ impl Default for VoiceSettings {
             input_gain: 1.0,
             output_volume: 1.0,
             noise_suppression: true,
+            auto_gain: true,
         }
     }
 }
@@ -152,7 +155,7 @@ impl Shared {
 
     fn set_peer_volume(&self, member: &str, volume: f32) {
         if let Some(peer) = lock(&self.peers).get_mut(member) {
-            peer.volume = volume.clamp(0.0, MAX_VOLUME);
+            peer.volume = sv_media::volume_gain(volume);
         }
     }
 
@@ -206,6 +209,7 @@ impl VoiceEngine {
         let options = VoiceOptions {
             noise_suppression: settings.noise_suppression,
             input_gain: settings.input_gain,
+            auto_gain: settings.auto_gain,
         };
         let encoder = Arc::new(Mutex::new(VoiceEncoder::new(options).map_err(|e| e.to_string())?));
         Ok(Self {
@@ -280,6 +284,7 @@ impl VoiceEngine {
         lock(&self.encoder).set_options(VoiceOptions {
             noise_suppression: settings.noise_suppression,
             input_gain: settings.input_gain,
+            auto_gain: settings.auto_gain,
         });
         if self.shared.replace_settings(settings) {
             self.open_mic();
@@ -442,10 +447,10 @@ fn render_output(shared: &Shared, mix: &mut [f32], decoded: &mut [f32], stereo: 
     let volume = if deafened {
         0.0
     } else {
-        lock(&shared.settings).output_volume.clamp(0.0, MAX_VOLUME)
+        sv_media::volume_gain(lock(&shared.settings).output_volume)
     };
     for (pair, m) in stereo.chunks_exact_mut(2).zip(mix.iter()) {
-        let s = (m * volume).clamp(-1.0, 1.0);
+        let s = sv_media::soft_clip(m * volume);
         pair[0] = s;
         pair[1] = s;
     }
@@ -506,6 +511,7 @@ mod tests {
         let mut enc = VoiceEncoder::new(VoiceOptions {
             noise_suppression: false,
             input_gain: 1.0,
+            auto_gain: false,
         })
         .unwrap();
         let tone: Vec<f32> = (0..VOICE_FRAME * n)
@@ -724,8 +730,9 @@ mod tests {
         let (_, on_event) = recorder();
         let shared = Shared::new(VoiceSettings::default(), on_event);
         shared.add_peer("ana").unwrap();
+        // Acima de 200% fica em 200%, que pela curva perceptiva é ×4 (+12 dB).
         shared.set_peer_volume("ana", 5.0);
-        assert_eq!(shared.peers.lock().unwrap()["ana"].volume, MAX_VOLUME);
+        assert_eq!(shared.peers.lock().unwrap()["ana"].volume, 4.0);
         shared.set_peer_volume("ana", -1.0);
         assert_eq!(shared.peers.lock().unwrap()["ana"].volume, 0.0);
         shared.set_peer_muted("ana", true);

@@ -1,6 +1,7 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, ChevronRight, Headphones, HeadphoneOff, Mic, MicOff } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
+import { useOverlayMenu } from "../ui/overlay";
 import { Tooltip } from "../ui/Tooltip";
 import { type AudioDevice, MAX_VOICE_VOLUME, useVoiceStore } from "./voice-store";
 
@@ -100,6 +101,7 @@ function SplitButton(props: {
       ? "bg-surface-3 text-text hover:bg-surface-hover"
       : "text-text-muted hover:bg-surface-hover hover:text-text";
   const height = props.large ? "h-10" : "h-8";
+  const onOpenChange = useOverlayMenu((open) => open && props.onOpenMenu());
   return (
     <div
       className={`flex items-center rounded-md transition-colors ${props.off ? "bg-live/15" : props.large ? "bg-surface-3" : ""}`}
@@ -115,7 +117,7 @@ function SplitButton(props: {
           {props.icon}
         </button>
       </Tooltip>
-      <Menu.Root onOpenChange={(open) => open && props.onOpenMenu()}>
+      <Menu.Root onOpenChange={onOpenChange}>
         <Menu.Trigger asChild>
           <button
             type="button"

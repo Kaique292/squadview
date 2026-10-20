@@ -1,6 +1,7 @@
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
+import { forgetRoomToRejoin, rememberRoomToRejoin } from "../room/room-store";
 
 /** Estado da atualização automática (ver docs/adr/0006-atualizacao-automatica.md). */
 export type UpdateStatus =
@@ -15,6 +16,38 @@ interface UpdateState {
   notes: string | null;
   checkForUpdate: () => Promise<void>;
   install: () => Promise<void>;
+}
+
+/** Novidades da versão que está sendo instalada, para mostrar ao abrir de novo. */
+const WHATS_NEW_KEY = "squadview.novidades";
+
+export interface WhatsNew {
+  version: string;
+  notes: string | null;
+}
+
+function remember(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Sem armazenamento: só não volta para a sala nem mostra as novidades.
+  }
+}
+
+/** Lê e apaga (vale uma vez só). */
+function takeOnce<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    localStorage.removeItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** As novidades da versão que acabou de ser instalada (uma vez só, depois de atualizar). */
+export function takeWhatsNew(): WhatsNew | null {
+  return takeOnce<WhatsNew>(WHATS_NEW_KEY);
 }
 
 /** De quanto em quanto tempo procurar versão nova com o app aberto. */
@@ -47,6 +80,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     let total = 0;
     let received = 0;
     set({ status: { kind: "downloading", version, percent: null } });
+    // O app fecha para instalar: guarda a sala para voltar e as novidades para mostrar depois.
+    rememberRoomToRejoin();
+    remember(WHATS_NEW_KEY, { version, notes: get().notes });
     try {
       // No Windows o instalador fecha o app, instala e abre de novo (passa pela splash).
       await pending.downloadAndInstall((event) => {
@@ -60,6 +96,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       });
       await relaunch();
     } catch {
+      // Não atualizou: não há para onde voltar nem novidades.
+      forgetRoomToRejoin();
+      takeOnce(WHATS_NEW_KEY);
       set({ status: { kind: "error", version, message: "Não deu para baixar a atualização. Tente de novo." } });
     }
   },

@@ -81,6 +81,12 @@ export function VoiceSection() {
           checked={prefs.noiseSuppression}
           onChange={(v) => void setPrefs({ noiseSuppression: v })}
         />
+        <Switch
+          label="Controle automático de ganho"
+          hint="Deixa sua voz no mesmo volume para todos, com microfone baixo ou alto, como no Discord."
+          checked={prefs.autoGain}
+          onChange={(v) => void setPrefs({ autoGain: v })}
+        />
         <p className="text-xs text-text-faint">
           Use fone de ouvido: com caixa de som, a galera pode ouvir o próprio eco (o cancelamento de eco chega numa
           próxima versão).

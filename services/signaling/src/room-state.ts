@@ -165,6 +165,16 @@ export class RoomState {
         target[0].send({ type: "signal", from: me.id, payload: msg.payload });
         return;
       }
+      case "verify": {
+        // Sessão que não confere (ou de outra conta já conferida): ignora.
+        if (!verified || (attachment.verified && attachment.verified !== verified)) return;
+        const avatar = me.discord?.id === verified ? me.discord.avatar : null;
+        const member = { ...me, discord: { id: verified, avatar }, verified: true };
+        conn.setAttachment({ ...attachment, member, verified });
+        this.broadcast({ type: "member-updated", member }, conn);
+        this.meetOthers(conn, { id: verified, name: me.name, avatar });
+        return;
+      }
       case "join-answer": {
         const requests = this.liveRequests();
         const request = requests[msg.id];
@@ -216,25 +226,27 @@ export class RoomState {
     // Quem cria a sala (entra nela vazia) escolhe o nome; quem chega depois recebe o nome atual.
     const current = others.map(([c]) => c.getAttachment()?.room).find((r) => r) ?? null;
     const roomName = others.length === 0 ? room : current;
-    const member: Member = { id, name, live: false, muted: false, deafened: false, discord };
+    const member: Member = { id, name, live: false, muted: false, deafened: false, discord, verified: !!verified };
     conn.setAttachment({ ...attachment, member, room: roomName });
     conn.send({ type: "welcome", you: id, members: others.map(([, m]) => m), room: roomName });
     this.broadcast({ type: "member-joined", member }, conn);
 
-    // Recentes: quem é conferido "conhece" os outros conferidos da sala.
-    if (verified) {
-      const me = { id: verified, name, avatar: discord?.avatar ?? null };
-      const seen = new Set([verified]);
-      for (const [c, m] of others) {
-        const other = c.getAttachment()?.verified;
-        if (!other || seen.has(other)) continue;
-        seen.add(other);
-        this.effects.met(me, { id: other, name: m.name, avatar: m.discord?.id === other ? m.discord.avatar : null });
-      }
-    }
+    if (verified) this.meetOthers(conn, { id: verified, name, avatar: discord?.avatar ?? null });
     // Quem chega vê os pedidos de entrada ainda abertos.
     for (const [requestId, r] of Object.entries(this.liveRequests())) {
       conn.send({ type: "join-request", id: requestId, from: r.from });
+    }
+  }
+
+  /** Recentes: quem é conferido "conhece" os outros conferidos da sala. */
+  private meetOthers(conn: Connection, me: VerifiedProfile): void {
+    const seen = new Set([me.id]);
+    for (const [c, m] of this.joined()) {
+      if (c.key === conn.key) continue;
+      const other = c.getAttachment()?.verified;
+      if (!other || seen.has(other)) continue;
+      seen.add(other);
+      this.effects.met(me, { id: other, name: m.name, avatar: m.discord?.id === other ? m.discord.avatar : null });
     }
   }
 

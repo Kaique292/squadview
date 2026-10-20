@@ -100,7 +100,7 @@ struct Inner {
     client: Mutex<RoomClient>,
     signaling_url: String,
     /// Sessão do SquadView, para entrar de novo como conferido ao reconectar.
-    session: Option<String>,
+    session: Mutex<Option<String>>,
     code: String,
     peer: Peer,
     me: Mutex<Member>,
@@ -196,7 +196,7 @@ impl Room {
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
-                session: session.clone(),
+                session: Mutex::new(session.clone()),
                 code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
@@ -206,6 +206,7 @@ impl Room {
                     muted: false,
                     deafened: false,
                     discord,
+                    verified: false,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -244,6 +245,13 @@ impl Room {
     /// Renomeia a sala para todos. A confirmação volta como [`RoomUpdate::RoomName`].
     pub fn rename_room(&self, name: &str) {
         lock(&self.inner.client).set_room_name(name);
+    }
+
+    /// Entramos com o Discord já dentro da sala: a sala confere a sessão (e lembra dela para as
+    /// reconexões).
+    pub fn verify(&self, session: &str) {
+        *lock(&self.inner.session) = Some(session.to_owned());
+        lock(&self.inner.client).verify(session);
     }
 
     /// Aceita ou recusa o pedido de entrada `id` (o primeiro membro que responder decide).
@@ -458,6 +466,7 @@ impl Inner {
                         muted: false,
                         deafened: false,
                         discord: None,
+                        verified: false,
                     });
                     match result {
                         Ok(conn) => (inner.on_update)(RoomUpdate::WatchReady {
@@ -593,12 +602,14 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
             (me.name.clone(), me.discord.clone(), me.live)
         };
         let room_name = lock(&inner.room_name).clone();
+        // Copia antes do `await`: um lock não pode atravessar a espera.
+        let session = lock(&inner.session).clone();
         let Ok((client, mut events)) = RoomClient::join(
             &inner.signaling_url,
             &inner.code,
             &name,
             discord.as_ref(),
-            inner.session.as_deref(),
+            session.as_deref(),
             room_name.as_deref(),
         )
         .await
@@ -733,6 +744,7 @@ mod tests {
             muted: false,
             deafened: false,
             discord: None,
+            verified: false,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![
             (RoomUpdate::Members(vec![member.clone()]), "Members(["),

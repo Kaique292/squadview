@@ -35,6 +35,8 @@ export interface Member {
   deafened: boolean;
   /** Conta do Discord vinculada, ou `null`. */
   discord: DiscordUser | null;
+  /** A conta foi conferida pela sessão do SquadView (só conferidos podem virar amigos). */
+  verified: boolean;
 }
 
 export type ClientMessage =
@@ -54,6 +56,8 @@ export type ClientMessage =
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
   | { type: "join-answer"; id: string; accept: boolean }
+  /** Entrou com o Discord já dentro da sala: confere a sessão sem sair e entrar. */
+  | { type: "verify"; session: string }
   | { type: "leave" };
 
 export type ErrorCode =
@@ -167,6 +171,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (typeof data.id !== "string" || !REQUEST_ID_PATTERN.test(data.id) || typeof data.accept !== "boolean")
         return null;
       return { type: "join-answer", id: data.id, accept: data.accept };
+    case "verify":
+      return typeof data.session === "string" && data.session.length > 0 && data.session.length <= 512
+        ? { type: "verify", session: data.session }
+        : null;
     case "leave":
       return { type: "leave" };
     default:

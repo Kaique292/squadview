@@ -28,6 +28,9 @@ pub struct VoicePrefs {
     pub input_volume: f32,
     pub output_volume: f32,
     pub noise_suppression: bool,
+    /// Controle automático de ganho (ligado se a interface antiga não mandar).
+    #[serde(default = "enabled")]
+    pub auto_gain: bool,
     #[serde(default)]
     pub muted: bool,
     #[serde(default)]
@@ -42,8 +45,13 @@ impl VoicePrefs {
             input_gain: self.input_volume.clamp(0.0, 2.0),
             output_volume: self.output_volume.clamp(0.0, 2.0),
             noise_suppression: self.noise_suppression,
+            auto_gain: self.auto_gain,
         }
     }
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Serialize, Clone)]
@@ -147,6 +155,7 @@ mod tests {
             input_volume: input,
             output_volume: output,
             noise_suppression: true,
+            auto_gain: true,
             muted: false,
             deafened: false,
         }
@@ -165,6 +174,8 @@ mod tests {
         )
         .unwrap();
         assert!(!from_ui.muted && !from_ui.deafened);
+        // Interface antiga (sem o campo): o controle automático de ganho vem ligado.
+        assert!(from_ui.auto_gain && from_ui.settings().auto_gain);
         assert_eq!(from_ui.settings().output_device.as_deref(), Some("fone"));
     }
 
