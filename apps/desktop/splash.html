@@ -172,6 +172,37 @@
           background-position: 228px 0;
         }
       }
+      /* Atualizando: as duas barras no lugar da de carregar. */
+      .update {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+      }
+      body.updating .update {
+        display: flex;
+      }
+      body.updating .status,
+      body.updating .status + .bar {
+        display: none;
+      }
+      .update-text {
+        margin: 14px 0 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .update .bar {
+        margin-top: 8px;
+        width: 200px;
+      }
+      .update .fill {
+        width: 0%;
+      }
+      /* Tamanho do download desconhecido: só o brilho corre. */
+      .update .fill.unknown {
+        width: 30%;
+        opacity: 0.7;
+      }
       .tip {
         position: absolute;
         bottom: 18px;
@@ -228,6 +259,17 @@
     <p class="status" id="status">Iniciando…</p>
     <div class="bar" role="progressbar" aria-label="Carregando o SquadView" aria-valuemin="0" aria-valuemax="100">
       <div class="fill" id="fill"></div>
+    </div>
+    <!-- Atualizando na abertura (como o Discord): baixar e instalar, cada um com a sua barra. -->
+    <div class="update" id="update">
+      <p class="update-text" id="download-text"></p>
+      <div class="bar" role="progressbar" aria-label="Baixando a atualização" aria-valuemin="0" aria-valuemax="100">
+        <div class="fill" id="download-fill"></div>
+      </div>
+      <p class="update-text" id="install-text"></p>
+      <div class="bar" role="progressbar" aria-label="Instalando a atualização" aria-valuemin="0" aria-valuemax="100">
+        <div class="fill" id="install-fill"></div>
+      </div>
     </div>
     <p class="tip" id="tip"></p>
     <script type="module" src="/src/splash/splash.ts"></script>

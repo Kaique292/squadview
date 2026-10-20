@@ -70,7 +70,12 @@ impl Broadcaster {
         let video_conn = conn.clone();
         let kf = on_keyframe.clone();
         tokio::spawn(async move {
-            send_video(video_conn.clone(), rx, kf).await;
+            // Também termina quando a conexão fecha sem nenhum frame na fila (antes o espectador
+            // continuava contado até o próximo frame).
+            tokio::select! {
+                () = send_video(video_conn.clone(), rx, kf) => {}
+                _ = video_conn.closed() => {}
+            }
             // Saiu (fechou a conexão ou caiu): tira da lista.
             viewers
                 .lock()

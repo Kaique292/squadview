@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { act } from "react";
 import { useAccountStore } from "../account/account-store";
 import { App } from "../App";
-import { useFriendsStore } from "../friends/friends-store";
+import { listenToFriendsEvents, useFriendsStore } from "../friends/friends-store";
 import { DEFAULT_QUALITY, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
 import { listenToRoomEvents, type Member, useMe, useRoomStore } from "./room-store";
@@ -70,20 +70,19 @@ beforeEach(async () => {
 });
 
 describe("tela inicial", () => {
-  it("fora de sala, convida a assistir um amigo que está ao vivo", async () => {
-    useRoomStore.setState({ code: null, members: [ME, ANA] });
+  it("entrar numa sala ou assistir alguém sai da página de amigos", async () => {
+    useRoomStore.setState({ code: "B8RJ2Q", members: [ME, ANA] });
+    useFriendsStore.setState({ open: true });
+    await listenToFriendsEvents();
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Ana está ao vivo" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Assistir Ana" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_watch", { memberId: ANA.id }));
-    expect(screen.getByRole("button", { name: "Conectando com Ana…" })).toBeDisabled();
-  });
-
-  it("com vários amigos ao vivo, conta quantos", () => {
-    useRoomStore.setState({ code: null, members: [ME, ANA, { ...BETO, live: true }] });
-    render(<App />);
-    expect(screen.getByRole("heading", { name: "2 amigos ao vivo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Assistir Beto" })).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
+    act(() => useRoomStore.setState({ pendingWatch: ANA.id }));
+    expect(useFriendsStore.getState().open).toBe(false);
+    expect(screen.queryByRole("region", { name: "Amigos" })).not.toBeInTheDocument();
+    useFriendsStore.setState({ open: true });
+    act(() => useRoomStore.setState({ code: null, pendingWatch: null }));
+    act(() => useRoomStore.setState({ code: "F5B6S9" }));
+    expect(useFriendsStore.getState().open).toBe(false);
   });
 
   it("fechar o convite por link descarta o convite", async () => {

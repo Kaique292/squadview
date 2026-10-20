@@ -7,9 +7,22 @@ export interface SplashProgress {
   text: string;
 }
 
+/** Atualização na abertura (como o Discord): as duas barras da splash. */
+export const SPLASH_UPDATE_EVENT = "splash-update";
+
+export interface SplashUpdate {
+  version: string;
+  /** Download de 0 a 100 (`null`: tamanho desconhecido, a barra só brilha). */
+  download: number | null;
+  /** Instalação de 0 a 100 (0 enquanto baixa). */
+  install: number;
+}
+
 export interface BootStep {
   text: string;
   run: () => Promise<unknown>;
+  /** Sem prazo (ex.: baixar a atualização na abertura, que pode levar mais que alguns segundos). */
+  untimed?: boolean;
 }
 
 /** Tempo mínimo da splash: abaixo disso ela só pisca e ninguém vê a animação. */
@@ -34,7 +47,8 @@ export async function boot(opts: {
 
   for (const [i, step] of opts.steps.entries()) {
     opts.progress({ value: 0.3 + (0.6 * i) / opts.steps.length, text: step.text });
-    await Promise.race([step.run().catch(() => undefined), sleep(STEP_TIMEOUT_MS)]);
+    const run = step.run().catch(() => undefined);
+    await (step.untimed ? run : Promise.race([run, sleep(STEP_TIMEOUT_MS)]));
   }
   opts.progress({ value: 1, text: "Pronto!" });
 

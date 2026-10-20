@@ -10,12 +10,30 @@ export type UpdateStatus =
   | { kind: "downloading"; version: string; percent: number | null }
   | { kind: "error"; version: string; message: string };
 
+/** O andamento da atualização na abertura, para as barras da splash. */
+export interface StartupUpdateProgress {
+  version: string;
+  download: number | null;
+  install: number;
+}
+
+/** Quanto a barra de "Instalando" leva para encher antes de o instalador fechar o app. */
+export const INSTALL_FILL_MS = 900;
+
 interface UpdateState {
   status: UpdateStatus;
   /** Novidades da versão nova (corpo da release, em Markdown). */
   notes: string | null;
   checkForUpdate: () => Promise<void>;
   install: () => Promise<void>;
+  /**
+   * Abriu o app e havia versão nova: baixa e instala já, mostrando o andamento na splash (como o
+   * Discord). O instalador fecha e reabre o app; se der errado, volta e a abertura continua.
+   */
+  installAtStartup: (
+    report: (p: StartupUpdateProgress) => void,
+    sleep?: (ms: number) => Promise<void>,
+  ) => Promise<void>;
 }
 
 /** Novidades da versão que está sendo instalada, para mostrar ao abrir de novo. */
@@ -73,6 +91,40 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
+  async installAtStartup(report, sleep = wait) {
+    const { status } = get();
+    if (!pending || status.kind !== "available") return;
+    const version = status.version;
+    let total = 0;
+    let received = 0;
+    set({ status: { kind: "downloading", version, percent: null } });
+    remember(WHATS_NEW_KEY, { version, notes: get().notes });
+    try {
+      report({ version, download: 0, install: 0 });
+      await pending.download((event) => {
+        if (event.event === "Started") total = event.data.contentLength ?? 0;
+        if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          const percent = total ? Math.min(100, Math.round((received / total) * 100)) : null;
+          set({ status: { kind: "downloading", version, percent } });
+          report({ version, download: percent, install: 0 });
+        }
+      });
+      // Baixou tudo: a barra de download vai até o fim, e a de instalação enche antes de o
+      // instalador fechar o app (ele instala em silêncio e abre de novo).
+      report({ version, download: 100, install: 0 });
+      for (const step of [35, 70, 100]) {
+        await sleep(INSTALL_FILL_MS / 3);
+        report({ version, download: 100, install: step });
+      }
+      await pending.install();
+      await relaunch();
+    } catch {
+      takeOnce(WHATS_NEW_KEY);
+      set({ status: { kind: "error", version, message: "Não deu para baixar a atualização. Tente de novo." } });
+    }
+  },
+
   async install() {
     const { status } = get();
     if (!pending || status.kind === "idle" || status.kind === "downloading") return;
@@ -103,6 +155,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 }));
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface NotesSection {
   title: string;

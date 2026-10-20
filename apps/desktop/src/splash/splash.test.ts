@@ -1,5 +1,5 @@
 import { screen } from "@testing-library/react";
-import { SPLASH_EVENT } from "./boot";
+import { SPLASH_EVENT, SPLASH_UPDATE_EVENT } from "./boot";
 
 const { listen, show, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -20,6 +20,12 @@ vi.mock("@fontsource-variable/figtree", () => ({}));
 const HTML = `
   <p id="status">Iniciando…</p>
   <div role="progressbar" aria-label="Carregando o SquadView"><div id="fill"></div></div>
+  <div id="update">
+    <p id="download-text"></p>
+    <div role="progressbar" aria-label="Baixando a atualização"><div id="download-fill"></div></div>
+    <p id="install-text"></p>
+    <div role="progressbar" aria-label="Instalando a atualização"><div id="install-fill"></div></div>
+  </div>
   <p id="tip"></p>
 `;
 
@@ -75,6 +81,25 @@ describe("splash de abertura", () => {
     expect(screen.getByText("Conectando…")).toBeInTheDocument();
     handlers.get(SPLASH_EVENT)!({ payload: { value: 1.5, text: "Pronto!" } });
     expect(bar()).toHaveAttribute("aria-valuenow", "100");
+  });
+
+  it("atualizando na abertura: as duas barras andam e vão até o fim", async () => {
+    await loadSplash({ tauri: true });
+    const update = handlers.get(SPLASH_UPDATE_EVENT)!;
+    const download = () => screen.getByRole("progressbar", { name: "Baixando a atualização" });
+    const install = () => screen.getByRole("progressbar", { name: "Instalando a atualização" });
+    update({ payload: { version: "0.4.0", download: 40, install: 0 } });
+    expect(document.body).toHaveClass("updating");
+    expect(screen.getByText("Baixando a atualização 0.4.0…")).toBeInTheDocument();
+    expect(download()).toHaveAttribute("aria-valuenow", "40");
+    // Tamanho desconhecido: a barra só brilha.
+    update({ payload: { version: "0.4.0", download: null, install: 0 } });
+    expect(document.getElementById("download-fill")).toHaveClass("unknown");
+    update({ payload: { version: "0.4.0", download: 100, install: 100 } });
+    expect(download()).toHaveAttribute("aria-valuenow", "100");
+    expect(install()).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByText("Atualização 0.4.0 baixada")).toBeInTheDocument();
+    expect(screen.getByText("Instalada! Abrindo de novo…")).toBeInTheDocument();
   });
 
   it("se a fonte não carregar, a janela aparece mesmo assim", async () => {

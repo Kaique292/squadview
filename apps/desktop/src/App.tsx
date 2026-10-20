@@ -1,4 +1,3 @@
-import { Eye, MonitorUp } from "lucide-react";
 import { FriendNotices } from "./friends/FriendNotices";
 import { FriendsPage } from "./friends/FriendsPage";
 import { useFriendsStore } from "./friends/friends-store";
@@ -7,7 +6,6 @@ import { RoomSidebar, UserDock } from "./room/RoomSidebar";
 import { ServerRail } from "./room/ServerRail";
 import { WatchView } from "./room/WatchView";
 import { roomTitle, useRoomStore } from "./room/room-store";
-import { StreamDialog } from "./stream/StreamDialog";
 import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
@@ -26,7 +24,9 @@ export function App() {
   const watching = useRoomStore((s) => s.watching);
   const code = useRoomStore((s) => s.code);
   const roomName = useRoomStore((s) => s.roomName);
-  const friendsOpen = useFriendsStore((s) => s.open) && !fullscreen;
+  // Amigos é a página inicial, como no Discord: fora de uma sala (sem assistir nem transmitir),
+  // é ela que aparece; dentro, abre pelo ícone do SquadView na barra de salas.
+  const friendsOpen = (useFriendsStore((s) => s.open) || (!code && !watching && !live)) && !fullscreen;
   usePresenceSync();
 
   return (
@@ -71,58 +71,12 @@ export function App() {
             <WatchView member={watching} />
           ) : live ? (
             <StreamView />
-          ) : code ? (
-            <VoiceRoom />
           ) : (
-            <Empty />
+            <VoiceRoom />
           )}
         </main>
       </div>
     </div>
-  );
-}
-
-/** Ninguém na tela: convida a transmitir ou a assistir quem já está ao vivo. */
-function Empty() {
-  const { code, members, pendingWatch, watch } = useRoomStore();
-  const liveFriends = members.slice(1).filter((m) => m.live);
-
-  if (liveFriends.length > 0) {
-    return (
-      <>
-        <MonitorUp size={56} className="text-text-faint" />
-        <h1 className="text-2xl font-semibold">
-          {liveFriends.length === 1 ? `${liveFriends[0].name} está ao vivo` : `${liveFriends.length} amigos ao vivo`}
-        </h1>
-        <div className="flex flex-wrap justify-center gap-2">
-          {liveFriends.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => void watch(m)}
-              disabled={pendingWatch === m.id}
-              className="flex items-center gap-2 rounded-md bg-brand px-4 py-2 font-medium transition-colors hover:bg-brand-hover disabled:opacity-60"
-            >
-              <Eye size={16} /> {pendingWatch === m.id ? `Conectando com ${m.name}…` : `Assistir ${m.name}`}
-            </button>
-          ))}
-        </div>
-        <StreamDialog />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <MonitorUp size={56} className="text-text-faint" />
-      <h1 className="text-2xl font-semibold">Ninguém está transmitindo ainda</h1>
-      <p className="max-w-sm text-text-muted">
-        {code
-          ? "Mande o código da sala para a galera e comece a transmitir. Quem entrar pode assistir na hora."
-          : "Crie uma sala, chame a galera e compartilhe a tela. A própria sala distribui o vídeo entre vocês."}
-      </p>
-      <StreamDialog />
-    </>
   );
 }
 

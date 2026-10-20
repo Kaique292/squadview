@@ -8,7 +8,7 @@ import { useAccountStore } from "./account/account-store";
 import { listenToFriendsEvents, useFriendsStore } from "./friends/friends-store";
 import { listenToRoomEvents, rejoinAfterUpdate, useRoomStore } from "./room/room-store";
 import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
-import { SPLASH_EVENT, boot } from "./splash/boot";
+import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, boot } from "./splash/boot";
 import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { toast } from "./ui/toast-store";
@@ -43,7 +43,18 @@ if ("__TAURI_INTERNALS__" in window) {
       // Só no app instalado (no `yarn dev` não há updater).
       ...(import.meta.env.DEV
         ? []
-        : [{ text: "Procurando atualizações…", run: () => useUpdateStore.getState().checkForUpdate() }]),
+        : [
+            { text: "Procurando atualizações…", run: () => useUpdateStore.getState().checkForUpdate() },
+            // Tinha versão nova: atualiza já na abertura, com as barras na splash (como o Discord).
+            {
+              text: "Atualizando…",
+              untimed: true,
+              run: () =>
+                useUpdateStore
+                  .getState()
+                  .installAtStartup((p) => void emitTo("splash", SPLASH_UPDATE_EVENT, p).catch(() => {})),
+            },
+          ]),
     ],
     progress: (p) => void emitTo("splash", SPLASH_EVENT, p).catch(() => {}),
     ready: () => invoke("app_ready"),

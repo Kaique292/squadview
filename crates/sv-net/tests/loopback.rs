@@ -169,3 +169,62 @@ async fn conexao_de_voz_chega_marcada_como_voz_e_com_quem_e() {
         .expect("datagrama");
     assert_eq!(&got[..], b"oi");
 }
+
+/// Espera até `pred` valer (ou o prazo acabar) e devolve o último valor visto.
+async fn settle(broadcaster: &Broadcaster, pred: impl Fn(usize) -> bool) -> usize {
+    for _ in 0..100 {
+        if pred(broadcaster.viewer_count()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    broadcaster.viewer_count()
+}
+
+// Achado na esteira: com vários endereços que respondem (o local e o 127.0.0.1), quem transmite
+// chegou a contar dois espectadores. A tentativa que perde fecha, e quem transmite tem que tirá-la.
+#[tokio::test(flavor = "multi_thread")]
+async fn dois_enderecos_que_respondem_viram_uma_conexao_so() {
+    let streamer = Arc::new(Peer::bind(&[]).await.unwrap());
+    let viewer = Peer::bind(&[]).await.unwrap();
+    streamer.allowed().allow(viewer.fingerprint());
+    let broadcaster = Arc::new(Broadcaster::new());
+    let (s, b) = (streamer.clone(), broadcaster.clone());
+    tokio::spawn(async move {
+        while let Some(accepted) = s.accept().await {
+            b.add(accepted.conn, Arc::new(|| {}));
+        }
+    });
+
+    // Todos os endereços de quem transmite, repetidos: várias tentativas chegam ao mesmo tempo.
+    let targets: Vec<_> = streamer.candidates().iter().copied().cycle().take(6).collect();
+    let conn = viewer
+        .connect(&targets, streamer.fingerprint())
+        .await
+        .expect("conectar");
+    // Dá tempo para as tentativas que perderam chegarem e serem fechadas.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(settle(&broadcaster, |n| n == 1).await, 1, "um espectador só");
+    drop(conn);
+}
+
+// Bug achado na esteira: quem fechava a conexão sem ter recebido nenhum frame continuava contado
+// como espectador até o próximo frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn quem_sai_antes_do_primeiro_frame_deixa_de_contar() {
+    let streamer = Peer::bind(&[]).await.unwrap();
+    let viewer = Peer::bind(&[]).await.unwrap();
+    streamer.allowed().allow(viewer.fingerprint());
+    let broadcaster = Broadcaster::new();
+    let accept = async {
+        let accepted = streamer.accept().await.expect("aceitar");
+        broadcaster.add(accepted.conn, Arc::new(|| {}));
+    };
+    let connect = viewer.connect(streamer.candidates(), streamer.fingerprint());
+    let (_, conn) = tokio::join!(accept, connect);
+    let conn = conn.expect("conectar");
+    assert_eq!(broadcaster.viewer_count(), 1);
+
+    conn.close(0u32.into(), b"tchau");
+    assert_eq!(settle(&broadcaster, |n| n == 0).await, 0, "saiu: não conta mais");
+}
