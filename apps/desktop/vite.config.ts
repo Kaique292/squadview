@@ -1,10 +1,13 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import pkg from "./package.json" with { type: "json" };
 
 // Porta fixa: o Tauri abre a janela em http://localhost:1420 durante o `tauri dev`.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Versão do app na interface (o release-please atualiza o package.json).
+  define: { "import.meta.env.APP_VERSION": JSON.stringify(pkg.version) },
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   build: {

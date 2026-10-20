@@ -51,11 +51,11 @@ export function DiagnosticsSection() {
 
   const hasFiles = (status?.files ?? 0) > 0;
   return (
-    <section aria-labelledby="desempenho" className="mt-5 flex flex-col gap-3 text-left">
+    <section aria-labelledby="desempenho" className="flex flex-col gap-3 text-left">
       <h3 id="desempenho" className="text-xs font-semibold tracking-wide text-text-faint uppercase">
         Desempenho
       </h3>
-      <div className="flex flex-col gap-3 rounded-md bg-surface-1 p-3">
+      <div className="flex flex-col gap-3">
         <Switch
           label="Gravar registro de desempenho"
           hint="Fica só neste PC: uso de GPU e CPU, FPS, bitrate e latência das transmissões, o nome da placa de vídeo e da janela transmitida. Nada é enviado; você escolhe se manda."

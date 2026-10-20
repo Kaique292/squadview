@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEFAULT_GLASS, applyGlass, useAppearanceStore } from "./appearance-store";
 import { SettingsDialog } from "./SettingsDialog";
 
@@ -13,6 +13,8 @@ beforeEach(() => {
 function openSettings() {
   render(<SettingsDialog trigger={<button type="button">Configurações</button>} />);
   fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+  // As configurações abrem em "Voz"; o vidro fica em "Aparência", na lista da esquerda.
+  fireEvent.click(screen.getByRole("button", { name: "Aparência" }));
 }
 
 describe("configurações de aparência", () => {
@@ -52,5 +54,17 @@ describe("configurações de aparência", () => {
     expect(useAppearanceStore.getState().glass).toBe(100);
     useAppearanceStore.getState().setGlass(-3);
     expect(useAppearanceStore.getState().glass).toBe(0);
+  });
+
+  it("organiza as configurações em categorias à esquerda, como o Discord", () => {
+    render(<SettingsDialog trigger={<button type="button">Configurações</button>} />);
+    fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+    const nav = screen.getByRole("navigation", { name: "Categorias" });
+    for (const name of ["Minha conta", "Voz e vídeo", "Status no Discord", "Aparência", "Desempenho"]) {
+      expect(within(nav).getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(within(nav).getByRole("button", { name: "Voz e vídeo" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(within(nav).getByRole("button", { name: "Status no Discord" }));
+    expect(screen.getByRole("switch", { name: "Mostrar a sala no meu perfil" })).toBeInTheDocument();
   });
 });
