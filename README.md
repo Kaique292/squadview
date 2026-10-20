@@ -35,11 +35,11 @@
 </p>
 
 > [!NOTE]
-> **Versão 0.3.0: voz e amigos.** A sala virou um canal de voz como o do Discord, e agora dá para ver os amigos online e pedir para entrar na sala deles. Um amigo transmite e o resto assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
+> **Versão 0.3: voz e amigos.** A sala virou um canal de voz como o do Discord, e agora dá para ver os amigos online e pedir para entrar na sala deles. Um amigo transmite e o resto assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
 
 ## ✨ O que ele faz
 
-**Já funciona (0.3.0)**
+**Já funciona (0.3)**
 
 - **Qualidade de jogo.** Até 1440p ou a resolução da fonte, a 15, 30 ou 60 fps, tudo liberado. Encode por hardware na placa de vídeo (NVIDIA e AMD), e a imagem não sai da GPU, então o jogo quase não sente.
 - **Direto de PC para PC.** O vídeo não passa por servidor. As conexões são cifradas (QUIC com TLS 1.3).
@@ -55,7 +55,7 @@
 
 **Em breve**
 
-- **A sala se ajuda (Fase 3).** Quem tem upload sobrando repassa o stream para os outros, e quem está jogando repassa o mínimo.
+- **Salas sem limite (Fase 3).** A própria sala distribui o vídeo como um torrent, mas com atraso de call: com 5.000 pessoas, cerca de 60 ms de rede, e quem transmite manda sempre só 2 cópias ([ADR 0012](docs/adr/0012-malha-em-enxame.md)).
 - **Internet fraca não derruba ninguém (Fase 3).** Quem está com conexão ruim recebe 720p, e o resto continua em 1080p.
 - **Bot do Discord (Fase 5)** avisando no servidor quando alguém começar a transmitir.
 
@@ -201,7 +201,7 @@ As miniaturas das janelas usam o crate `jpeg-encoder`: _this software is based i
 
 There is **no media server**: video goes directly between PCs over QUIC, with UDP hole punching. The plan (Phase 3) is for the room itself to distribute the video: members with spare upload relay already-encoded packets, and members on weak connections get a 720p layer. A tiny free signaling service (Cloudflare Worker) only helps peers find each other; no video goes through it.
 
-- **Status:** version 0.3.0. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD). The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), and there are friends with presence and "ask to join" requests that anyone in the room can approve. Discord login, invite links, Rich Presence and a silent Discord-style installer. Relaying through the room (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
+- **Status:** version 0.3. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD). The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), and there are friends with presence and "ask to join" requests that anyone in the room can approve. Discord login, invite links, Rich Presence and a silent Discord-style installer. Relaying through the room (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
 - **Stack:** Rust core, Tauri v2, React 19 + Tailwind v4, QUIC (quinn) peer-to-peer mesh, Cloudflare Worker for signaling.
 - **Contributing:** PRs target the `dev` branch and use [Conventional Commits](https://www.conventionalcommits.org/). Docs are in Portuguese; issues and PRs in English are welcome too.
 - **Support:** [Buy Me a Coffee](https://buymeacoffee.com/kaiqueamaral).
