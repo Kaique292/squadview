@@ -162,7 +162,8 @@ jobs:
 
   instalador:
     name: Instalador de teste
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    # Na dev e no PR da dev para a main (antes de cada versão).
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'main')
     needs: [rust, typescript]
     runs-on: windows-latest
     steps:
@@ -189,6 +190,13 @@ jobs:
         env:
           SQUADVIEW_SIGNALING_URL: wss://squadview-signaling.squadview.workers.dev
         run: yarn build
+
+      # Instala, abre duas vezes e "atualiza" com o app de verdade; falha se o app cair.
+      - name: Teste de fumaça do instalador
+        shell: pwsh
+        # Leva uns 2 minutos; se travar, falha em vez de prender a esteira por horas.
+        timeout-minutes: 10
+        run: ./scripts/smoke-installer.ps1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

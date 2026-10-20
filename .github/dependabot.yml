@@ -23,6 +23,11 @@ updates:
       rust:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Nos crates 0.x, subir o segundo número (0.62 → 0.100) quebra a API. A migração do
+      # windows é feita de propósito, junto com o Tauri; aqui só entram as correções.
+      - dependency-name: "windows*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: npm
     directory: /
     target-branch: dev

@@ -24,7 +24,7 @@ fn app_ready(app: tauri::AppHandle) {
 
 /// Mostra a janela principal (mesmo escondida ou minimizada) e fecha a splash. `reason` vai para
 /// o registro: ajuda a entender quando a interface não avisou que estava pronta.
-fn show_main(app: &tauri::AppHandle, reason: &str) {
+fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
     use tauri::Manager;
     let Some(main) = app.get_webview_window("main") else {
         return;
@@ -38,8 +38,11 @@ fn show_main(app: &tauri::AppHandle, reason: &str) {
     if let Some(splash) = app.get_webview_window("splash") {
         let _ = splash.close();
     }
-    app.state::<diagnostics::Diagnostics>()
-        .write("window-shown", &serde_json::json!({ "reason": reason }));
+    // `try_state`: o aviso de "abriram de novo" pode chegar antes do `setup` registrar o
+    // Diagnostics (na atualização o app abre duas vezes quase juntas). Sem registro, só não anota.
+    if let Some(diagnostics) = app.try_state::<diagnostics::Diagnostics>() {
+        diagnostics.write("window-shown", &serde_json::json!({ "reason": reason }));
+    }
 }
 
 /// Se a interface travar antes de avisar, a janela principal aparece mesmo assim.
@@ -62,6 +65,21 @@ fn setup_deep_links(app: &tauri::App) {
     }
 }
 
+/// Todo estado que os comandos e os eventos usam, registrado no `Builder`: existe antes de
+/// qualquer janela, plugin ou `setup`. Um estado registrado só no `setup` derruba o app quando
+/// algo chega cedo (foi o que aconteceu na atualização para a 0.3.0). Os testes conferem que todo
+/// `state::<T>()` do código tem o seu `T` aqui.
+fn manage_states<R: tauri::Runtime>(builder: tauri::Builder<R>, presence: presence::Presence) -> tauri::Builder<R> {
+    builder
+        .manage(diagnostics::Diagnostics::default())
+        .manage(preview::PreviewState::default())
+        .manage(std::sync::Arc::new(preview::TapSlot::default()))
+        .manage(room::RoomState::default())
+        .manage(invite::PendingInvite::default())
+        .manage(friends::Friends::default())
+        .manage(presence)
+}
+
 /// Inicia o app Tauri.
 pub fn run() {
     // Falha fatal: vai para o crash.log e aparece numa caixa de mensagem (sem console, o app
@@ -80,7 +98,7 @@ pub fn run() {
         show_main(app, "aberto-de-novo");
     }));
 
-    builder
+    manage_states(builder, presence::Presence::start())
         // A splash abre escondida e aparece assim que a página dela carrega (sem depender do
         // JavaScript dela, que pode falhar).
         .on_page_load(|webview, payload| {
@@ -93,12 +111,6 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(preview::PreviewState::default())
-        .manage(std::sync::Arc::new(preview::TapSlot::default()))
-        .manage(room::RoomState::default())
-        .manage(invite::PendingInvite::default())
-        .manage(friends::Friends::default())
-        .manage(presence::Presence::start())
         .setup(|app| {
             diagnostics::setup(app);
             setup_deep_links(app);
@@ -157,8 +169,135 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use tauri::Manager;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
     #[test]
     fn versao_segue_o_workspace() {
         assert_eq!(super::app_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    /// App de mentira com uma janela "main", como o de verdade, sem rodar o `setup`.
+    fn app_with_main(builder: tauri::Builder<tauri::test::MockRuntime>) -> tauri::App<tauri::test::MockRuntime> {
+        let app = builder.build(mock_context(noop_assets())).expect("app de teste");
+        tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("janela main");
+        app
+    }
+
+    /// O crash da 0.3.0: durante a atualização o app abre duas vezes, e o aviso de "abriram de
+    /// novo" chega à primeira instância antes do `setup` dela. Não pode derrubar o app.
+    #[test]
+    fn segunda_instancia_antes_do_setup_nao_derruba_o_app() {
+        let app = app_with_main(mock_builder());
+        // Sem nenhum estado registrado (o pior caso): só mostra a janela.
+        super::show_main(app.handle(), "aberto-de-novo");
+        // Com os estados do app de verdade, também.
+        let app = app_with_main(super::manage_states(mock_builder(), super::presence::Presence::start()));
+        super::show_main(app.handle(), "aberto-de-novo");
+        super::show_main(app.handle(), "rede-de-seguranca");
+    }
+
+    #[test]
+    fn estados_existem_antes_do_setup() {
+        let app = app_with_main(super::manage_states(mock_builder(), super::presence::Presence::start()));
+        assert!(app.try_state::<super::diagnostics::Diagnostics>().is_some());
+        assert!(app.try_state::<super::preview::PreviewState>().is_some());
+        assert!(app.try_state::<std::sync::Arc<super::preview::TapSlot>>().is_some());
+        assert!(app.try_state::<super::room::RoomState>().is_some());
+        assert!(app.try_state::<super::invite::PendingInvite>().is_some());
+        assert!(app.try_state::<super::friends::Friends>().is_some());
+        assert!(app.try_state::<super::presence::Presence>().is_some());
+        // O registro de desempenho vazio (antes do `setup`) aceita escrita sem fazer nada.
+        app.state::<super::diagnostics::Diagnostics>()
+            .write("teste", &serde_json::json!({}));
+    }
+
+    /// Nomes dos tipos em `state::<T>()` / `try_state::<T>()` de um arquivo (o último segmento,
+    /// sem `Arc<...>`), para conferir que todos estão em `manage_states`.
+    fn state_types(source: &str) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        for (i, _) in source.match_indices("state::<") {
+            let rest = &source[i + "state::<".len()..];
+            let mut depth = 1;
+            let end = rest
+                .char_indices()
+                .find(|&(_, c)| {
+                    match c {
+                        '<' => depth += 1,
+                        '>' => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0
+                })
+                .map(|(j, _)| j)
+                .unwrap_or(rest.len());
+            let ty = rest[..end].trim();
+            let inner = ty
+                .strip_prefix("std::sync::Arc<")
+                .or_else(|| ty.strip_prefix("Arc<"))
+                .unwrap_or(ty);
+            let name = inner.trim_end_matches('>').rsplit("::").next().unwrap_or(inner).trim();
+            found.insert(name.to_owned());
+        }
+        found
+    }
+
+    #[test]
+    fn todo_estado_usado_no_codigo_e_registrado_no_builder() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let lib = std::fs::read_to_string(dir.join("lib.rs")).unwrap();
+        let start = lib.find("fn manage_states").unwrap();
+        let body = &lib[start..start + lib[start..].find("\n}").unwrap()];
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            // Os testes citam `state::<` de propósito, e os comentários não são código.
+            let code: String = source
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(&source)
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            for name in state_types(&code) {
+                let registered = body.contains(&format!("{name}::default()"))
+                    || body.contains(&format!("{name}::start()"))
+                    || (name == "Presence" && body.contains(".manage(presence)"));
+                if !registered {
+                    missing.push(format!("{} usa {name}", path.file_name().unwrap().to_string_lossy()));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "estados usados sem registro em manage_states: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn acha_os_tipos_de_estado_no_codigo() {
+        let found = state_types(
+            "app.state::<Diagnostics>(); app.try_state::<crate::room::RoomState>(); \
+             app.state::<std::sync::Arc<preview::TapSlot>>()",
+        );
+        assert_eq!(
+            found,
+            ["Diagnostics", "RoomState", "TapSlot"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
     }
 }

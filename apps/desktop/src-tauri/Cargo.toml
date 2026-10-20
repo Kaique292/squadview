@@ -37,7 +37,7 @@ base64 = "0.23.1"
 # servidorzinho local que recebe o retorno do navegador.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 getrandom = "0.4"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
 tauri-plugin-opener = "2"
@@ -46,6 +46,10 @@ windows = { workspace = true, features = ["Win32_System_DataExchange", "Win32_Sy
 # Convites por link (squadview://join/CODIGO) e uma instância só no app instalado.
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[dev-dependencies]
+# App de mentira (MockRuntime) para testar a abertura sem janela de verdade.
+tauri = { version = "2.12.4", features = ["test"] }
 
 [lints]
 workspace = true
