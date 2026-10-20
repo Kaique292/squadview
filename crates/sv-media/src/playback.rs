@@ -52,7 +52,8 @@ impl Queue {
     }
 
     fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, MAX_VOLUME);
+        // Curva perceptiva: 200% soa bem mais alto, como no Discord.
+        self.volume = crate::level::volume_gain(volume);
     }
 }
 
@@ -150,7 +151,7 @@ fn fill(queue: &mut Queue, out: &mut [f32]) {
     let n = out.len().min(queue.samples.len());
     for (dst, src) in out.iter_mut().zip(queue.samples.drain(..n)) {
         // Acima de 100% o som pode passar do limite: corta em vez de distorcer na placa.
-        *dst = (src * queue.volume).clamp(-1.0, 1.0);
+        *dst = crate::level::soft_clip(src * queue.volume);
     }
     out[n..].fill(0.0);
 }
@@ -261,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn volume_acima_de_100_corta_no_limite() {
+    fn volume_acima_de_100_e_limitado_sem_corte_seco() {
         let mut q = Queue {
             samples: VecDeque::from(vec![0.3, -0.8]),
             volume: 2.0,
@@ -269,7 +270,8 @@ mod tests {
         let mut out = [0.0; 2];
         fill(&mut q, &mut out);
         assert!((out[0] - 0.6).abs() < 1e-6);
-        assert_eq!(out[1], -1.0);
+        // -1,6 passa pelo limitador: fica perto de -1, sem passar.
+        assert!(out[1] >= -1.0 && out[1] < -0.99, "{}", out[1]);
     }
 
     #[test]
@@ -282,8 +284,9 @@ mod tests {
         // Muito mais que o limite: fica no máximo MAX_BUFFERED_MS.
         q.push(&vec![0.0; SAMPLE_RATE as usize * CHANNELS]);
         assert_eq!(q.buffered_ms(), MAX_BUFFERED_MS);
+        // Acima de 200% fica em 200%, que pela curva perceptiva é ×4.
         q.set_volume(5.0);
-        assert_eq!(q.volume, MAX_VOLUME);
+        assert_eq!(q.volume, MAX_VOLUME * MAX_VOLUME);
         q.set_volume(-1.0);
         assert_eq!(q.volume, 0.0);
     }

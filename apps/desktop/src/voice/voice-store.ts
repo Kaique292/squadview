@@ -20,6 +20,8 @@ export interface VoicePrefs {
   outputVolume: number;
   /** O "Isolamento de voz" do Discord. */
   noiseSuppression: boolean;
+  /** Controle automático de ganho: a voz chega no mesmo volume para todos. */
+  autoGain: boolean;
   muted: boolean;
   deafened: boolean;
 }
@@ -40,6 +42,7 @@ export const DEFAULT_PREFS: VoicePrefs = {
   inputVolume: 100,
   outputVolume: 100,
   noiseSuppression: true,
+  autoGain: true,
   muted: false,
   deafened: false,
 };

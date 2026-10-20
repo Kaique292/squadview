@@ -129,4 +129,16 @@ describe("configurações: voz", () => {
     expect(meter).toHaveAttribute("aria-valuenow", "25");
     expect(meter.querySelectorAll(".bg-online")).toHaveLength(13);
   });
+
+  it("controle automático de ganho vem ligado e dá para desligar", async () => {
+    openSettings();
+    const agc = screen.getByRole("switch", { name: "Controle automático de ganho" });
+    expect(agc).toBeChecked();
+    fireEvent.click(agc);
+    await waitFor(() => expect(useVoiceStore.getState().prefs.autoGain).toBe(false));
+    expect(invoke).toHaveBeenCalledWith(
+      "voice_set_settings",
+      expect.objectContaining({ prefs: expect.objectContaining({ autoGain: false }) }),
+    );
+  });
 });
