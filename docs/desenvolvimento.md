@@ -43,6 +43,17 @@ yarn dev          # abre o app em modo desenvolvimento
 | `yarn coverage:badge`                     | Junta as coberturas e gera `build/badges/coverage.json`                                                               |
 | `yarn workspace @squadview/signaling dev` | Sobe o Worker de sinalização localmente                                                                               |
 
+## Instalador
+
+O instalador e a atualização funcionam como os do Discord: sem assistente. Dois cliques no instalador instalam em silêncio, em poucos segundos, e o app abre direto na splash.
+
+- O template NSIS fica em `apps/desktop/src-tauri/windows/installer.nsi`. É o template padrão do Tauri (tauri-cli 2.12.3) com duas mudanças marcadas com `SquadView (1)` e `SquadView (2)`:
+  1. Modo silencioso por padrão.
+  2. O app abre ao fim da primeira instalação.
+- Para ver as telas de sempre (escolher pasta etc.), rode o instalador com `/WIZARD`.
+- A atualização automática usa `installMode: "quiet"` (em `tauri.conf.json`): o instalador roda com `/UPDATE /R` e o app reabre sozinho.
+- Ao atualizar o tauri-cli, compare `installer.nsi` com o template novo e reaplique as duas mudanças.
+
 ## Estrutura
 
 ```
