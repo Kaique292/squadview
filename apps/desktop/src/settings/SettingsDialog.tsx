@@ -92,6 +92,11 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in" />
         <Dialog.Content
           aria-describedby={undefined}
+          // Sem contorno de foco no primeiro botão ao abrir com o mouse (o Tab continua funcionando).
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement | null)?.focus();
+          }}
           className="fixed top-1/2 left-1/2 z-40 flex h-[min(860px,calc(100vh-48px))] w-[min(1180px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-card border border-white/[0.06] bg-glass-modal shadow-2xl backdrop-blur-xl focus:outline-none data-[state=closed]:animate-modal-out data-[state=open]:animate-modal-in"
         >
           <Dialog.Title className="sr-only">Configurações</Dialog.Title>
