@@ -1,8 +1,22 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Activity, Bell, Gamepad2, LogOut, Mic, Palette, Pencil, RotateCcw, Search, User, X } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  Gamepad2,
+  Loader2,
+  LogOut,
+  Mic,
+  Palette,
+  Pencil,
+  RotateCcw,
+  Search,
+  User,
+  X,
+} from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
+import { useFriendsStore } from "../friends/friends-store";
 import { Avatar } from "../ui/Avatar";
 import { holdOverlay } from "../ui/overlay";
 import { SoundsSection } from "../sounds/SoundsSection";
@@ -306,6 +320,32 @@ function AppearanceSection() {
   );
 }
 
+/**
+ * Se os amigos estão ligados para esta conta. O login vale para o app inteiro: quando a sessão
+ * ainda não saiu (o app segue tentando sozinho), aparece aqui também, e não só na página de amigos.
+ */
+function FriendsState() {
+  const status = useFriendsStore((s) => s.status);
+  if (status === "online") {
+    return <p className="text-xs text-text-faint">Amigos ativos: você aparece nos recentes de quem está na sala.</p>;
+  }
+  if (status === "connecting") {
+    return (
+      <p className="flex items-center gap-2 text-xs text-text-faint">
+        <Loader2 size={12} className="animate-spin" /> Ativando os amigos…
+      </p>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-md bg-surface-1 p-3">
+      <p className="flex-1 text-sm text-text-muted">
+        Os amigos não estão ativos nesta conta. Entre de novo para o SquadView confirmar que é você.
+      </p>
+      <DiscordLoginButton />
+    </div>
+  );
+}
+
 /** Conta do Discord: quem está conectado, ou o botão para entrar. */
 function AccountSection() {
   const profile = useAccountStore((s) => s.profile);
@@ -330,7 +370,9 @@ function AccountSection() {
             Sair
           </button>
         </div>
-      ) : (
+      ) : null}
+      {profile && <FriendsState />}
+      {!profile && (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-text-muted">
             Entre com o Discord para usar seu nome e sua foto nas salas. O SquadView só lê seu perfil público: não vê
