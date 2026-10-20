@@ -3908,6 +3908,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4032,7 +4043,7 @@ dependencies = [
 
 [[package]]
 name = "squadview"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
@@ -4042,7 +4053,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.11.1",
  "sv-capture",
  "sv-core",
  "sv-encode",
@@ -4117,7 +4128,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sv-capture"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4128,7 +4139,7 @@ dependencies = [
 
 [[package]]
 name = "sv-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4136,7 +4147,7 @@ dependencies = [
 
 [[package]]
 name = "sv-encode"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "sv-core",
  "sv-gpu",
@@ -4145,14 +4156,14 @@ dependencies = [
 
 [[package]]
 name = "sv-gpu"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "sv-media"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "nnnoiseless",
  "opus-rs",
@@ -4165,14 +4176,14 @@ dependencies = [
 
 [[package]]
 name = "sv-mesh"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "sv-core",
 ]
 
 [[package]]
 name = "sv-net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -4182,7 +4193,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.11.1",
  "sv-gpu",
  "tokio",
  "tokio-tungstenite",
@@ -4190,7 +4201,7 @@ dependencies = [
 
 [[package]]
 name = "sv-session"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "quinn",
@@ -4473,7 +4484,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "syn 2.0.119",
  "tauri-utils",
  "thiserror 2.0.21",
@@ -5878,7 +5889,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "raw-window-handle",
- "sha2",
+ "sha2 0.10.9",
  "soup3",
  "tao-macros",
  "thiserror 2.0.21",
