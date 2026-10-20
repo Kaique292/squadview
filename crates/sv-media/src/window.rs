@@ -24,7 +24,10 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2,
     IDXGISwapChain1,
 };
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
+use windows::Win32::Graphics::Gdi::{
+    CombineRgn, CreateRectRgn, DeleteObject, GetMonitorInfoW, HGDIOBJ, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow, RGN_DIFF, SetWindowRgn,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_F11};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -113,6 +116,34 @@ impl WindowControl {
     /// Esconde (ex.: um modal abriu por cima) ou mostra de novo, na última posição.
     pub fn set_visible(&self, visible: bool) {
         self.position(0, 0, 0, 0, show_flag(visible) | SWP_NOMOVE | SWP_NOSIZE);
+    }
+
+    /// Recorta da área do vídeo os retângulos `holes` (relativos ao canto do próprio vídeo): ali a
+    /// interface aparece por cima (menus, dicas, avisos) sem precisar esconder o vídeo inteiro.
+    /// Vazio: o vídeo volta a ocupar a área toda. Não mexe no desenho (o swap chain continua igual).
+    pub fn set_holes(&self, holes: &[Bounds]) {
+        if self.shared.closed.load(Ordering::Relaxed) {
+            return;
+        }
+        let hwnd = HWND(self.hwnd as *mut _);
+        // SAFETY: HWND vivo (não fechado). As regiões criadas aqui são apagadas aqui, menos a final,
+        // que passa a ser da janela (o Windows apaga quando trocar ou fechar).
+        unsafe {
+            if holes.is_empty() {
+                let _ = SetWindowRgn(hwnd, None, true);
+                return;
+            }
+            // Retângulo grande o bastante para qualquer tamanho: a região não depende do tamanho.
+            let region = CreateRectRgn(0, 0, i16::MAX as i32, i16::MAX as i32);
+            for h in holes {
+                let hole = CreateRectRgn(h.x, h.y, h.x + h.width as i32, h.y + h.height as i32);
+                let _ = CombineRgn(Some(region), Some(region), Some(hole), RGN_DIFF);
+                let _ = DeleteObject(HGDIOBJ(hole.0));
+            }
+            if SetWindowRgn(hwnd, Some(region), true) == 0 {
+                let _ = DeleteObject(HGDIOBJ(region.0));
+            }
+        }
     }
 
     /// Recebe os eventos de tela cheia (substitui o callback anterior).

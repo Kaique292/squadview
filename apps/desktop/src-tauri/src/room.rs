@@ -294,13 +294,14 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
 }
 
 /// Repassa a posição do vídeo para quem estamos assistindo.
-pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, bounds: sv_session::Bounds, hidden: bool) -> bool {
+pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, layout: &preview::Layout) -> bool {
     let state = app.state::<RoomState>();
     let running = lock(&state);
     match running.watching.as_ref() {
         Some(w) => {
-            w.view.set_video_bounds(bounds);
-            w.view.set_video_hidden(hidden);
+            w.view.set_video_bounds(layout.bounds);
+            w.view.set_video_hidden(layout.hidden);
+            w.view.set_video_holes(layout.holes.clone());
             true
         }
         None => false,
@@ -450,6 +451,7 @@ fn start_watching<R: Runtime>(
     let layout = preview::layout(app);
     view.set_video_bounds(layout.bounds);
     view.set_video_hidden(layout.hidden);
+    view.set_video_holes(layout.holes);
 
     app.state::<Diagnostics>().write(
         "watch-start",
@@ -528,7 +530,7 @@ mod tests {
         set_watch_volume(state(), 1.5);
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
-        assert!(!apply_layout(t.handle(), sv_session::Bounds::default(), false));
+        assert!(!apply_layout(t.handle(), &preview::Layout::default()));
         tauri::async_runtime::block_on(room_stop_watching(t.handle().clone())).unwrap();
         tauri::async_runtime::block_on(room_leave(t.handle().clone())).unwrap();
     }

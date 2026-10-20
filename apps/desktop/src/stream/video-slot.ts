@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import { rememberVideoRect } from "../ui/dissolve-effect";
+import { watchVideoHoles } from "../ui/overlay";
 
 /**
  * Informa ao Rust onde está a área do vídeo, em pixels físicos, sempre que ela muda de lugar ou de
@@ -32,7 +33,10 @@ export function useVideoSlot() {
     observer.observe(el);
     window.addEventListener("resize", report);
     report();
+    // Menus e dicas por cima do vídeo: ele abre buracos para eles, em vez de cobri-los.
+    const stopHoles = watchVideoHoles();
     return () => {
+      stopHoles();
       observer.disconnect();
       window.removeEventListener("resize", report);
       invoke("set_video_bounds", { x: 0, y: 0, width: 0, height: 0 }).catch(() => {});
