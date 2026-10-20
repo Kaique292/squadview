@@ -8,6 +8,16 @@ compatibility_date = "2026-10-01"
 name = "ROOMS"
 class_name = "Room"
 
+# Registro de cada pessoa: amigos e presença (ver docs/adr/0011-amigos-e-presenca.md).
+# O segredo das sessões fica fora do repositório: `wrangler secret put SESSION_SECRET`.
+[[durable_objects.bindings]]
+name = "USERS"
+class_name = "User"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["User"]

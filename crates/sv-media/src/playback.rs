@@ -92,6 +92,13 @@ impl AudioPlayer {
         push_bounded(&mut q.samples, samples, MAX_BUFFERED);
     }
 
+    /// Quanto áudio está na fila esperando a placa, em ms (quem mistura usa para saber a hora
+    /// de mandar mais).
+    pub fn buffered_ms(&self) -> usize {
+        let q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        q.samples.len() * 1000 / (SAMPLE_RATE as usize * CHANNELS)
+    }
+
     /// Volume de 0 (mudo) a 2 (200%, como no Discord).
     pub fn set_volume(&self, volume: f32) {
         self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, MAX_VOLUME);

@@ -1,7 +1,8 @@
 //! Login com o Discord (OAuth2 de cliente público, com PKCE): o app nunca vê senha nem guarda
 //! segredo. O navegador abre a página de autorização do Discord, que devolve um código para um
 //! servidorzinho local em `127.0.0.1`; o app troca o código por um token, lê o perfil público
-//! (escopo `identify`) e descarta o token. Só o perfil fica salvo, em `discord.json`.
+//! (escopo `identify`), troca o token por uma sessão do SquadView no Worker (amigos, ADR 0011)
+//! e descarta o token. Ficam salvos o perfil, em `discord.json`, e a sessão, em `session.json`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -104,7 +105,12 @@ pub async fn discord_login(app: AppHandle) -> Result<DiscordProfile, String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    // Sessão do SquadView para os amigos. Se o Worker não aceitar, o login segue sem amigos.
+    let session = crate::friends::exchange(&http, &token.access_token).await;
+    drop(token);
     save(&app, Some(&profile))?;
+    crate::friends::save_session(&app, session.as_deref());
+    crate::friends::start(&app);
     Ok(profile)
 }
 
@@ -118,6 +124,8 @@ pub fn discord_profile(app: AppHandle) -> Option<DiscordProfile> {
 /// Esquece o perfil.
 #[tauri::command]
 pub fn discord_logout(app: AppHandle) -> Result<(), String> {
+    crate::friends::stop(&app);
+    crate::friends::save_session(&app, None);
     save(&app, None)
 }
 

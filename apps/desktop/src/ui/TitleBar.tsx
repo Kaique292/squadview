@@ -14,15 +14,26 @@ export function TitleBar(props: { title?: string }) {
 
   useEffect(() => {
     if (!inTauri()) return;
-    const win = getCurrentWindow();
+    // Sem janela de verdade (ex.: modo de demonstração no navegador): fica sem o estado maximizado.
+    let win: ReturnType<typeof getCurrentWindow>;
+    try {
+      win = getCurrentWindow();
+    } catch {
+      return;
+    }
     const update = () => void win.isMaximized().then(setMaximized, () => {});
     update();
-    const off = win.onResized(update);
+    const off = win.onResized(update).catch(() => () => {});
     return () => void off.then((fn) => fn());
   }, []);
 
   const run = (action: (w: ReturnType<typeof getCurrentWindow>) => Promise<void>) => {
-    if (inTauri()) void action(getCurrentWindow()).catch(() => {});
+    if (!inTauri()) return;
+    try {
+      void action(getCurrentWindow()).catch(() => {});
+    } catch {
+      // Sem janela de verdade.
+    }
   };
 
   return (

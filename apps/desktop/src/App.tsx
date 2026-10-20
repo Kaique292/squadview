@@ -1,4 +1,7 @@
 import { Eye, MonitorUp } from "lucide-react";
+import { FriendNotices } from "./friends/FriendNotices";
+import { FriendsPage } from "./friends/FriendsPage";
+import { useFriendsStore } from "./friends/friends-store";
 import { RoomDialog } from "./room/RoomDialog";
 import { RoomSidebar, UserDock } from "./room/RoomSidebar";
 import { ServerRail } from "./room/ServerRail";
@@ -9,6 +12,7 @@ import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
+import { VoiceRoom } from "./voice/VoiceRoom";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
 
@@ -22,6 +26,7 @@ export function App() {
   const watching = useRoomStore((s) => s.watching);
   const code = useRoomStore((s) => s.code);
   const roomName = useRoomStore((s) => s.roomName);
+  const friendsOpen = useFriendsStore((s) => s.open) && !fullscreen;
   usePresenceSync();
 
   return (
@@ -34,6 +39,7 @@ export function App() {
     >
       <InvitePrompt />
       <Dissolve />
+      <FriendNotices />
       <Toaster anchor={(watching || live) && !fullscreen ? "sidebar" : "center"} />
       {!fullscreen && <TitleBar title={code ? roomTitle(code, roomName) : undefined} />}
       <ServerRail hidden={fullscreen} />
@@ -49,10 +55,27 @@ export function App() {
       >
         <main
           className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
-            fullscreen ? "bg-surface-2 p-0" : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
+            fullscreen
+              ? "bg-surface-2 p-0"
+              : friendsOpen
+                ? "bg-glass-2 p-0"
+                : code && !watching && !live
+                  ? // O canal de voz ocupa a área toda, com fundo preto, como no Discord.
+                    "bg-black p-0"
+                  : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
           }`}
         >
-          {watching ? <WatchView member={watching} /> : live ? <StreamView /> : <Empty />}
+          {friendsOpen ? (
+            <FriendsPage />
+          ) : watching ? (
+            <WatchView member={watching} />
+          ) : live ? (
+            <StreamView />
+          ) : code ? (
+            <VoiceRoom />
+          ) : (
+            <Empty />
+          )}
         </main>
       </div>
     </div>

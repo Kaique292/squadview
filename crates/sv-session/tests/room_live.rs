@@ -10,7 +10,7 @@ use sv_gpu::Size;
 use sv_net::protocol::FrameHeader;
 use sv_net::signaling::new_room_code;
 use sv_net::{Receiver, ReceiverSink};
-use sv_session::{KeyframeHandle, Room, RoomUpdate, StreamInfo};
+use sv_session::{JoinAs, KeyframeHandle, Room, RoomUpdate, StreamInfo, VoiceSettings};
 
 struct Frames(mpsc::Sender<FrameHeader>);
 
@@ -31,12 +31,12 @@ fn url() -> String {
 fn um_amigo_assiste_o_outro_pela_sala() {
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
-    let ana = Room::join(&url(), &code, "Ana", None, move |u| {
+    let ana = Room::join(&url(), &code, JoinAs::named("Ana"), None, None, move |u| {
         let _ = ana_tx.send(u);
     })
     .expect("Ana entra");
     let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
-    let beto = Room::join(&url(), &code, "Beto", None, move |u| {
+    let beto = Room::join(&url(), &code, JoinAs::named("Beto"), None, None, move |u| {
         let _ = beto_tx.send(u);
     })
     .expect("Beto entra");
@@ -116,4 +116,50 @@ fn um_amigo_assiste_o_outro_pela_sala() {
     // Ana para: o Beto é desconectado.
     ana.stream_stopped();
     assert_eq!(ana.viewer_count(), 0);
+}
+
+/// Voz: dois membros entram com voz e a malha liga os dois (quem tem o id menor chama).
+/// Usa o microfone e a saída padrão deste PC.
+#[test]
+#[ignore = "precisa do Worker de sinalização, de microfone e de saída de áudio"]
+fn dois_amigos_ligam_a_voz_ao_entrar() {
+    let code = new_room_code();
+    let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
+    let _ana = Room::join(
+        &url(),
+        &code,
+        JoinAs::named("Ana"),
+        None,
+        Some(VoiceSettings::default()),
+        move |u| {
+            let _ = ana_tx.send(u);
+        },
+    )
+    .expect("Ana entra");
+    let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
+    let _beto = Room::join(
+        &url(),
+        &code,
+        JoinAs::named("Beto"),
+        None,
+        Some(VoiceSettings::default()),
+        move |u| {
+            let _ = beto_tx.send(u);
+        },
+    )
+    .expect("Beto entra");
+
+    let linked = |rx: &mpsc::Receiver<RoomUpdate>| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(RoomUpdate::VoicePeers(p)) if p.len() == 1 => return true,
+                Ok(RoomUpdate::VoiceFailed { reason, .. }) => panic!("voz falhou: {reason}"),
+                _ => {}
+            }
+        }
+        false
+    };
+    assert!(linked(&ana_rx), "a voz da Ana não ligou");
+    assert!(linked(&beto_rx), "a voz do Beto não ligou");
 }

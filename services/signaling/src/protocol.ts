@@ -15,18 +15,45 @@ export const RATE_LIMIT_WINDOW_MS = 10_000;
 
 export type PeerId = string;
 
+/**
+ * Conta do Discord de um membro, só para mostrar a foto: o id e o hash da foto, nunca uma URL
+ * (o app monta o endereço do CDN do Discord; assim ninguém faz os outros abrirem links quaisquer).
+ * O servidor não confere se a conta é mesmo da pessoa, como já acontece com o nome.
+ */
+export interface DiscordUser {
+  id: string;
+  avatar: string | null;
+}
+
 export interface Member {
   id: PeerId;
   name: string;
   live: boolean;
+  /** Microfone silenciado (chat de voz). */
+  muted: boolean;
+  /** Ensurdecido: não ouve ninguém. */
+  deafened: boolean;
+  /** Conta do Discord vinculada, ou `null`. */
+  discord: DiscordUser | null;
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string; protocol: number; room: string | null }
+  | {
+      type: "join";
+      name: string;
+      protocol: number;
+      room: string | null;
+      discord: DiscordUser | null;
+      /** Sessão do SquadView (ADR 0011): o servidor confere e o id do Discord passa a valer. */
+      session: string | null;
+    }
   | { type: "room"; name: string }
-  | { type: "rename"; name: string }
-  | { type: "status"; live: boolean }
+  /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
+  | { type: "rename"; name: string; discord?: DiscordUser | null }
+  | { type: "status"; live: boolean; muted: boolean; deafened: boolean }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
+  /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
+  | { type: "join-answer"; id: string; accept: boolean }
   | { type: "leave" };
 
 export type ErrorCode =
@@ -39,6 +66,10 @@ export type ServerMessage =
   | { type: "member-updated"; member: Member }
   | { type: "member-left"; id: PeerId }
   | { type: "signal"; from: PeerId; payload: Record<string, unknown> }
+  /** Um amigo de alguém da sala quer entrar; qualquer membro aceita ou recusa. */
+  | { type: "join-request"; id: string; from: { id: string; name: string; avatar: string | null } }
+  /** O pedido foi respondido (por alguém) ou venceu: some de todos. */
+  | { type: "join-request-closed"; id: string }
   | { type: "error"; code: ErrorCode };
 
 const encoder = new TextEncoder();
@@ -57,6 +88,25 @@ export function cleanName(value: unknown): string | null {
 }
 
 export const PEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+/** Id de um pedido de entrada (como o peerId). */
+export const REQUEST_ID_PATTERN = PEER_ID_PATTERN;
+/** Snowflake do Discord. */
+const DISCORD_ID_PATTERN = /^[0-9]{15,21}$/;
+/** Hash da foto do Discord (`a_` na frente quando é animada). */
+const DISCORD_AVATAR_PATTERN = /^(a_)?[0-9a-f]{32}$/;
+
+/**
+ * Lê o campo `discord`: `undefined` se veio ausente, `null` se veio nulo, a conta se for válida.
+ * Devolve `false` quando o campo existe mas não segue o formato.
+ */
+function parseDiscord(value: unknown): DiscordUser | null | undefined | false {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!isPlainObject(value) || typeof value.id !== "string" || !DISCORD_ID_PATTERN.test(value.id)) return false;
+  const avatar = value.avatar ?? null;
+  if (avatar !== null && (typeof avatar !== "string" || !DISCORD_AVATAR_PATTERN.test(avatar))) return false;
+  return { id: value.id, avatar };
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -82,20 +132,41 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // Nome da sala: opcional (apps da versão 0.1.0 não mandam); se vier, precisa ser válido.
       const room = data.room === undefined || data.room === null ? null : cleanName(data.room);
       if (room === null && data.room !== undefined && data.room !== null) return null;
-      return { type: "join", name, protocol: data.protocol, room };
+      // Conta do Discord: opcional (apps até a 0.2.0 não mandam).
+      const discord = parseDiscord(data.discord);
+      if (discord === false) return null;
+      const session = data.session === undefined || data.session === null ? null : data.session;
+      if (session !== null && (typeof session !== "string" || session.length > 512)) return null;
+      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session };
     }
-    case "room":
+    case "room": {
+      const name = cleanName(data.name);
+      return name === null ? null : { type: "room", name };
+    }
     case "rename": {
       const name = cleanName(data.name);
-      return name === null ? null : { type: data.type, name };
+      const discord = parseDiscord(data.discord);
+      if (name === null || discord === false) return null;
+      return discord === undefined ? { type: "rename", name } : { type: "rename", name, discord };
     }
-    case "status":
-      return typeof data.live === "boolean" ? { type: "status", live: data.live } : null;
+    case "status": {
+      if (typeof data.live !== "boolean") return null;
+      // muted e deafened são opcionais (o app 0.1.0 e o 0.2.0 só mandam live).
+      const flag = (v: unknown) => (v === undefined ? false : typeof v === "boolean" ? v : null);
+      const muted = flag(data.muted);
+      const deafened = flag(data.deafened);
+      if (muted === null || deafened === null) return null;
+      return { type: "status", live: data.live, muted, deafened };
+    }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;
       if (byteLength(JSON.stringify(data.payload)) > MAX_SIGNAL_PAYLOAD_BYTES) return null;
       return { type: "signal", to: data.to, payload: data.payload };
     }
+    case "join-answer":
+      if (typeof data.id !== "string" || !REQUEST_ID_PATTERN.test(data.id) || typeof data.accept !== "boolean")
+        return null;
+      return { type: "join-answer", id: data.id, accept: data.accept };
     case "leave":
       return { type: "leave" };
     default:

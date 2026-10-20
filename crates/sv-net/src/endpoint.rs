@@ -10,8 +10,9 @@ use std::time::Duration;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, Connection, Endpoint, EndpointConfig, ServerConfig, TokioRuntime, TransportConfig, VarInt};
 
+use crate::cert::fingerprint;
 use crate::cert::{Allowed, AllowedClients, ExpectFingerprint, Identity, provider};
-use crate::{ALPN, stun};
+use crate::{ALPN, VOICE_ALPN, stun};
 
 /// Quanto tempo tentar conectar antes de desistir.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -67,6 +68,31 @@ impl std::fmt::Display for ConnectError {
 }
 
 impl std::error::Error for ConnectError {}
+
+/// Para que serve uma conexão: assistir uma transmissão ou a voz da sala.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Stream,
+    Voice,
+}
+
+impl Purpose {
+    fn alpn(self) -> &'static [u8] {
+        match self {
+            Self::Stream => ALPN,
+            Self::Voice => VOICE_ALPN,
+        }
+    }
+}
+
+/// Uma conexão que alguém abriu com a gente (já autorizada pela fingerprint).
+#[derive(Debug)]
+pub struct Accepted {
+    pub conn: Connection,
+    pub purpose: Purpose,
+    /// Fingerprint do certificado de quem conectou (diz quem é).
+    pub fingerprint: Option<String>,
+}
 
 /// Um membro na rede.
 #[derive(Debug)]
@@ -161,10 +187,22 @@ impl Peer {
         });
     }
 
-    /// Conecta em quem tem a fingerprint `expected`, tentando todos os endereços ao mesmo tempo.
+    /// Conecta em quem tem a fingerprint `expected` para assistir, tentando todos os endereços ao
+    /// mesmo tempo.
     pub async fn connect(&self, targets: &[SocketAddr], expected: &str) -> Result<Connection, ConnectError> {
+        self.connect_for(targets, expected, Purpose::Stream).await
+    }
+
+    /// Como [`Peer::connect`], para o propósito escolhido (vídeo ou voz).
+    pub async fn connect_for(
+        &self,
+        targets: &[SocketAddr],
+        expected: &str,
+        purpose: Purpose,
+    ) -> Result<Connection, ConnectError> {
         self.punch(targets);
-        let config = client_config(&self.identity, expected).map_err(|e| ConnectError::Other(e.to_string()))?;
+        let config =
+            client_config(&self.identity, expected, purpose).map_err(|e| ConnectError::Other(e.to_string()))?;
         let mut attempts = tokio::task::JoinSet::new();
         for &target in targets {
             let Ok(connecting) = self.endpoint.connect_with(config.clone(), target, "squadview") else {
@@ -189,12 +227,16 @@ impl Peer {
     }
 
     /// Espera a próxima conexão autorizada. `None` quando o ponto fecha.
-    pub async fn accept(&self) -> Option<Connection> {
+    pub async fn accept(&self) -> Option<Accepted> {
         loop {
             let incoming = self.endpoint.accept().await?;
             // Certificado não autorizado falha aqui, no handshake; segue esperando a próxima.
             if let Ok(conn) = incoming.await {
-                return Some(conn);
+                return Some(Accepted {
+                    purpose: purpose_of(&conn),
+                    fingerprint: peer_fingerprint(&conn),
+                    conn,
+                });
             }
         }
     }
@@ -258,14 +300,15 @@ fn server_config(identity: &Identity, allowed: &Allowed) -> io::Result<ServerCon
         .with_client_cert_verifier(AllowedClients::new(allowed.clone()))
         .with_single_cert(vec![identity.cert.clone()], identity.key())
         .map_err(io::Error::other)?;
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    // Os dois propósitos; o app 0.1.0 só conhece o primeiro.
+    tls.alpn_protocols = vec![ALPN.to_vec(), VOICE_ALPN.to_vec()];
     let crypto = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
     config.transport_config(transport());
     Ok(config)
 }
 
-fn client_config(identity: &Identity, expected: &str) -> io::Result<ClientConfig> {
+fn client_config(identity: &Identity, expected: &str, purpose: Purpose) -> io::Result<ClientConfig> {
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(io::Error::other)?
@@ -273,11 +316,33 @@ fn client_config(identity: &Identity, expected: &str) -> io::Result<ClientConfig
         .with_custom_certificate_verifier(ExpectFingerprint::new(expected.to_owned()))
         .with_client_auth_cert(vec![identity.cert.clone()], identity.key())
         .map_err(io::Error::other)?;
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    tls.alpn_protocols = vec![purpose.alpn().to_vec()];
     let crypto = QuicClientConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ClientConfig::new(Arc::new(crypto));
     config.transport_config(transport());
     Ok(config)
+}
+
+/// O ALPN que a conexão negociou diz o propósito (sem ALPN, ou desconhecido: vídeo).
+fn purpose_of(conn: &Connection) -> Purpose {
+    let protocol = conn
+        .handshake_data()
+        .and_then(|d| d.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+        .and_then(|d| d.protocol);
+    if protocol.as_deref() == Some(VOICE_ALPN) {
+        Purpose::Voice
+    } else {
+        Purpose::Stream
+    }
+}
+
+/// Fingerprint do certificado que o outro lado apresentou.
+fn peer_fingerprint(conn: &Connection) -> Option<String> {
+    let certs = conn
+        .peer_identity()?
+        .downcast::<Vec<rustls::pki_types::CertificateDer<'static>>>()
+        .ok()?;
+    certs.first().map(fingerprint)
 }
 
 /// IP desta máquina na rede local (o da interface que sai para a internet).

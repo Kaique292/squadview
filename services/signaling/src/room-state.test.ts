@@ -94,7 +94,7 @@ describe("entrar na sala", () => {
     expect(beto.last()).toEqual({
       type: "welcome",
       you: idOf(beto),
-      members: [{ id: idOf(ana), name: "Ana", live: false }],
+      members: [{ id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false, discord: null }],
       room: null,
     });
   });
@@ -102,7 +102,10 @@ describe("entrar na sala", () => {
   it("avisa os outros quando alguém entra, mas não avisa a própria pessoa", () => {
     const ana = join("Ana");
     const beto = join("Beto");
-    expect(ana.last()).toEqual({ type: "member-joined", member: { id: idOf(beto), name: "Beto", live: false } });
+    expect(ana.last()).toEqual({
+      type: "member-joined",
+      member: { id: idOf(beto), name: "Beto", live: false, muted: false, deafened: false, discord: null },
+    });
     expect(ana.sent.filter((m) => m.type === "member-joined")).toHaveLength(1);
     expect(beto.sent.filter((m) => m.type === "member-joined")).toHaveLength(0);
   });
@@ -173,10 +176,34 @@ describe("nome da sala e apelido", () => {
     const ana = join("Ana");
     const beto = join("Beto");
     send(beto, { type: "rename", name: "Betão" });
-    expect(ana.last()).toEqual({ type: "member-updated", member: { id: idOf(beto), name: "Betão", live: false } });
-    expect(join("Caio").last()).toMatchObject({
-      members: expect.arrayContaining([{ id: idOf(beto), name: "Betão", live: false }]),
+    expect(ana.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
     });
+    expect(join("Caio").last()).toMatchObject({
+      members: expect.arrayContaining([
+        { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
+      ]),
+    });
+  });
+
+  it("mostra a conta do Discord de quem entra e de quem vincula depois", () => {
+    const discord = { id: "123456789012345678", avatar: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+    const ana = connect();
+    send(ana, { type: "join", name: "Ana", protocol: 1, discord });
+    const beto = join("Beto");
+    expect(beto.last()).toMatchObject({ members: [{ name: "Ana", discord }] });
+
+    // Beto vincula o Discord já na sala: Ana fica sabendo.
+    const dele = { id: "876543210987654321", avatar: null };
+    send(beto, { type: "rename", name: "Betão", discord: dele });
+    expect(ana.last()).toMatchObject({ type: "member-updated", member: { name: "Betão", discord: dele } });
+    // Só o apelido: a conta continua.
+    send(beto, { type: "rename", name: "Beto" });
+    expect(ana.last()).toMatchObject({ member: { name: "Beto", discord: dele } });
+    // Desvinculou.
+    send(beto, { type: "rename", name: "Beto", discord: null });
+    expect(ana.last()).toMatchObject({ member: { discord: null } });
   });
 
   it("a sala esvaziada esquece o nome", () => {
@@ -221,11 +248,28 @@ describe("status ao vivo", () => {
     const ana = join("Ana");
     const beto = join("Beto");
     send(ana, { type: "status", live: true });
-    expect(beto.last()).toEqual({ type: "member-updated", member: { id: idOf(ana), name: "Ana", live: true } });
+    expect(beto.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false, discord: null },
+    });
 
     const caio = join("Caio");
     const welcome = caio.last();
     expect(welcome?.type === "welcome" && welcome.members.find((m) => m.name === "Ana")?.live).toBe(true);
+  });
+});
+
+describe("estado de voz", () => {
+  it("avisa os outros quando alguém silencia o microfone ou ensurdece", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "status", live: false, muted: true, deafened: false, discord: null });
+    expect(ana.last()).toEqual({
+      type: "member-updated",
+      member: { id: idOf(beto), name: "Beto", live: false, muted: true, deafened: false, discord: null },
+    });
+    send(beto, { type: "status", live: true, muted: true, deafened: true });
+    expect(ana.last()).toMatchObject({ member: { live: true, muted: true, deafened: true } });
   });
 });
 
@@ -307,5 +351,98 @@ describe("limite de taxa", () => {
 describe("ids", () => {
   it("têm 16 caracteres hex", () => {
     expect(randomPeerId()).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("amigos na sala (ADR 0011)", () => {
+  const ANA = "111111111111111111";
+  const BETO = "222222222222222222";
+  let met: [string, string][];
+  let answers: { requester: string; result: unknown }[];
+  let requests: Record<string, unknown>;
+
+  beforeEach(() => {
+    met = [];
+    answers = [];
+    requests = {};
+    room = new RoomState(
+      () => conns.filter((c) => c.closedWith === null).map(wrap),
+      () => (ids++).toString(16).padStart(16, "0"),
+      () => now,
+      {
+        code: () => "ABCDEF",
+        met: (a, b) => met.push([a.id, b.id]),
+        joinAnswered: (requester, result) => answers.push({ requester, result }),
+        getRequests: () => structuredClone(requests) as never,
+        putRequests: (r) => (requests = structuredClone(r)),
+      },
+    );
+  });
+
+  function joinVerified(name: string, id: string, discord?: unknown) {
+    const c = connect();
+    room.message(wrap(c), JSON.stringify({ type: "join", name, protocol: 1, discord, session: "x" }), id);
+    return c;
+  }
+
+  it("a conta do Discord de quem é conferido é a da sessão, não a que o app diz", () => {
+    joinVerified("Ana", ANA, { id: BETO, avatar: "a".repeat(32) });
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ members: [{ name: "Ana", discord: { id: ANA, avatar: null } }] });
+  });
+
+  it("conferido não troca a própria conta pela de outra pessoa", () => {
+    const ana = joinVerified("Ana", ANA);
+    const caio = join("Caio");
+    send(ana, { type: "rename", name: "Ana", discord: { id: BETO, avatar: null } });
+    expect(caio.last()).toMatchObject({ member: { discord: { id: ANA } } });
+  });
+
+  it("conferidos na mesma sala viram recentes um do outro", () => {
+    joinVerified("Ana", ANA);
+    join("Caio");
+    joinVerified("Beto", BETO);
+    expect(met).toEqual([[BETO, ANA]]);
+  });
+
+  it("pedido de entrada aparece para todos e o primeiro que responde decide", () => {
+    const ana = join("Ana");
+    const caio = join("Caio");
+    const from = { id: BETO, name: "Beto", avatar: null };
+    expect(room.requestJoin(from, "00000000000000aa")).toBe(true);
+    expect(ana.last()).toEqual({ type: "join-request", id: "00000000000000aa", from });
+    expect(caio.last()).toEqual({ type: "join-request", id: "00000000000000aa", from });
+    send(caio, { type: "join-answer", id: "00000000000000aa", accept: true });
+    expect(answers).toEqual([
+      { requester: BETO, result: { kind: "approved", code: "ABCDEF", room: null, by: "Caio" } },
+    ]);
+    expect(ana.last()).toEqual({ type: "join-request-closed", id: "00000000000000aa" });
+    // Responder de novo não faz nada.
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: false });
+    expect(answers).toHaveLength(1);
+  });
+
+  it("recusar avisa quem pediu", () => {
+    const ana = join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: false });
+    expect(answers[0]).toEqual({ requester: BETO, result: { kind: "denied", by: "Ana" } });
+  });
+
+  it("pedido vence em 60 s, e sala vazia não recebe pedido", () => {
+    expect(room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa")).toBe(false);
+    const ana = join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    now += 60_000;
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: true });
+    expect(answers).toEqual([]);
+    expect(ana.sent).toContainEqual({ type: "join-request-closed", id: "00000000000000aa" });
+  });
+
+  it("quem chega vê os pedidos ainda abertos", () => {
+    join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ type: "join-request", id: "00000000000000aa" });
   });
 });

@@ -14,6 +14,8 @@ mod stats;
 mod surface;
 mod system;
 mod viewer;
+mod voice;
+mod voice_mesh;
 
 pub use sv_media::{Bounds, WindowEvent, WindowTarget};
 
@@ -23,12 +25,13 @@ pub use audio::{AudioPacket, AudioReceiver, AudioSender, ReceiverEvent};
 pub use log::{SessionLog, recent_logs};
 pub use preview::{KeyframeHandle, LocalPreview, StreamTap};
 pub use remote::RemoteView;
-pub use room::{Room, RoomUpdate};
+pub use room::{JoinAs, Room, RoomUpdate};
 pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};
-pub use sv_net::Member;
+pub use sv_net::{DiscordUser, JoinRequester, Member};
 pub use system::{SystemLoad, SystemMonitor};
 pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
+pub use voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};
 
 /// O que pode dar errado ao começar uma sessão, com mensagem para o usuário.
 #[derive(Debug, Clone, PartialEq, Eq)]

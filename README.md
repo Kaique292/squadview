@@ -19,7 +19,7 @@
 
 <p align="center">
   Compartilhe a tela com a galera da call em <b>1080p60</b>, com <b>baixa latência</b> e <b>quase sem pesar no jogo</b>.<br>
-  Sem servidor de mídia: <b>o vídeo vai direto de um PC para o outro</b>, com o som do jogo e sem o som da call.
+  Sem servidor de mídia: <b>o vídeo e a voz vão direto de um PC para o outro</b>, com o som do jogo e sem o som da call.
 </p>
 
 <p align="center">
@@ -35,20 +35,22 @@
 </p>
 
 > [!NOTE]
-> **Versão 0.1.0: o essencial já funciona.** Um amigo transmite e o resto da sala assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
+> **Versão 0.3.0: voz e amigos.** A sala virou um canal de voz como o do Discord, e agora dá para ver os amigos online e pedir para entrar na sala deles. Um amigo transmite e o resto assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
 
 ## ✨ O que ele faz
 
-**Já funciona (0.1.0)**
+**Já funciona (0.3.0)**
 
 - **Qualidade de jogo.** Até 1440p ou a resolução da fonte, a 15, 30 ou 60 fps, tudo liberado. Encode por hardware na placa de vídeo (NVIDIA e AMD), e a imagem não sai da GPU, então o jogo quase não sente.
 - **Direto de PC para PC.** O vídeo não passa por servidor. As conexões são cifradas (QUIC com TLS 1.3).
 - **Só o áudio do jogo.** Transmitindo uma janela, vai só o som daquele app; o som da call fica de fora.
-- **Assista dentro do app**, como no Discord: o vídeo aparece na janela, com tela cheia e estatísticas (fps, bitrate, latência e ping).
-- **Salas com código.** Crie uma sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
-- **Integração com o Discord.** Entre com a sua conta (nome e foto do Discord) e mostre no seu perfil que está numa sala, transmitindo ou assistindo. Se quiser, com o botão "Entrar na sala".
-- **Visual que você já conhece.** Interface na organização do Discord, com identidade própria e efeito de vidro ajustável.
-- **Sempre atualizado.** O app avisa quando sai versão nova e se atualiza com um clique, com pacotes assinados.
+- **Assista dentro do app**, como no Discord: o vídeo aparece na janela, com tela cheia, volume de até 200% e estatísticas (fps, bitrate, latência e ping).
+- **Chat de voz na sala.** A sala é um canal de voz: um quadro por pessoa, borda verde em quem fala, mudo e surdo, volume e silenciar por pessoa (só para você) e isolamento de voz contra ruído de teclado e ventilador. A voz também vai direto de PC para PC.
+- **Amigos.** Veja quem está online, numa sala ou transmitindo. Peça para entrar na sala de um amigo (qualquer pessoa da sala aceita), chame amigos para a sua e marque quem entra direto. Quem esteve numa sala com você aparece em Recentes, e de lá você manda o pedido.
+- **Salas com nome e código.** Dê um nome à sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
+- **Integração com o Discord.** Entre com a sua conta: seu nome e sua foto aparecem para toda a sala. Mostre no seu perfil do Discord que está numa sala, transmitindo ou assistindo, com o botão "Entrar na sala" se quiser.
+- **Visual que você já conhece.** Interface na organização do Discord, com identidade própria, configurações por categoria e efeito de vidro ajustável.
+- **Instala e atualiza como o Discord.** Sem assistente: o instalador termina em segundos e já abre o app. Quando sai versão nova, um botão verde aparece na barra de título, e o app se atualiza sozinho, com pacotes assinados.
 - **Registro de desempenho só no seu PC.** Pode ser desligado; um botão copia os arquivos para você mandar a quem for ajudar.
 
 **Em breve**
@@ -60,13 +62,17 @@
 ## 📸 Telas
 
 <p align="center">
-  <img src="docs/images/tela-sala.png" alt="Sala do SquadView: barra de salas, a sala como canal de voz com quatro membros, um deles ao vivo, e o botão para assistir" width="90%">
+  <img src="docs/images/tela-sala.png" alt="Sala do SquadView como canal de voz: um quadro por pessoa, um amigo ao vivo, um silenciado e os controles da voz embaixo" width="90%">
+</p>
+
+<p align="center">
+  <img src="docs/images/tela-amigos.png" alt="Página de amigos: quem está online, em que sala ou transmitindo, o botão Entrar e um pedido para entrar na sala" width="90%">
 </p>
 
 <p align="center">
   <img src="docs/images/tela-transmitir.png" alt="Modal Transmitir minha tela, com as janelas de jogos para escolher" width="45%">
   &nbsp;
-  <img src="docs/images/tela-config.png" alt="Configurações: conta do Discord, status no perfil e registro de desempenho" width="45%">
+  <img src="docs/images/tela-config.png" alt="Configurações por categoria, como as do Discord: Voz e vídeo com microfone, saída, volumes e isolamento de voz" width="45%">
 </p>
 
 ## 🧠 Como funciona
@@ -99,7 +105,7 @@ Detalhes técnicos em [docs/arquitetura.md](docs/arquitetura.md) e [docs/protoco
 ## ⬇️ Instalação
 
 1. Baixe o instalador `SquadView_x.y.z_x64-setup.exe` na [última versão](https://github.com/Kaique292/squadview/releases/latest).
-2. Abra e siga os passos. Não precisa ser administrador.
+2. Abra o instalador: ele instala em poucos segundos, sem perguntas, e já abre o SquadView. Não precisa ser administrador. (Quer escolher a pasta? Rode com `/WIZARD`.)
    - Se o Windows mostrar **"O Windows protegeu o computador"**, clique em **Mais informações → Executar assim mesmo**. O aviso aparece porque o instalador ainda não tem certificado de assinatura do Windows (que é pago); as atualizações são assinadas pelo projeto.
 3. Crie uma sala, clique em **Convidar pessoas** (copia o link) e mande para a galera. Depois é só **Transmitir minha tela**.
 
@@ -132,7 +138,7 @@ Funciona. O app usa o encoder de hardware da placa pelo Media Foundation do Wind
 <details>
 <summary><b>Meus amigos precisam de conta em algum lugar?</b></summary>
 
-Não. É só instalar e entrar pelo link ou pelo código da sala. Entrar com o Discord é opcional e serve só para mostrar seu nome e sua foto.
+Não. É só instalar e entrar pelo link ou pelo código da sala. Entrar com o Discord é opcional: serve para mostrar seu nome e sua foto e para usar os amigos (ver quem está online e pedir para entrar na sala deles). O SquadView só lê seu perfil público do Discord, nunca suas mensagens, servidores ou amigos de lá.
 </details>
 
 <details>
@@ -195,7 +201,7 @@ As miniaturas das janelas usam o crate `jpeg-encoder`: _this software is based i
 
 There is **no media server**: video goes directly between PCs over QUIC, with UDP hole punching. The plan (Phase 3) is for the room itself to distribute the video: members with spare upload relay already-encoded packets, and members on weak connections get a 720p layer. A tiny free signaling service (Cloudflare Worker) only helps peers find each other; no video goes through it.
 
-- **Status:** version 0.1.0. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD), with Discord login, invite links and Rich Presence. Relaying through the room (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
+- **Status:** version 0.3.0. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD). The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), and there are friends with presence and "ask to join" requests that anyone in the room can approve. Discord login, invite links, Rich Presence and a silent Discord-style installer. Relaying through the room (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
 - **Stack:** Rust core, Tauri v2, React 19 + Tailwind v4, QUIC (quinn) peer-to-peer mesh, Cloudflare Worker for signaling.
 - **Contributing:** PRs target the `dev` branch and use [Conventional Commits](https://www.conventionalcommits.org/). Docs are in Portuguese; issues and PRs in English are welcome too.
 - **Support:** [Buy Me a Coffee](https://buymeacoffee.com/kaiqueamaral).

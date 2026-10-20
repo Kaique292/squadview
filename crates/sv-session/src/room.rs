@@ -13,11 +13,14 @@ use quinn::Connection;
 use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
-use sv_net::{Broadcaster, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun};
+use sv_net::{
+    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun,
+};
 use tokio::runtime::Runtime;
 
 use crate::surface::lock;
-use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap};
+use crate::voice_mesh::VoiceMesh;
+use crate::{AudioPacket, KeyframeHandle, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
 
 /// O que a interface precisa saber da sala.
 pub enum RoomUpdate {
@@ -25,6 +28,12 @@ pub enum RoomUpdate {
     Members(Vec<Member>),
     /// Nome da sala (`None`: sem nome; a interface mostra o código).
     RoomName(Option<String>),
+    /// Algo da voz: quem está falando, nível do microfone, falha de dispositivo.
+    Voice(VoiceEvent),
+    /// Com quem a voz está ligada (mudou: alguém conectou ou caiu).
+    VoicePeers(Vec<String>),
+    /// Não deu para ligar a voz com `member_id` (sem conexão direta).
+    VoiceFailed { member_id: String, reason: String },
     /// A conexão com quem pedimos para assistir abriu.
     WatchReady {
         member: Member,
@@ -33,6 +42,10 @@ pub enum RoomUpdate {
     },
     /// Não deu para assistir (recusado ou sem conexão direta).
     WatchFailed { member_id: String, reason: String },
+    /// Um amigo de alguém da sala pediu para entrar.
+    JoinRequest { id: String, from: JoinRequester },
+    /// O pedido de entrada foi respondido ou venceu.
+    JoinRequestClosed(String),
     /// Erro da sala (cheia, versão diferente...).
     Error(String),
     /// A conexão com a sinalização caiu; tentando voltar para a sala.
@@ -48,12 +61,25 @@ impl std::fmt::Debug for RoomUpdate {
         match self {
             Self::Members(m) => f.debug_tuple("Members").field(m).finish(),
             Self::RoomName(n) => f.debug_tuple("RoomName").field(n).finish(),
+            Self::Voice(e) => f.debug_tuple("Voice").field(e).finish(),
+            Self::VoicePeers(p) => f.debug_tuple("VoicePeers").field(p).finish(),
+            Self::VoiceFailed { member_id, reason } => f
+                .debug_struct("VoiceFailed")
+                .field("member_id", member_id)
+                .field("reason", reason)
+                .finish(),
             Self::WatchReady { member, .. } => f.debug_struct("WatchReady").field("member", member).finish(),
             Self::WatchFailed { member_id, reason } => f
                 .debug_struct("WatchFailed")
                 .field("member_id", member_id)
                 .field("reason", reason)
                 .finish(),
+            Self::JoinRequest { id, from } => f
+                .debug_struct("JoinRequest")
+                .field("id", id)
+                .field("from", from)
+                .finish(),
+            Self::JoinRequestClosed(id) => f.debug_tuple("JoinRequestClosed").field(id).finish(),
             Self::Error(e) => f.debug_tuple("Error").field(e).finish(),
             Self::Reconnecting => f.write_str("Reconnecting"),
             Self::Reconnected => f.write_str("Reconnected"),
@@ -73,6 +99,8 @@ struct Inner {
     /// Trocado quando a sala reconecta depois de uma queda.
     client: Mutex<RoomClient>,
     signaling_url: String,
+    /// Sessão do SquadView, para entrar de novo como conferido ao reconectar.
+    session: Option<String>,
     code: String,
     peer: Peer,
     me: Mutex<Member>,
@@ -84,6 +112,8 @@ struct Inner {
     keyframes: Mutex<Option<KeyframeHandle>>,
     /// Quem pedimos para assistir, esperando resposta.
     pending_watch: Mutex<Option<String>>,
+    voice: Arc<VoiceMesh>,
+    runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
 }
 
@@ -100,15 +130,38 @@ impl std::fmt::Debug for Room {
     }
 }
 
+/// Quem entra na sala.
+#[derive(Debug, Clone, Default)]
+pub struct JoinAs {
+    pub name: String,
+    /// Conta do Discord vinculada (para a foto).
+    pub discord: Option<DiscordUser>,
+    /// Sessão do SquadView (ADR 0011): a sala confere e passa a saber quem somos de verdade.
+    pub session: Option<String>,
+}
+
+impl JoinAs {
+    /// Só o nome (sem Discord), como nos testes.
+    pub fn named(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            ..Self::default()
+        }
+    }
+}
+
 impl Room {
     /// Entra na sala `code` em `signaling_url`. Bloqueia até a sala responder (ou falhar).
     pub fn join(
         signaling_url: &str,
         code: &str,
-        name: &str,
+        me: JoinAs,
         room_name: Option<&str>,
+        voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
+        let JoinAs { name, discord, session } = me;
+        let name = name.as_str();
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -118,11 +171,21 @@ impl Room {
                 .map_err(|e| e.to_string())?,
         );
         let on_update: OnUpdate = Arc::new(on_update);
+        let voice_update = on_update.clone();
+        let voice = Arc::new(VoiceMesh::start(voice, move |e| voice_update(RoomUpdate::Voice(e))));
         let (inner, events) = runtime.block_on(async {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
                 .map_err(|e| format!("rede indisponível: {e}"))?;
-            let (client, mut events) = RoomClient::join(signaling_url, code, name, room_name).await?;
+            let (client, mut events) = RoomClient::join(
+                signaling_url,
+                code,
+                name,
+                discord.as_ref(),
+                session.as_deref(),
+                room_name,
+            )
+            .await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
                 Some(WireEvent::Joined { you, members, room }) => (you, members, room),
@@ -133,12 +196,16 @@ impl Room {
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
+                session: session.clone(),
                 code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
                     id: you,
                     name: name.to_owned(),
                     live: false,
+                    muted: false,
+                    deafened: false,
+                    discord,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -146,6 +213,8 @@ impl Room {
                 stream: Mutex::new(None),
                 keyframes: Mutex::new(None),
                 pending_watch: Mutex::new(None),
+                voice,
+                runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
             });
             Ok::<_, String>((inner, events))
@@ -153,6 +222,7 @@ impl Room {
 
         inner.publish_members();
         (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
+        inner.offer_voice_to_all();
         runtime.spawn(run_session(inner.clone(), events));
         runtime.spawn(accept_viewers(inner.clone()));
         Ok(Self {
@@ -176,10 +246,25 @@ impl Room {
         lock(&self.inner.client).set_room_name(name);
     }
 
+    /// Aceita ou recusa o pedido de entrada `id` (o primeiro membro que responder decide).
+    pub fn answer_join(&self, id: &str, accept: bool) {
+        lock(&self.inner.client).answer_join(id, accept);
+    }
+
     /// Troca o nosso apelido na sala.
     pub fn set_name(&self, name: &str) {
         lock(&self.inner.me).name = name.to_owned();
         lock(&self.inner.client).set_name(name);
+        self.inner.publish_members();
+    }
+
+    /// Troca o nome e a conta do Discord (a pessoa vinculou ou desvinculou já na sala).
+    pub fn set_profile(&self, name: &str, discord: Option<DiscordUser>) {
+        lock(&self.inner.client).set_profile(name, discord.as_ref());
+        let mut me = lock(&self.inner.me);
+        me.name = name.to_owned();
+        me.discord = discord;
+        drop(me);
         self.inner.publish_members();
     }
 
@@ -199,7 +284,7 @@ impl Room {
     pub fn stream_started(&self, keyframes: KeyframeHandle) {
         *lock(&self.inner.keyframes) = Some(keyframes);
         lock(&self.inner.me).live = true;
-        lock(&self.inner.client).set_live(true);
+        self.inner.send_status();
         self.inner.publish_members();
     }
 
@@ -209,7 +294,7 @@ impl Room {
         *lock(&self.inner.stream) = None;
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
-        lock(&self.inner.client).set_live(false);
+        self.inner.send_status();
         self.inner.publish_members();
     }
 
@@ -249,6 +334,31 @@ impl Room {
         self.inner.peer.nat()
     }
 
+    /// O motor de voz (`None`: a sala entrou sem voz ou o áudio falhou).
+    pub fn voice(&self) -> Option<&VoiceEngine> {
+        self.inner.voice.engine()
+    }
+
+    /// Silencia o nosso microfone para todos (e avisa a sala, para aparecer o ícone).
+    pub fn set_muted(&self, muted: bool) {
+        if let Some(v) = self.voice() {
+            v.set_muted(muted);
+        }
+        lock(&self.inner.me).muted = muted;
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
+    /// Ensurdece: não ouvimos ninguém e o microfone também fica mudo.
+    pub fn set_deafened(&self, deafened: bool) {
+        if let Some(v) = self.voice() {
+            v.set_deafened(deafened);
+        }
+        lock(&self.inner.me).deafened = deafened;
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
     /// Quantos amigos estão assistindo a gente.
     pub fn viewer_count(&self) -> usize {
         self.inner.broadcaster.viewer_count()
@@ -258,11 +368,41 @@ impl Room {
 impl Drop for Room {
     fn drop(&mut self) {
         self.inner.broadcaster.close();
+        self.inner.voice.close();
         self.inner.peer.close();
     }
 }
 
 impl Inner {
+    /// Manda para a sala o nosso estado (ao vivo, mudo, surdo).
+    fn send_status(&self) {
+        let me = lock(&self.me).clone();
+        lock(&self.client).set_status(me.live, me.muted, me.deafened);
+    }
+
+    /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
+    fn offer_voice_to(&self, member: &str) {
+        let me = lock(&self.me).id.clone();
+        if self.voice.should_offer(&me, member) {
+            let offer = Signal::VoiceOffer {
+                candidates: self.peer.candidates().to_vec(),
+                fingerprint: self.peer.fingerprint().to_owned(),
+            };
+            lock(&self.client).signal(member, &offer);
+        }
+    }
+
+    fn offer_voice_to_all(&self) {
+        let members: Vec<String> = lock(&self.members).keys().cloned().collect();
+        for m in members {
+            self.offer_voice_to(&m);
+        }
+    }
+
+    fn publish_voice_peers(&self) {
+        (self.on_update)(RoomUpdate::VoicePeers(self.voice.connected()));
+    }
+
     fn publish_members(&self) {
         let me = lock(&self.me).clone();
         let mut list = vec![me];
@@ -315,6 +455,9 @@ impl Inner {
                         id: from.clone(),
                         name: "?".into(),
                         live: true,
+                        muted: false,
+                        deafened: false,
+                        discord: None,
                     });
                     match result {
                         Ok(conn) => (inner.on_update)(RoomUpdate::WatchReady {
@@ -323,6 +466,47 @@ impl Inner {
                             desc: stream,
                         }),
                         Err(e) => (inner.on_update)(RoomUpdate::WatchFailed {
+                            member_id: from,
+                            reason: connect_failure(&e, inner.peer.nat()),
+                        }),
+                    }
+                });
+            }
+            Signal::VoiceOffer {
+                candidates,
+                fingerprint,
+            } => {
+                if self.voice.engine().is_none() {
+                    return;
+                }
+                self.peer.allowed().allow(&fingerprint);
+                self.voice.expect(&from, &fingerprint);
+                self.peer.punch(&candidates);
+                let answer = Signal::VoiceAnswer {
+                    candidates: self.peer.candidates().to_vec(),
+                    fingerprint: self.peer.fingerprint().to_owned(),
+                };
+                lock(&self.client).signal(&from, &answer);
+            }
+            Signal::VoiceAnswer {
+                candidates,
+                fingerprint,
+            } => {
+                if !self.voice.answered(&from) {
+                    return;
+                }
+                let inner = self.clone();
+                tokio::spawn(async move {
+                    match inner
+                        .peer
+                        .connect_for(&candidates, &fingerprint, sv_net::Purpose::Voice)
+                        .await
+                    {
+                        Ok(conn) => {
+                            inner.voice.register(&inner.runtime, from, conn);
+                            inner.publish_voice_peers();
+                        }
+                        Err(e) => (inner.on_update)(RoomUpdate::VoiceFailed {
                             member_id: from,
                             reason: connect_failure(&e, inner.peer.nat()),
                         }),
@@ -360,15 +544,25 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 *lock(&inner.room_name) = Some(name.clone());
                 (inner.on_update)(RoomUpdate::RoomName(Some(name)));
             }
-            WireEvent::MemberJoined(m) | WireEvent::MemberUpdated(m) => {
+            WireEvent::MemberJoined(m) => {
+                let id = m.id.clone();
+                lock(&inner.members).insert(id.clone(), m);
+                inner.publish_members();
+                inner.offer_voice_to(&id);
+            }
+            WireEvent::MemberUpdated(m) => {
                 lock(&inner.members).insert(m.id.clone(), m);
                 inner.publish_members();
             }
             WireEvent::MemberLeft(id) => {
                 lock(&inner.members).remove(&id);
+                inner.voice.unregister(&id);
                 inner.publish_members();
+                inner.publish_voice_peers();
             }
             WireEvent::Signal { from, signal } => inner.on_signal(from, signal),
+            WireEvent::JoinRequest { id, from } => (inner.on_update)(RoomUpdate::JoinRequest { id, from }),
+            WireEvent::JoinRequestClosed(id) => (inner.on_update)(RoomUpdate::JoinRequestClosed(id)),
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
             WireEvent::Disconnected => return,
         }
@@ -392,13 +586,20 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
     (inner.on_update)(RoomUpdate::Reconnecting);
     for delay in RECONNECT_DELAYS_S {
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-        let (name, live) = {
+        let (name, discord, live) = {
             let me = lock(&inner.me);
-            (me.name.clone(), me.live)
+            (me.name.clone(), me.discord.clone(), me.live)
         };
         let room_name = lock(&inner.room_name).clone();
-        let Ok((client, mut events)) =
-            RoomClient::join(&inner.signaling_url, &inner.code, &name, room_name.as_deref()).await
+        let Ok((client, mut events)) = RoomClient::join(
+            &inner.signaling_url,
+            &inner.code,
+            &name,
+            discord.as_ref(),
+            inner.session.as_deref(),
+            room_name.as_deref(),
+        )
+        .await
         else {
             continue;
         };
@@ -410,10 +611,10 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
                 if room.is_some() {
                     *lock(&inner.room_name) = room;
                 }
-                if live {
-                    lock(&inner.client).set_live(true);
-                }
+                let _ = live;
+                inner.send_status();
                 inner.publish_members();
+                inner.offer_voice_to_all();
                 (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
                 (inner.on_update)(RoomUpdate::Reconnected);
                 return Some(events);
@@ -428,7 +629,19 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
 }
 
 async fn accept_viewers(inner: Arc<Inner>) {
-    while let Some(conn) = inner.peer.accept().await {
+    while let Some(accepted) = inner.peer.accept().await {
+        if accepted.purpose == sv_net::Purpose::Voice {
+            // Voz: quem é vem da fingerprint que a pessoa mandou no voice-offer.
+            match accepted.fingerprint.as_deref().and_then(|f| inner.voice.member_for(f)) {
+                Some(member) => {
+                    inner.voice.register(&inner.runtime, member, accepted.conn);
+                    inner.publish_voice_peers();
+                }
+                None => accepted.conn.close(quinn::VarInt::from_u32(2), b"desconhecido"),
+            }
+            continue;
+        }
+        let conn = accepted.conn;
         let keyframes = lock(&inner.keyframes).clone();
         let Some(keyframes) = keyframes else {
             conn.close(quinn::VarInt::from_u32(1), b"nao esta transmitindo");

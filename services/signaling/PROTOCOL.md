@@ -21,30 +21,77 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Cliente → servidor
 
-| Mensagem                                                    | Quando                                                                                                                                                                                                              |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}` | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
-| `{"type":"room","name":"Squad"}`                            | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
-| `{"type":"rename","name":"K.A"}`                            | Troca o próprio apelido. Os outros recebem `member-updated`.                                                                                                                                                        |
-| `{"type":"status","live":true}`                             | Começou ou parou de transmitir.                                                                                                                                                                                     |
-| `{"type":"signal","to":"<peerId>","payload":{...}}`         | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
-| `{"type":"leave"}`                                          | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
+| Mensagem                                                       | Quando                                                                                                                                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
+| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
+| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                         |
+| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem).                                                                         |
+| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
+| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
 
 ### Servidor → cliente
 
-| Mensagem                                                                               | Quando                                                                                                        |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. |
-| `{"type":"room-updated","name":"Squad"}`                                               | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                             |
-| `{"type":"member-joined","member":{...}}`                                              | Alguém entrou (não é enviado para quem entrou).                                                               |
-| `{"type":"member-updated","member":{...}}`                                             | Alguém mudou o `live` ou o apelido.                                                                           |
-| `{"type":"member-left","id":"<peerId>"}`                                               | Alguém saiu, caiu ou foi desconectado por erro.                                                               |
-| `{"type":"signal","from":"<peerId>","payload":{...}}`                                  | Mensagem de outro membro.                                                                                     |
-| `{"type":"error","code":"..."}`                                                        | Ver abaixo.                                                                                                   |
+| Mensagem                                                                                                  | Quando                                                                                                        |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live","muted","deafened"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. |
+| `{"type":"room-updated","name":"Squad"}`                                                                  | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                             |
+| `{"type":"member-joined","member":{...}}`                                                                 | Alguém entrou (não é enviado para quem entrou).                                                               |
+| `{"type":"member-updated","member":{...}}`                                                                | Alguém mudou o `live`, o apelido ou o estado de voz.                                                          |
+| `{"type":"member-left","id":"<peerId>"}`                                                                  | Alguém saiu, caiu ou foi desconectado por erro.                                                               |
+| `{"type":"signal","from":"<peerId>","payload":{...}}`                                                     | Mensagem de outro membro.                                                                                     |
+| `{"type":"error","code":"..."}`                                                                           | Ver abaixo.                                                                                                   |
 
 `peerId` são 16 caracteres hexadecimais aleatórios, gerados pelo servidor a cada `join`.
 
-O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename` e `room-updated` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
+O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename`, `room-updated` e os campos `muted`/`deafened` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
+
+### Conta do Discord
+
+`join` e `rename` aceitam o campo opcional `discord`: `{"id":"123456789012345678","avatar":"<hash>"}`. `id` é o id numérico da conta (15 a 21 dígitos) e `avatar` é o hash da foto (32 caracteres hexadecimais, com `a_` na frente se for animada) ou `null` para a foto padrão. Todo membro sai com `discord` (a conta, ou `null`). Só vai o id e o hash, nunca uma URL: o app monta o endereço do CDN do Discord, então ninguém consegue fazer os outros abrirem um link qualquer. O servidor não confere se a conta é mesmo de quem mandou (como o nome): serve para mostrar a foto, não como identidade. O campo entrou na 0.3.0, sem mudar a versão do protocolo: apps antigos não mandam e ignoram.
+
+### Amigos na sala
+
+Desde a 0.3.0 ([ADR 0011](../../docs/adr/0011-amigos-e-presenca.md)):
+
+- `join` aceita `"session":"<sessão>"`. Se a sessão for válida, o membro conta como **conferido**: a conta do Discord dele passa a ser a da sessão, e ele não consegue trocá-la pela de outra pessoa no `rename`.
+- Membros conferidos na mesma sala entram nos recentes um do outro.
+- `{"type":"join-request","id":"<id>","from":{"id","name","avatar"}}` (servidor → todos): um amigo de alguém da sala quer entrar.
+- `{"type":"join-answer","id":"<id>","accept":true}` (cliente → servidor): qualquer membro aceita ou recusa. O primeiro a responder decide.
+- `{"type":"join-request-closed","id":"<id>"}` (servidor → todos): o pedido foi respondido ou venceu (60 s).
+- Só quem foi aceito recebe o código da sala, pelo próprio registro.
+
+## Amigos e presença
+
+| Requisição                                                            | Resposta                                                                                          |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `POST /auth/discord` com `{"accessToken":"..."}`                      | `200 {"session","profile"}`, ou `401` se o Discord recusar o token, ou `503` sem `SESSION_SECRET` |
+| `GET /me` com `Upgrade: websocket` e `Authorization: Bearer <sessão>` | `101`: conexão com o próprio registro (amigos e presença), ou `401` com sessão inválida           |
+
+O token do Discord é usado uma vez (para ler `/users/@me`) e não é guardado. A sessão é `{id, exp}` assinado com HMAC-SHA256, vale 90 dias e o registro manda uma nova (`{"type":"session"}`) a cada conexão.
+
+App → registro:
+
+| Mensagem                                                                              | O que faz                                                               |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `{"type":"profile","name":"K.A","avatar":"<hash>"}`                                   | Nome e foto que os amigos veem                                          |
+| `{"type":"status","room":{"code":"B8RJ2Q","name":"Galera"},"live":false}`             | Em que sala está (`room: null` fora de sala). O código fica no servidor |
+| `{"type":"friend-request","id":"<discord id>"}`                                       | Pede amizade (só a quem está nos recentes)                              |
+| `{"type":"friend-accept"}` / `friend-decline` / `friend-cancel` / `unfriend` com `id` | Responde, cancela ou desfaz                                             |
+| `{"type":"set-direct","id":"...","direct":true}`                                      | Esse amigo entra direto nas minhas salas                                |
+| `{"type":"join","id":"..."}`                                                          | Quero entrar na sala desse amigo                                        |
+| `{"type":"invite","id":"..."}`                                                        | Chama esse amigo para a minha sala                                      |
+
+Registro → app:
+
+| Mensagem                                                                 | Quando                                                                                                      |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `{"type":"state","me","friends","incoming","outgoing","recents"}`        | Ao conectar e a cada mudança. Cada amigo vem com `direct` e `presence` (`online`, `inRoom`, `room`, `live`) |
+| `{"type":"friend-request","from":{...}}`                                 | Chegou um pedido de amizade                                                                                 |
+| `{"type":"join-result","result":{"kind":"approved","code","room","by"}}` | Resposta ao `join`: também `pending`, `denied`, `not-in-room` ou `not-friend`                               |
+| `{"type":"invited","from":{...},"code":"B8RJ2Q","room":"Galera"}`        | Um amigo chamou para a sala                                                                                 |
+| `{"type":"session","session":"..."}`                                     | Sessão renovada                                                                                             |
+| `{"type":"error","code":"..."}`                                          | `invalid-message` (fecha, 4400), `rate-limited` (fecha, 4429), `unknown-person`, `too-many`, `not-in-room`  |
 
 ## Erros
 

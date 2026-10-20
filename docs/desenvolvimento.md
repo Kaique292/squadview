@@ -43,6 +43,17 @@ yarn dev          # abre o app em modo desenvolvimento
 | `yarn coverage:badge`                     | Junta as coberturas e gera `build/badges/coverage.json`                                                               |
 | `yarn workspace @squadview/signaling dev` | Sobe o Worker de sinalização localmente                                                                               |
 
+## Instalador
+
+O instalador e a atualização funcionam como os do Discord: sem assistente. Dois cliques no instalador instalam em silêncio, em poucos segundos, e o app abre direto na splash.
+
+- O template NSIS fica em `apps/desktop/src-tauri/windows/installer.nsi`. É o template padrão do Tauri (tauri-cli 2.12.3) com duas mudanças marcadas com `SquadView (1)` e `SquadView (2)`:
+  1. Modo silencioso por padrão.
+  2. O app abre ao fim da primeira instalação.
+- Para ver as telas de sempre (escolher pasta etc.), rode o instalador com `/WIZARD`.
+- A atualização automática usa `installMode: "quiet"` (em `tauri.conf.json`): o instalador roda com `/UPDATE /R` e o app reabre sozinho.
+- Ao atualizar o tauri-cli, compare `installer.nsi` com o template novo e reaplique as duas mudanças.
+
 ## Estrutura
 
 ```
@@ -64,7 +75,7 @@ docs/                 documentação, ADRs, design e imagens
 
 ## Capturas do README e imagem de prévia do site
 
-- **Capturas das telas:** com o `yarn dev` rodando, abra `http://localhost:1420/#demo=sala` (ou `#demo=transmitir`, `#demo=config`). O modo de demonstração (`apps/desktop/src/dev/demo.ts`, só no dev) preenche a interface com uma sala de exemplo. Para gerar o PNG sem abrir janela:
+- **Capturas das telas:** com o `yarn dev` rodando, abra `http://localhost:1420/#demo=sala` (ou `#demo=transmitir`, `#demo=config`, `#demo=amigos`). O modo de demonstração (`apps/desktop/src/dev/demo.ts`, só no dev) preenche a interface com uma sala de exemplo. Para gerar o PNG sem abrir janela:
 
   ```powershell
   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --headless=new --hide-scrollbars --window-size=1280,800 --virtual-time-budget=6000 --screenshot=docs\images\tela-sala.png "http://localhost:1420/#demo=sala"

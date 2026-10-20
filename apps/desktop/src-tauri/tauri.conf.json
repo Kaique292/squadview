@@ -62,7 +62,8 @@
         "languages": [
           "PortugueseBR",
           "English"
-        ]
+        ],
+        "template": "windows/installer.nsi"
       }
     }
   },
@@ -73,7 +74,7 @@
         "https://github.com/Kaique292/squadview/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     },
     "deep-link": {

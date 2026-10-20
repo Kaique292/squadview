@@ -23,11 +23,38 @@ const SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(45);
 pub const ROOM_CODE_ALPHABET: &str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 pub const ROOM_CODE_LENGTH: usize = 6;
 
+/// Conta do Discord de um membro: o id e o hash da foto (nunca uma URL; a interface monta o
+/// endereço do CDN do Discord). Serve para mostrar a foto; o Worker não confere a conta.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscordUser {
+    pub id: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
+/// Quem pediu para entrar na sala (um amigo de alguém daqui, conferido pelo Worker).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequester {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
     pub name: String,
     pub live: bool,
+    /// Microfone silenciado (para todos). Ausente no Worker antigo.
+    #[serde(default)]
+    pub muted: bool,
+    /// Ensurdecido (não ouve ninguém). Ausente no Worker antigo.
+    #[serde(default)]
+    pub deafened: bool,
+    /// Conta do Discord vinculada. Ausente no Worker antigo.
+    #[serde(default)]
+    pub discord: Option<DiscordUser>,
 }
 
 /// Mensagens que mandamos.
@@ -40,21 +67,35 @@ enum Outgoing<'a> {
         /// Nome da sala; só vale para quem cria (entra na sala vazia).
         #[serde(skip_serializing_if = "Option::is_none")]
         room: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        discord: Option<&'a DiscordUser>,
+        /// Sessão do SquadView (ADR 0011): o Worker confere e o membro conta como conferido.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session: Option<&'a str>,
     },
     Status {
         live: bool,
+        muted: bool,
+        deafened: bool,
     },
     /// Renomeia a sala.
     Room {
         name: &'a str,
     },
-    /// Troca o nosso apelido.
+    /// Troca o nosso apelido e, se vier `discord`, a conta (`Some(None)`: desvinculou).
     Rename {
         name: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        discord: Option<Option<&'a DiscordUser>>,
     },
     Signal {
         to: &'a str,
         payload: &'a Signal,
+    },
+    /// Resposta a um pedido de entrada.
+    JoinAnswer {
+        id: &'a str,
+        accept: bool,
     },
     Leave,
 }
@@ -86,6 +127,13 @@ enum Incoming {
         from: String,
         payload: serde_json::Value,
     },
+    JoinRequest {
+        id: String,
+        from: JoinRequester,
+    },
+    JoinRequestClosed {
+        id: String,
+    },
     Error {
         code: String,
     },
@@ -109,6 +157,13 @@ pub enum RoomEvent {
         from: String,
         signal: Signal,
     },
+    /// Um amigo de alguém da sala quer entrar (qualquer membro aceita ou recusa).
+    JoinRequest {
+        id: String,
+        from: JoinRequester,
+    },
+    /// O pedido foi respondido por alguém ou venceu.
+    JoinRequestClosed(String),
     /// Erro vindo do Worker (ex.: `room-full`, `version-mismatch`).
     Error(String),
     /// A conexão com a sinalização caiu ou foi fechada.
@@ -128,6 +183,8 @@ impl RoomEvent {
                 from,
                 signal: serde_json::from_value(payload).ok()?,
             },
+            Incoming::JoinRequest { id, from } => Self::JoinRequest { id, from },
+            Incoming::JoinRequestClosed { id } => Self::JoinRequestClosed(id),
             Incoming::Error { code } => Self::Error(code),
         })
     }
@@ -158,6 +215,8 @@ impl RoomClient {
         base_url: &str,
         code: &str,
         name: &str,
+        discord: Option<&DiscordUser>,
+        session: Option<&str>,
         room: Option<&str>,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
@@ -175,6 +234,8 @@ impl RoomClient {
             name,
             protocol: SIGNALING_PROTOCOL,
             room,
+            discord,
+            session,
         })
         .expect("json");
         write
@@ -220,7 +281,12 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.send(&Outgoing::Status { live });
+        self.set_status(live, false, false);
+    }
+
+    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado e ensurdecido.
+    pub fn set_status(&self, live: bool, muted: bool, deafened: bool) {
+        self.send(&Outgoing::Status { live, muted, deafened });
     }
 
     /// Renomeia a sala (todos recebem [`RoomEvent::RoomRenamed`], inclusive nós).
@@ -230,7 +296,20 @@ impl RoomClient {
 
     /// Troca o nosso apelido (os outros recebem [`RoomEvent::MemberUpdated`]).
     pub fn set_name(&self, name: &str) {
-        self.send(&Outgoing::Rename { name });
+        self.send(&Outgoing::Rename { name, discord: None });
+    }
+
+    /// Troca o nome e a conta do Discord (vinculou ou desvinculou já na sala).
+    pub fn set_profile(&self, name: &str, discord: Option<&DiscordUser>) {
+        self.send(&Outgoing::Rename {
+            name,
+            discord: Some(discord),
+        });
+    }
+
+    /// Aceita ou recusa um pedido de entrada.
+    pub fn answer_join(&self, id: &str, accept: bool) {
+        self.send(&Outgoing::JoinAnswer { id, accept });
     }
 
     pub fn signal(&self, to: &str, signal: &Signal) {
@@ -287,6 +366,8 @@ mod tests {
             name: "Ana",
             protocol: 1,
             room: None,
+            discord: None,
+            session: None,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
@@ -295,6 +376,8 @@ mod tests {
             name: "Ana",
             protocol: 1,
             room: Some("Galera"),
+            discord: None,
+            session: None,
         })
         .unwrap();
         assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
@@ -303,11 +386,41 @@ mod tests {
             r#"{"type":"room","name":"Squad"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Outgoing::Rename { name: "K.A" }).unwrap(),
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: None
+            })
+            .unwrap(),
             r#"{"type":"rename","name":"K.A"}"#
         );
-        let status = serde_json::to_string(&Outgoing::Status { live: true }).unwrap();
-        assert_eq!(status, r#"{"type":"status","live":true}"#);
+        let conta = DiscordUser {
+            id: "123456789012345678".into(),
+            avatar: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: Some(Some(&conta))
+            })
+            .unwrap(),
+            r#"{"type":"rename","name":"K.A","discord":{"id":"123456789012345678","avatar":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#
+        );
+        // Desvinculou: vai `null`, para a sala tirar a foto.
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: Some(None)
+            })
+            .unwrap(),
+            r#"{"type":"rename","name":"K.A","discord":null}"#
+        );
+        let status = serde_json::to_string(&Outgoing::Status {
+            live: true,
+            muted: false,
+            deafened: true,
+        })
+        .unwrap();
+        assert_eq!(status, r#"{"type":"status","live":true,"muted":false,"deafened":true}"#);
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
         };
@@ -333,7 +446,10 @@ mod tests {
                 members: vec![Member {
                     id: "bb".into(),
                     name: "Beto".into(),
-                    live: true
+                    live: true,
+                    muted: false,
+                    deafened: false,
+                    discord: None,
                 }],
                 room: None,
             })
@@ -349,6 +465,25 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"room-updated","name":"Squad"}"#),
             Some(RoomEvent::RoomRenamed("Squad".into()))
+        );
+        assert_eq!(
+            parse(r#"{"type":"join-request","id":"cc","from":{"id":"1","name":"Beto","avatar":null}}"#),
+            Some(RoomEvent::JoinRequest {
+                id: "cc".into(),
+                from: JoinRequester {
+                    id: "1".into(),
+                    name: "Beto".into(),
+                    avatar: None
+                }
+            })
+        );
+        assert_eq!(
+            parse(r#"{"type":"join-request-closed","id":"cc"}"#),
+            Some(RoomEvent::JoinRequestClosed("cc".into()))
+        );
+        assert_eq!(
+            serde_json::to_string(&Outgoing::JoinAnswer { id: "cc", accept: true }).unwrap(),
+            r#"{"type":"join-answer","id":"cc","accept":true}"#
         );
         assert_eq!(
             parse(r#"{"type":"member-left","id":"bb"}"#),
