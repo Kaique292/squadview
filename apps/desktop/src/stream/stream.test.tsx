@@ -352,7 +352,8 @@ describe("prévia ao vivo", () => {
     expect(view).not.toHaveTextContent("A imagem parou de chegar.");
 
     act(() => handlers.get("stream-ended")!({ payload: null }));
-    expect(screen.getByRole("heading", { name: "Ninguém está transmitindo ainda" })).toBeInTheDocument();
+    // Acabou a transmissão fora de uma sala: volta para a página inicial (Amigos).
+    expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
     unlisten();
     expect(handlers.size).toBe(0);
   });

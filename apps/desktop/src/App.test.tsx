@@ -2,14 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { App } from "./App";
 
 describe("App", () => {
-  it("mostra o estado vazio quando ninguém está transmitindo", () => {
+  it("fora de uma sala, a página inicial é Amigos, com o ícone marcado", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Ninguém está transmitindo ainda" })).toBeInTheDocument();
-  });
-
-  it("oferece o botão de transmitir quando ninguém está ao vivo", () => {
-    render(<App />);
-    expect(screen.getByRole("button", { name: "Transmitir minha tela" })).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Amigos" })).toHaveAttribute("aria-current", "page");
   });
 
   it("tem a navegação de salas acessível, com o mascote no topo", () => {
