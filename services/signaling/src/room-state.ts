@@ -23,7 +23,49 @@ export interface Attachment {
   room?: string | null;
   rateWindowStart: number;
   rateCount: number;
+  /** Id do Discord conferido pela sessão (ADR 0011), se o app mandou uma válida. */
+  verified?: string | null;
 }
+
+/** Perfil de um membro conferido (para os recentes e os pedidos de entrada). */
+export interface VerifiedProfile {
+  id: string;
+  name: string;
+  avatar: string | null;
+}
+
+/** Pedido de entrada esperando resposta. */
+interface PendingRequest {
+  from: VerifiedProfile;
+  at: number;
+}
+
+/** Quanto tempo um pedido de entrada espera resposta. */
+export const JOIN_REQUEST_TTL_MS = 60_000;
+
+/** O que a sala faz fora dela: falar com o registro de cada pessoa e guardar pedidos. */
+export interface RoomEffects {
+  /** Código desta sala. */
+  code(): string | null;
+  /** Dois membros conferidos estiveram juntos na sala. */
+  met(a: VerifiedProfile, b: VerifiedProfile): void;
+  /** Resposta a um pedido de entrada, para o registro de quem pediu. */
+  joinAnswered(
+    requester: string,
+    result: { kind: "approved"; code: string; room: string | null; by: string } | { kind: "denied"; by: string },
+  ): void;
+  getRequests(): Record<string, PendingRequest>;
+  putRequests(requests: Record<string, PendingRequest>): void;
+}
+
+/** Sem registro de pessoas (testes antigos e Worker sem amigos). */
+const NO_EFFECTS: RoomEffects = {
+  code: () => null,
+  met: () => {},
+  joinAnswered: () => {},
+  getRequests: () => ({}),
+  putRequests: () => {},
+};
 
 /** Uma conexão de WebSocket, vista pela lógica da sala. */
 export interface Connection {
@@ -56,6 +98,7 @@ export class RoomState {
     private readonly connections: () => Connection[],
     private readonly newPeerId: () => string,
     private readonly now: () => number = Date.now,
+    private readonly effects: RoomEffects = NO_EFFECTS,
   ) {}
 
   /** Uma conexão nova foi aceita. */
@@ -63,8 +106,11 @@ export class RoomState {
     conn.setAttachment({ member: null, rateWindowStart: this.now(), rateCount: 0 });
   }
 
-  /** Chegou uma mensagem de `conn`. */
-  message(conn: Connection, raw: string | ArrayBuffer): void {
+  /**
+   * Chegou uma mensagem de `conn`. `verified` é o id do Discord da sessão que veio no `join`,
+   * já conferida por quem chama (a conferência é assíncrona e esta lógica não).
+   */
+  message(conn: Connection, raw: string | ArrayBuffer, verified: string | null = null): void {
     const attachment = this.allow(conn);
     if (attachment === null) return;
 
@@ -77,7 +123,7 @@ export class RoomState {
     const me = attachment.member;
     if (msg.type === "join") {
       if (me !== null) return this.fail(conn, "invalid-message", CLOSE.invalid);
-      return this.join(conn, attachment, msg);
+      return this.join(conn, { ...attachment, verified }, msg);
     }
     if (me === null) {
       conn.send({ type: "error", code: "not-joined" });
@@ -102,7 +148,10 @@ export class RoomState {
       }
       case "rename": {
         // Trocar o apelido ou vincular/desvincular o Discord (`discord` ausente: continua a mesma conta).
-        const member = { ...me, name: msg.name, discord: msg.discord === undefined ? me.discord : msg.discord };
+        let discord = msg.discord === undefined ? me.discord : msg.discord;
+        // Conferido pela sessão: a conta não pode virar a de outra pessoa.
+        if (discord && attachment.verified && discord.id !== attachment.verified) discord = me.discord;
+        const member = { ...me, name: msg.name, discord };
         conn.setAttachment({ ...attachment, member });
         this.broadcast({ type: "member-updated", member }, conn);
         return;
@@ -114,6 +163,22 @@ export class RoomState {
           return;
         }
         target[0].send({ type: "signal", from: me.id, payload: msg.payload });
+        return;
+      }
+      case "join-answer": {
+        const requests = this.liveRequests();
+        const request = requests[msg.id];
+        if (!request) return;
+        delete requests[msg.id];
+        this.effects.putRequests(requests);
+        const code = this.effects.code();
+        this.effects.joinAnswered(
+          request.from.id,
+          msg.accept && code
+            ? { kind: "approved", code, room: attachment.room ?? null, by: me.name }
+            : { kind: "denied", by: me.name },
+        );
+        for (const [c] of this.joined()) c.send({ type: "join-request-closed", id: msg.id });
         return;
       }
       case "leave":
@@ -134,7 +199,12 @@ export class RoomState {
   }
 
   private join(conn: Connection, attachment: Attachment, msg: Extract<ClientMessage, { type: "join" }>): void {
-    const { name, protocol, room, discord } = msg;
+    const { name, protocol, room } = msg;
+    // Com sessão conferida, a conta do Discord é a da sessão (a foto só vale se for da mesma conta).
+    const verified = attachment.verified ?? null;
+    const discord = verified
+      ? { id: verified, avatar: msg.discord?.id === verified ? msg.discord.avatar : null }
+      : msg.discord;
     if (protocol !== PROTOCOL_VERSION) return this.fail(conn, "version-mismatch", CLOSE.versionMismatch);
     const others = this.joined().filter(([c]) => c.key !== conn.key);
     if (others.length >= MAX_MEMBERS) return this.fail(conn, "room-full", CLOSE.roomFull);
@@ -150,6 +220,58 @@ export class RoomState {
     conn.setAttachment({ ...attachment, member, room: roomName });
     conn.send({ type: "welcome", you: id, members: others.map(([, m]) => m), room: roomName });
     this.broadcast({ type: "member-joined", member }, conn);
+
+    // Recentes: quem é conferido "conhece" os outros conferidos da sala.
+    if (verified) {
+      const me = { id: verified, name, avatar: discord?.avatar ?? null };
+      const seen = new Set([verified]);
+      for (const [c, m] of others) {
+        const other = c.getAttachment()?.verified;
+        if (!other || seen.has(other)) continue;
+        seen.add(other);
+        this.effects.met(me, { id: other, name: m.name, avatar: m.discord?.id === other ? m.discord.avatar : null });
+      }
+    }
+    // Quem chega vê os pedidos de entrada ainda abertos.
+    for (const [requestId, r] of Object.entries(this.liveRequests())) {
+      conn.send({ type: "join-request", id: requestId, from: r.from });
+    }
+  }
+
+  /**
+   * Um amigo de alguém da sala quer entrar: o pedido aparece para todos os membros, e o
+   * primeiro que responder decide. `false` se a sala está vazia.
+   */
+  requestJoin(from: VerifiedProfile, requestId: string): boolean {
+    const members = this.joined();
+    if (members.length === 0) return false;
+    const requests = this.liveRequests();
+    // Um pedido por pessoa: pedir de novo troca o antigo.
+    for (const [rid, r] of Object.entries(requests)) {
+      if (r.from.id === from.id) {
+        delete requests[rid];
+        for (const [c] of members) c.send({ type: "join-request-closed", id: rid });
+      }
+    }
+    requests[requestId] = { from, at: this.now() };
+    this.effects.putRequests(requests);
+    for (const [c] of members) c.send({ type: "join-request", id: requestId, from });
+    return true;
+  }
+
+  /** Pedidos ainda no prazo (os vencidos somem de todos). */
+  private liveRequests(): Record<string, PendingRequest> {
+    const requests = this.effects.getRequests();
+    let changed = false;
+    for (const [rid, r] of Object.entries(requests)) {
+      if (this.now() - r.at >= JOIN_REQUEST_TTL_MS) {
+        delete requests[rid];
+        changed = true;
+        for (const [c] of this.joined()) c.send({ type: "join-request-closed", id: rid });
+      }
+    }
+    if (changed) this.effects.putRequests(requests);
+    return requests;
   }
 
   /**

@@ -353,3 +353,96 @@ describe("ids", () => {
     expect(randomPeerId()).toMatch(/^[0-9a-f]{16}$/);
   });
 });
+
+describe("amigos na sala (ADR 0011)", () => {
+  const ANA = "111111111111111111";
+  const BETO = "222222222222222222";
+  let met: [string, string][];
+  let answers: { requester: string; result: unknown }[];
+  let requests: Record<string, unknown>;
+
+  beforeEach(() => {
+    met = [];
+    answers = [];
+    requests = {};
+    room = new RoomState(
+      () => conns.filter((c) => c.closedWith === null).map(wrap),
+      () => (ids++).toString(16).padStart(16, "0"),
+      () => now,
+      {
+        code: () => "ABCDEF",
+        met: (a, b) => met.push([a.id, b.id]),
+        joinAnswered: (requester, result) => answers.push({ requester, result }),
+        getRequests: () => structuredClone(requests) as never,
+        putRequests: (r) => (requests = structuredClone(r)),
+      },
+    );
+  });
+
+  function joinVerified(name: string, id: string, discord?: unknown) {
+    const c = connect();
+    room.message(wrap(c), JSON.stringify({ type: "join", name, protocol: 1, discord, session: "x" }), id);
+    return c;
+  }
+
+  it("a conta do Discord de quem é conferido é a da sessão, não a que o app diz", () => {
+    joinVerified("Ana", ANA, { id: BETO, avatar: "a".repeat(32) });
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ members: [{ name: "Ana", discord: { id: ANA, avatar: null } }] });
+  });
+
+  it("conferido não troca a própria conta pela de outra pessoa", () => {
+    const ana = joinVerified("Ana", ANA);
+    const caio = join("Caio");
+    send(ana, { type: "rename", name: "Ana", discord: { id: BETO, avatar: null } });
+    expect(caio.last()).toMatchObject({ member: { discord: { id: ANA } } });
+  });
+
+  it("conferidos na mesma sala viram recentes um do outro", () => {
+    joinVerified("Ana", ANA);
+    join("Caio");
+    joinVerified("Beto", BETO);
+    expect(met).toEqual([[BETO, ANA]]);
+  });
+
+  it("pedido de entrada aparece para todos e o primeiro que responde decide", () => {
+    const ana = join("Ana");
+    const caio = join("Caio");
+    const from = { id: BETO, name: "Beto", avatar: null };
+    expect(room.requestJoin(from, "00000000000000aa")).toBe(true);
+    expect(ana.last()).toEqual({ type: "join-request", id: "00000000000000aa", from });
+    expect(caio.last()).toEqual({ type: "join-request", id: "00000000000000aa", from });
+    send(caio, { type: "join-answer", id: "00000000000000aa", accept: true });
+    expect(answers).toEqual([
+      { requester: BETO, result: { kind: "approved", code: "ABCDEF", room: null, by: "Caio" } },
+    ]);
+    expect(ana.last()).toEqual({ type: "join-request-closed", id: "00000000000000aa" });
+    // Responder de novo não faz nada.
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: false });
+    expect(answers).toHaveLength(1);
+  });
+
+  it("recusar avisa quem pediu", () => {
+    const ana = join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: false });
+    expect(answers[0]).toEqual({ requester: BETO, result: { kind: "denied", by: "Ana" } });
+  });
+
+  it("pedido vence em 60 s, e sala vazia não recebe pedido", () => {
+    expect(room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa")).toBe(false);
+    const ana = join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    now += 60_000;
+    send(ana, { type: "join-answer", id: "00000000000000aa", accept: true });
+    expect(answers).toEqual([]);
+    expect(ana.sent).toContainEqual({ type: "join-request-closed", id: "00000000000000aa" });
+  });
+
+  it("quem chega vê os pedidos ainda abertos", () => {
+    join("Ana");
+    room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ type: "join-request", id: "00000000000000aa" });
+  });
+});

@@ -38,12 +38,22 @@ export interface Member {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string; protocol: number; room: string | null; discord: DiscordUser | null }
+  | {
+      type: "join";
+      name: string;
+      protocol: number;
+      room: string | null;
+      discord: DiscordUser | null;
+      /** Sessão do SquadView (ADR 0011): o servidor confere e o id do Discord passa a valer. */
+      session: string | null;
+    }
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
   | { type: "rename"; name: string; discord?: DiscordUser | null }
   | { type: "status"; live: boolean; muted: boolean; deafened: boolean }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
+  /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
+  | { type: "join-answer"; id: string; accept: boolean }
   | { type: "leave" };
 
 export type ErrorCode =
@@ -56,6 +66,10 @@ export type ServerMessage =
   | { type: "member-updated"; member: Member }
   | { type: "member-left"; id: PeerId }
   | { type: "signal"; from: PeerId; payload: Record<string, unknown> }
+  /** Um amigo de alguém da sala quer entrar; qualquer membro aceita ou recusa. */
+  | { type: "join-request"; id: string; from: { id: string; name: string; avatar: string | null } }
+  /** O pedido foi respondido (por alguém) ou venceu: some de todos. */
+  | { type: "join-request-closed"; id: string }
   | { type: "error"; code: ErrorCode };
 
 const encoder = new TextEncoder();
@@ -74,6 +88,8 @@ export function cleanName(value: unknown): string | null {
 }
 
 export const PEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+/** Id de um pedido de entrada (como o peerId). */
+export const REQUEST_ID_PATTERN = PEER_ID_PATTERN;
 /** Snowflake do Discord. */
 const DISCORD_ID_PATTERN = /^[0-9]{15,21}$/;
 /** Hash da foto do Discord (`a_` na frente quando é animada). */
@@ -119,7 +135,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // Conta do Discord: opcional (apps até a 0.2.0 não mandam).
       const discord = parseDiscord(data.discord);
       if (discord === false) return null;
-      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null };
+      const session = data.session === undefined || data.session === null ? null : data.session;
+      if (session !== null && (typeof session !== "string" || session.length > 512)) return null;
+      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session };
     }
     case "room": {
       const name = cleanName(data.name);
@@ -145,6 +163,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (byteLength(JSON.stringify(data.payload)) > MAX_SIGNAL_PAYLOAD_BYTES) return null;
       return { type: "signal", to: data.to, payload: data.payload };
     }
+    case "join-answer":
+      if (typeof data.id !== "string" || !REQUEST_ID_PATTERN.test(data.id) || typeof data.accept !== "boolean")
+        return null;
+      return { type: "join-answer", id: data.id, accept: data.accept };
     case "leave":
       return { type: "leave" };
     default:

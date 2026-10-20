@@ -59,6 +59,7 @@ describe("mensagens do cliente", () => {
       protocol: 1,
       room: null,
       discord: null,
+      session: null,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
@@ -66,6 +67,7 @@ describe("mensagens do cliente", () => {
       protocol: 1,
       room: "Galera do LoL",
       discord: null,
+      session: null,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });
