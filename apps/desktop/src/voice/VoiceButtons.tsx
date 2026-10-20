@@ -13,7 +13,7 @@ export function MicButton(props: { large?: boolean }) {
       large={props.large}
       off={off}
       label={off ? "Ativar microfone" : "Silenciar microfone"}
-      icon={off ? <MicOff size={props.large ? 22 : 18} /> : <Mic size={props.large ? 22 : 18} />}
+      icon={off ? <MicOff size={props.large ? 20 : 18} /> : <Mic size={props.large ? 20 : 18} />}
       onClick={() => void setMuted(!off)}
       menuLabel="Opções de entrada"
       onOpenMenu={() => void loadDevices()}
@@ -61,7 +61,7 @@ export function DeafenButton(props: { large?: boolean }) {
       off={prefs.deafened}
       label={prefs.deafened ? "Ativar áudio" : "Ensurdecer"}
       icon={
-        prefs.deafened ? <HeadphoneOff size={props.large ? 22 : 18} /> : <Headphones size={props.large ? 22 : 18} />
+        prefs.deafened ? <HeadphoneOff size={props.large ? 20 : 18} /> : <Headphones size={props.large ? 20 : 18} />
       }
       onClick={() => void setDeafened(!prefs.deafened)}
       menuLabel="Opções de saída"
@@ -99,7 +99,7 @@ function SplitButton(props: {
     : props.large
       ? "bg-surface-3 text-text hover:bg-surface-hover"
       : "text-text-muted hover:bg-surface-hover hover:text-text";
-  const height = props.large ? "h-12" : "h-8";
+  const height = props.large ? "h-10" : "h-8";
   return (
     <div className={`flex items-center rounded-md ${props.large ? "bg-surface-3" : ""}`}>
       <Tooltip label={props.label} side="top">
@@ -108,7 +108,7 @@ function SplitButton(props: {
           aria-label={props.label}
           aria-pressed={props.off}
           onClick={props.onClick}
-          className={`grid ${height} ${props.large ? "w-12" : "w-8"} place-items-center rounded-l-md transition-colors ${tone}`}
+          className={`grid ${height} ${props.large ? "w-10" : "w-8"} place-items-center rounded-l-md transition-colors ${tone}`}
         >
           {props.icon}
         </button>

@@ -84,21 +84,21 @@ export function VoiceRoom() {
         <StreamDialog
           trigger={
             <ControlButton label="Transmitir minha tela">
-              <MonitorUp size={22} />
+              <MonitorUp size={20} />
             </ControlButton>
           }
         />
         <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
-          <UserPlus size={22} />
+          <UserPlus size={20} />
         </ControlButton>
         <Tooltip label="Sair da sala" side="top">
           <button
             type="button"
             aria-label="Sair da sala"
             onClick={() => void leave()}
-            className="grid h-12 w-16 place-items-center rounded-md bg-live text-white transition-colors hover:bg-live/85"
+            className="grid h-10 w-14 place-items-center rounded-md bg-live text-white transition-colors hover:bg-live/85"
           >
-            <PhoneOff size={22} />
+            <PhoneOff size={20} />
           </button>
         </Tooltip>
       </nav>
@@ -167,7 +167,7 @@ function ControlButton(props: { label: string; onClick?: () => void; children: R
         type="button"
         aria-label={props.label}
         onClick={props.onClick}
-        className="grid size-12 place-items-center rounded-md bg-surface-3 text-text transition-colors hover:bg-surface-hover"
+        className="grid size-10 place-items-center rounded-md bg-surface-3 text-text transition-colors hover:bg-surface-hover"
       >
         {props.children}
       </button>
