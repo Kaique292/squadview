@@ -269,3 +269,42 @@ describe("avisos na tela", () => {
     expect(useFriendsStore.getState().open).toBe(false);
   });
 });
+
+describe("amigo que já está na nossa sala", () => {
+  const ANA_IN_ROOM = { ...ANA, direct: false, presence: { ...ONLINE, inRoom: true, room: "hwemnaso" } };
+  const inRoom = () =>
+    useRoomStore.setState({
+      code: "B8RJ2Q",
+      members: [
+        { id: "p1", name: "Kaique", live: false, discord: { id: ME.id, avatar: null } },
+        { id: "p2", name: "Ana", live: false, discord: { id: ANA.id, avatar: null } },
+      ],
+    });
+
+  it("mostra 'Na sua sala' no lugar de Entrar, e Chamar para a sala fica desativado", () => {
+    inRoom();
+    const page = openFriends();
+    state({ friends: [ANA_IN_ROOM] });
+    const linha = within(page).getByText("Na sua sala").closest("li")!;
+    expect(within(linha).queryByRole("button", { name: "Entrar" })).toBeNull();
+    const chamar = within(linha).getByRole("button", { name: "Já está na sua sala" });
+    expect(chamar).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(chamar);
+    expect(invoke).not.toHaveBeenCalledWith("friends_action", { action: { type: "invite", id: ANA.id } });
+  });
+
+  it("pedido aprovado para a sala em que já estamos não entra de novo (duplicava a gente)", async () => {
+    inRoom();
+    emit("friends-event", { type: "join-result", result: { kind: "approved", code: "B8RJ2Q", room: null, by: "Ana" } });
+    await waitFor(() => expect(lastToast()?.title).toBe("Entrando na sala"));
+    expect(invoke).not.toHaveBeenCalledWith("room_join", expect.anything());
+  });
+
+  it("o pedido de entrada some quando a pessoa já entrou (outro membro aceitou)", () => {
+    act(() => useRoomStore.setState({ code: "B8RJ2Q", members: [{ id: "p1", name: "Kaique", live: false }] }));
+    emit("room-join-request", { id: "r1", from: ANA });
+    expect(useFriendsStore.getState().joinRequests).toHaveLength(1);
+    act(() => inRoom());
+    expect(useFriendsStore.getState().joinRequests).toEqual([]);
+  });
+});
