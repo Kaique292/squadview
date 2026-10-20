@@ -1,5 +1,6 @@
 //! Ponto de entrada do app desktop: liga a interface (React) ao núcleo em Rust.
 
+mod crash;
 mod diagnostics;
 mod discord;
 mod invite;
@@ -17,22 +18,31 @@ fn app_version() -> &'static str {
 /// A interface terminou de abrir: fecha a splash e mostra a janela principal.
 #[tauri::command]
 fn app_ready(app: tauri::AppHandle) {
-    show_main(&app);
+    show_main(&app, "pronta");
 }
 
-fn show_main(app: &tauri::AppHandle) {
+/// Mostra a janela principal (mesmo escondida ou minimizada) e fecha a splash. `reason` vai para
+/// o registro: ajuda a entender quando a interface não avisou que estava pronta.
+fn show_main(app: &tauri::AppHandle, reason: &str) {
     use tauri::Manager;
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    if main.is_visible().unwrap_or(false) && reason == "rede-de-seguranca" {
+        return;
     }
+    let _ = main.show();
+    let _ = main.unminimize();
+    let _ = main.set_focus();
     if let Some(splash) = app.get_webview_window("splash") {
         let _ = splash.close();
     }
+    app.state::<diagnostics::Diagnostics>()
+        .write("window-shown", &serde_json::json!({ "reason": reason }));
 }
 
 /// Se a interface travar antes de avisar, a janela principal aparece mesmo assim.
-const SPLASH_FAILSAFE: std::time::Duration = std::time::Duration::from_secs(15);
+const SPLASH_FAILSAFE: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// Convites `squadview://`: o link que abriu o app e os que chegarem com ele aberto.
 fn setup_deep_links(app: &tauri::App) {
@@ -53,6 +63,9 @@ fn setup_deep_links(app: &tauri::App) {
 
 /// Inicia o app Tauri.
 pub fn run() {
+    // Falha fatal: vai para o crash.log e aparece numa caixa de mensagem (sem console, o app
+    // fecharia em silêncio, só com a ampulheta no cursor).
+    crash::install();
     // Provedor de criptografia do rustls para o HTTPS (login do Discord). Ignora se já houver um.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -61,14 +74,19 @@ pub fn run() {
     // No `yarn dev` ficam liberadas duas instâncias, para testar transmitir e assistir no mesmo PC.
     #[cfg(not(debug_assertions))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        use tauri::Manager;
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.unminimize();
-            let _ = main.set_focus();
-        }
+        // Mostra (e não só foca): se a janela ficou escondida por uma abertura travada, abrir
+        // o app de novo precisa trazê-la de volta.
+        show_main(app, "aberto-de-novo");
     }));
 
     builder
+        // A splash abre escondida e aparece assim que a página dela carrega (sem depender do
+        // JavaScript dela, que pode falhar).
+        .on_page_load(|webview, payload| {
+            if webview.label() == "splash" && payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.window().show();
+            }
+        })
         .plugin(tauri_plugin_deep_link::init())
         // Atualização automática assinada (ver docs/adr/0006-atualizacao-automatica.md).
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -85,7 +103,7 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(SPLASH_FAILSAFE);
-                show_main(&handle);
+                show_main(&handle, "rede-de-seguranca");
             });
             Ok(())
         })
@@ -126,7 +144,7 @@ pub fn run() {
             preview::stop_preview,
         ])
         .run(tauri::generate_context!())
-        .expect("falha ao iniciar o SquadView");
+        .unwrap_or_else(|e| crash::fatal(&format!("O SquadView não conseguiu abrir: {e}")));
 }
 
 #[cfg(test)]
