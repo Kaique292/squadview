@@ -52,3 +52,26 @@ impl fmt::Display for SessionError {
 }
 
 impl std::error::Error for SessionError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cada_erro_de_sessao_explica_o_que_falhou_para_o_usuario() {
+        assert_eq!(
+            SessionError::Gpu("sem placa".into()).to_string(),
+            "Não deu para usar a placa de vídeo: sem placa"
+        );
+        assert_eq!(
+            SessionError::Capture("janela fechou".into()).to_string(),
+            "Não deu para capturar essa tela ou janela: janela fechou"
+        );
+        assert_eq!(
+            SessionError::Encoder("ocupado".into()).to_string(),
+            "Não deu para iniciar o encoder de vídeo: ocupado"
+        );
+        let erro: Box<dyn std::error::Error> = Box::new(SessionError::Gpu("x".into()));
+        assert!(erro.source().is_none());
+    }
+}

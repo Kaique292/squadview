@@ -216,3 +216,43 @@ fn nv12_texture(gpu: &Gpu, size: Size) -> windows::core::Result<ID3D11Texture2D>
     unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut texture))? };
     Ok(texture.expect("CreateTexture2D sem textura"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Para rodar: `cargo test -p sv-session --lib sender -- --ignored` numa máquina com placa de
+    /// vídeo (NVENC/AMF/QSV) e uma sessão de desktop.
+    #[test]
+    #[ignore = "precisa de placa de vídeo com encoder e de uma sessão de desktop"]
+    fn transmite_o_monitor_principal_e_comeca_por_um_keyframe() {
+        let gpu = Gpu::new().unwrap();
+        let monitor = sv_capture::list_sources()
+            .into_iter()
+            .find(|s| matches!(s.id, CaptureSource::Monitor(_)))
+            .expect("um monitor");
+        let (tx, rx) = mpsc::channel();
+        let sender = VideoSender::start(&gpu, monitor.id, StreamQuality::DEFAULT, move |e| {
+            let _ = tx.send(e);
+        })
+        .unwrap();
+        assert!(format!("{sender:?}").starts_with("VideoSender"));
+        let mut started = None;
+        let mut first_frame = None;
+        while started.is_none() || first_frame.is_none() {
+            match rx.recv_timeout(Duration::from_secs(5)).expect("nada em 5 s") {
+                SenderEvent::Started(info) => started = Some(info),
+                SenderEvent::Frame(f) if first_frame.is_none() => first_frame = Some(f),
+                SenderEvent::Failed(e) => panic!("encoder falhou: {e}"),
+                _ => {}
+            }
+        }
+        let info = started.unwrap();
+        assert!(info.size.width > 0 && !info.encoder.is_empty(), "{info:?}");
+        assert!(first_frame.unwrap().keyframe, "o primeiro frame é keyframe");
+        sender.request_keyframe();
+    }
+}

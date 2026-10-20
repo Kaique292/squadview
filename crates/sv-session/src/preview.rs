@@ -48,6 +48,73 @@ struct Shared {
     seq: std::sync::atomic::AtomicU32,
 }
 
+impl Shared {
+    fn new(
+        target: WindowTarget,
+        tap: Option<Arc<dyn StreamTap>>,
+        on_stats: Box<dyn FnMut(StreamStats) + Send>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            meter: Mutex::new(StatsMeter::new()),
+            base: Mutex::new(StreamStats::default()),
+            viewer: Mutex::new(None),
+            audio: Mutex::new(None),
+            closed: AtomicBool::new(false),
+            on_stats: Mutex::new(on_stats),
+            target,
+            surface: Mutex::new(Surface::default()),
+            tap,
+            seq: std::sync::atomic::AtomicU32::new(0),
+        })
+    }
+
+    /// O som da prévia se perdeu ou a saída não abriu.
+    fn on_audio_event(&self, event: ReceiverEvent) {
+        match event {
+            ReceiverEvent::Lost => lock(&self.meter).record_audio_lost(),
+            ReceiverEvent::PlaybackFailed(e) => {
+                lock(&self.base).audio_error = Some(format!("não deu para tocar o som da prévia: {e}"));
+            }
+        }
+    }
+
+    /// Um pacote do áudio do jogo saiu do encoder: mede, entrega à sala e à prévia.
+    fn on_audio_packet(&self, packet: AudioPacket) {
+        lock(&self.meter).record_audio(packet.data.len(), packet.peak);
+        if let Some(tap) = &self.tap {
+            tap.audio(&packet);
+        }
+        if let Some(receiver) = lock(&self.audio).as_ref() {
+            receiver.submit(packet);
+        }
+    }
+
+    /// O encoder começou: as estatísticas passam a ter o tamanho e o nome dele.
+    fn stream_started(&self, info: &StreamInfo) {
+        if let Some(tap) = &self.tap {
+            tap.started(info);
+        }
+        let mut base = lock(&self.base);
+        *base = StreamStats {
+            width: info.size.width,
+            height: info.size.height,
+            encoder: info.encoder.clone(),
+            // O áudio começa antes do primeiro quadro: preserva o que ele já registrou.
+            audio_active: base.audio_active,
+            audio_error: base.audio_error.take(),
+            ..Default::default()
+        };
+    }
+
+    fn on_viewer_event(&self, sender: &Weak<Mutex<Option<VideoSender>>>, event: ViewerEvent) {
+        match event {
+            ViewerEvent::Presented { latency_us } => lock(&self.meter).record_presented(latency_us),
+            ViewerEvent::NeedKeyframe => KeyframeHandle(sender.clone()).request(),
+            ViewerEvent::Closed | ViewerEvent::Failed(_) => self.closed.store(true, Ordering::Relaxed),
+        }
+    }
+}
+
 /// Quem mais recebe o stream além da prévia (a sala: os amigos assistindo).
 pub trait StreamTap: Send + Sync + 'static {
     /// O encoder começou: tamanho e fps do vídeo que vai sair.
@@ -94,18 +161,7 @@ impl LocalPreview {
         on_stats: impl FnMut(StreamStats) + Send + 'static,
     ) -> Result<Self, SessionError> {
         let gpu = Gpu::new().map_err(|e| SessionError::Gpu(e.to_string()))?;
-        let state = Arc::new(Shared {
-            meter: Mutex::new(StatsMeter::new()),
-            base: Mutex::new(StreamStats::default()),
-            viewer: Mutex::new(None),
-            audio: Mutex::new(None),
-            closed: AtomicBool::new(false),
-            on_stats: Mutex::new(Box::new(on_stats)),
-            target,
-            surface: Mutex::new(Surface::default()),
-            tap,
-            seq: std::sync::atomic::AtomicU32::new(0),
-        });
+        let state = Shared::new(target, tap, Box::new(on_stats));
         let sender_slot: Arc<Mutex<Option<VideoSender>>> = Arc::new(Mutex::new(None));
 
         let events_state = state.clone();
@@ -181,12 +237,8 @@ impl Drop for LocalPreview {
 fn start_audio(state: &Arc<Shared>, pid: u32) -> Option<AudioSender> {
     let receiver_state = Arc::downgrade(state);
     let receiver = AudioReceiver::start(false, move |event| {
-        let Some(state) = receiver_state.upgrade() else { return };
-        match event {
-            ReceiverEvent::Lost => lock(&state.meter).record_audio_lost(),
-            ReceiverEvent::PlaybackFailed(e) => {
-                lock(&state.base).audio_error = Some(format!("não deu para tocar o som da prévia: {e}"));
-            }
+        if let Some(state) = receiver_state.upgrade() {
+            state.on_audio_event(event);
         }
     });
     let receiver = match receiver {
@@ -200,13 +252,8 @@ fn start_audio(state: &Arc<Shared>, pid: u32) -> Option<AudioSender> {
 
     let sender_state = Arc::downgrade(state);
     match AudioSender::start(pid, move |packet| {
-        let Some(state) = sender_state.upgrade() else { return };
-        lock(&state.meter).record_audio(packet.data.len(), packet.peak);
-        if let Some(tap) = &state.tap {
-            tap.audio(&packet);
-        }
-        if let Some(receiver) = lock(&state.audio).as_ref() {
-            receiver.submit(packet);
+        if let Some(state) = sender_state.upgrade() {
+            state.on_audio_packet(packet);
         }
     }) {
         Ok(sender) => {
@@ -224,20 +271,7 @@ fn start_audio(state: &Arc<Shared>, pid: u32) -> Option<AudioSender> {
 fn on_sender_event(state: &Arc<Shared>, sender: &Weak<Mutex<Option<VideoSender>>>, event: SenderEvent) {
     match event {
         SenderEvent::Started(info) => {
-            if let Some(tap) = &state.tap {
-                tap.started(&info);
-            }
-            let mut base = lock(&state.base);
-            *base = StreamStats {
-                width: info.size.width,
-                height: info.size.height,
-                encoder: info.encoder.clone(),
-                // O áudio começa antes do primeiro quadro: preserva o que ele já registrou.
-                audio_active: base.audio_active,
-                audio_error: base.audio_error.take(),
-                ..Default::default()
-            };
-            drop(base);
+            state.stream_started(&info);
             let viewer_state = Arc::downgrade(state);
             let sender = sender.clone();
             let window_state = Arc::downgrade(state);
@@ -250,17 +284,8 @@ fn on_sender_event(state: &Arc<Shared>, sender: &Weak<Mutex<Option<VideoSender>>
                     lock(&state.surface).attach(control);
                 },
                 move |event| {
-                    let Some(state) = viewer_state.upgrade() else { return };
-                    match event {
-                        ViewerEvent::Presented { latency_us } => lock(&state.meter).record_presented(latency_us),
-                        ViewerEvent::NeedKeyframe => {
-                            if let Some(slot) = sender.upgrade()
-                                && let Some(s) = lock(&slot).as_ref()
-                            {
-                                s.request_keyframe();
-                            }
-                        }
-                        ViewerEvent::Closed | ViewerEvent::Failed(_) => state.closed.store(true, Ordering::Relaxed),
+                    if let Some(state) = viewer_state.upgrade() {
+                        state.on_viewer_event(&sender, event);
                     }
                 },
             );
@@ -283,5 +308,155 @@ fn on_sender_event(state: &Arc<Shared>, sender: &Weak<Mutex<Option<VideoSender>>
         SenderEvent::Captured => lock(&state.meter).record_source_frame(),
         SenderEvent::Dropped => lock(&state.meter).record_dropped(),
         SenderEvent::Failed(_) => state.closed.store(true, Ordering::Relaxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use sv_gpu::Size;
+
+    use super::*;
+
+    /// O que a sala (o `tap`) recebeu da prévia.
+    #[derive(Default)]
+    struct Tapped {
+        started: Vec<StreamInfo>,
+        video: Vec<u32>,
+        audio: Vec<u32>,
+    }
+
+    struct FakeTap(Mutex<Tapped>);
+
+    impl StreamTap for FakeTap {
+        fn started(&self, info: &StreamInfo) {
+            lock(&self.0).started.push(info.clone());
+        }
+        fn video(&self, seq: u32, _frame: &EncodedFrame) {
+            lock(&self.0).video.push(seq);
+        }
+        fn audio(&self, packet: &AudioPacket) {
+            lock(&self.0).audio.push(packet.seq);
+        }
+    }
+
+    type Seen = Arc<Mutex<Vec<StreamStats>>>;
+
+    fn state(tap: Option<Arc<dyn StreamTap>>) -> (Arc<Shared>, Seen) {
+        let stats: Seen = Arc::default();
+        let sink = stats.clone();
+        let target = WindowTarget::Standalone { title: "teste".into() };
+        (Shared::new(target, tap, Box::new(move |s| lock(&sink).push(s))), stats)
+    }
+
+    fn frame(bytes: usize) -> EncodedFrame {
+        EncodedFrame {
+            data: vec![0; bytes],
+            keyframe: false,
+            timestamp_us: clock::now_us(),
+            encode_us: 4_000,
+        }
+    }
+
+    fn info() -> StreamInfo {
+        StreamInfo {
+            size: Size::new(1280, 720),
+            fps: 60,
+            encoder: "NVENC".into(),
+        }
+    }
+
+    fn no_sender() -> Weak<Mutex<Option<VideoSender>>> {
+        Weak::new()
+    }
+
+    #[test]
+    fn frames_da_previa_vao_para_a_sala_numerados_e_viram_estatisticas() {
+        let tap = Arc::new(FakeTap(Mutex::default()));
+        let (state, stats) = state(Some(tap.clone()));
+        state.stream_started(&info());
+        for _ in 0..3 {
+            on_sender_event(&state, &no_sender(), SenderEvent::Captured);
+        }
+        on_sender_event(&state, &no_sender(), SenderEvent::Dropped);
+        on_sender_event(&state, &no_sender(), SenderEvent::Frame(frame(5_000)));
+        std::thread::sleep(Duration::from_micros(StatsMeter::WINDOW_US + 30_000));
+        on_sender_event(&state, &no_sender(), SenderEvent::Frame(frame(5_000)));
+
+        let tapped = lock(&tap.0);
+        assert_eq!(tapped.started, vec![info()]);
+        assert_eq!(tapped.video, vec![0, 1]);
+        drop(tapped);
+        let got = lock(&stats).clone();
+        assert_eq!(got.len(), 1);
+        let s = &got[0];
+        assert_eq!((s.width, s.height, s.encoder.as_str()), (1280, 720, "NVENC"));
+        assert_eq!(s.dropped, 1);
+        assert!(s.source_fps > 0.0);
+        assert_eq!(s.encode_ms, 4.0);
+        assert!(!state.closed.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn encoder_que_falha_fecha_a_previa() {
+        let (state, _) = state(None);
+        on_sender_event(&state, &no_sender(), SenderEvent::Failed("sem NVENC".into()));
+        assert!(state.closed.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn janela_fechada_ou_com_erro_fecha_a_previa() {
+        for event in [ViewerEvent::Closed, ViewerEvent::Failed("perdeu o device".into())] {
+            let (state, _) = state(None);
+            state.on_viewer_event(&no_sender(), ViewerEvent::NeedKeyframe);
+            assert!(!state.closed.load(Ordering::Relaxed), "pedir keyframe não fecha");
+            state.on_viewer_event(&no_sender(), event);
+            assert!(state.closed.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn audio_comeca_antes_do_video_e_continua_nas_estatisticas() {
+        let tap = Arc::new(FakeTap(Mutex::default()));
+        let (state, stats) = state(Some(tap.clone()));
+        lock(&state.base).audio_active = true;
+        state.on_audio_event(ReceiverEvent::Lost);
+        state.on_audio_event(ReceiverEvent::PlaybackFailed("sem saída".into()));
+        *lock(&state.audio) = Some(AudioReceiver::start(false, |_| {}).unwrap());
+        for seq in 0..3 {
+            state.on_audio_packet(AudioPacket {
+                seq,
+                data: vec![0; 300],
+                peak: 0.4,
+                timestamp_us: 0,
+            });
+        }
+        // O primeiro quadro chega depois: o áudio já registrado não se perde.
+        state.stream_started(&info());
+        state.on_viewer_event(&no_sender(), ViewerEvent::Presented { latency_us: 16_000 });
+        on_sender_event(&state, &no_sender(), SenderEvent::Frame(frame(100)));
+        std::thread::sleep(Duration::from_micros(StatsMeter::WINDOW_US + 30_000));
+        on_sender_event(&state, &no_sender(), SenderEvent::Frame(frame(100)));
+
+        assert_eq!(lock(&tap.0).audio, vec![0, 1, 2]);
+        let s = lock(&stats)[0].clone();
+        assert!(s.audio_active);
+        assert_eq!(
+            s.audio_error.as_deref(),
+            Some("não deu para tocar o som da prévia: sem saída")
+        );
+        assert_eq!((s.audio_lost, s.audio_level), (1, 0.4));
+        assert!(s.audio_kbps > 0);
+        assert_eq!(s.latency_ms, 16.0);
+    }
+
+    #[test]
+    fn pedir_keyframe_sem_encoder_nao_faz_nada() {
+        KeyframeHandle::detached().request();
+        let empty: Arc<Mutex<Option<VideoSender>>> = Arc::new(Mutex::new(None));
+        let handle = KeyframeHandle(Arc::downgrade(&empty));
+        handle.clone().request();
+        assert_eq!(format!("{handle:?}"), "KeyframeHandle");
     }
 }

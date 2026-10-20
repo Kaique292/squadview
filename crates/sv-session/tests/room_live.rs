@@ -1,6 +1,6 @@
 //! Dois membros numa sala de verdade (Worker local), sem GPU: um fica ao vivo e o outro assiste.
-//! Rode com o Worker local ligado (`yarn workspace @squadview/signaling dev`):
-//! `cargo test -p sv-session --test room_live -- --ignored`
+//! Roda pelo `yarn test:rs`, que sobe o Worker local (`scripts/with-worker.mjs`) e define
+//! `SQUADVIEW_SIGNALING_URL`; sem ela, é pulado.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -26,9 +26,20 @@ fn url() -> String {
     std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into())
 }
 
+/// Com o Worker local (pelo `yarn test:rs`)? Senão o teste é pulado.
+fn has_worker() -> bool {
+    let ok = std::env::var("SQUADVIEW_SIGNALING_URL").is_ok();
+    if !ok {
+        eprintln!("pulado: rode pelo `yarn test:rs` (sobe o Worker local)");
+    }
+    ok
+}
+
 #[test]
-#[ignore = "precisa do Worker de sinalização rodando"]
 fn um_amigo_assiste_o_outro_pela_sala() {
+    if !has_worker() {
+        return;
+    }
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
     let ana = Room::join(&url(), &code, JoinAs::named("Ana"), None, None, move |u| {
