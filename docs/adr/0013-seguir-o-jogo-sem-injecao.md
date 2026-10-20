@@ -1,6 +1,6 @@
 # 0013. Seguir o jogo entre janelas e para o monitor, sem injeção
 
-- **Status:** proposta
+- **Status:** aceita
 - **Data:** 2026-10-20
 
 ## Contexto
