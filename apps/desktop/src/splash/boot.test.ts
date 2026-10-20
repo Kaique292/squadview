@@ -1,4 +1,4 @@
-import { MIN_SPLASH_MS, STEP_TIMEOUT_MS, type SplashProgress, boot } from "./boot";
+import { FINISH_MS, MIN_SPLASH_MS, STEP_TIMEOUT_MS, type SplashProgress, boot } from "./boot";
 
 function clock() {
   let t = 0;
@@ -34,6 +34,20 @@ describe("abertura com splash", () => {
     const c = clock();
     await boot({ steps: [], progress: () => {}, ready: async () => {}, ...c });
     expect(c.now()).toBe(MIN_SPLASH_MS);
+  });
+
+  it("etapas demoradas: espera a barra chegar ao fim antes de fechar a splash", async () => {
+    const c = clock();
+    let done = -1;
+    await boot({
+      steps: [{ text: "Voltando para a sala…", run: () => c.sleep(MIN_SPLASH_MS + 1000) }],
+      progress: (p) => {
+        if (p.value === 1) done = c.now();
+      },
+      ready: async () => {},
+      ...c,
+    });
+    expect(c.now() - done).toBeGreaterThanOrEqual(FINISH_MS);
   });
 
   it("uma etapa que falha não impede o app de abrir", async () => {
