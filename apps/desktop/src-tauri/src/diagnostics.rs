@@ -7,7 +7,7 @@
 //! arquivos para colar numa conversa do Discord e mandar para quem vai analisar.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -20,8 +20,18 @@ pub const SYSTEM_EVENT: &str = "system-load";
 /// Quantos registros vão juntos ao copiar (a sessão atual e as anteriores).
 const COPY_COUNT: usize = 3;
 
+/// Registrado no `Builder` (antes de qualquer janela ou plugin), vazio, e configurado no `setup`.
+/// Assim nenhum caminho que chegue cedo (como o aviso de "abriram o app de novo" durante uma
+/// atualização) encontra o estado faltando: no pior caso, só não anota.
+#[derive(Default)]
 pub struct Diagnostics {
     log: Mutex<Option<SessionLog>>,
+    /// Pasta dos registros e arquivo da preferência (definidos no `setup`).
+    paths: OnceLock<Paths>,
+}
+
+#[derive(Default)]
+struct Paths {
     /// Pasta dos registros (`None` se não deu para descobrir).
     dir: Option<PathBuf>,
     /// Arquivo com a preferência ligado/desligado.
@@ -42,6 +52,22 @@ pub struct DiagnosticsStatus {
 }
 
 impl Diagnostics {
+    /// Configura as pastas e abre o registro, se estiver ligado. Só a primeira chamada vale.
+    fn init(&self, dir: Option<PathBuf>, settings: Option<PathBuf>) {
+        let enabled = load_enabled(settings.as_deref());
+        if self.paths.set(Paths { dir, settings }).is_ok() && enabled {
+            *self.lock() = open_log(self.dir());
+        }
+    }
+
+    fn dir(&self) -> Option<&Path> {
+        self.paths.get().and_then(|p| p.dir.as_deref())
+    }
+
+    fn settings(&self) -> Option<&Path> {
+        self.paths.get().and_then(|p| p.settings.as_deref())
+    }
+
     pub fn write(&self, kind: &str, data: &impl Serialize) {
         if let Some(log) = self.lock().as_mut() {
             log.write(kind, data);
@@ -66,12 +92,11 @@ impl Diagnostics {
         if enabled == log.is_some() {
             return;
         }
-        *log = if enabled { open_log(self.dir.as_deref()) } else { None };
+        *log = if enabled { open_log(self.dir()) } else { None };
     }
 
     fn recent(&self) -> Vec<PathBuf> {
-        self.dir
-            .as_deref()
+        self.dir()
             .map(|d| sv_session::recent_logs(d, COPY_COUNT))
             .unwrap_or_default()
     }
@@ -113,13 +138,11 @@ pub fn setup(app: &App) {
     let base = app.path().app_local_data_dir().ok();
     let dir = base.as_ref().map(|d| d.join("logs"));
     let settings = base.as_ref().map(|d| d.join("diagnostics.json"));
-    let enabled = load_enabled(settings.as_deref());
-    let log = if enabled { open_log(dir.as_deref()) } else { None };
-    app.manage(Diagnostics {
-        log: Mutex::new(log),
-        dir,
-        settings,
-    });
+    // O estado já existe (registrado no `Builder`); se faltar por engano, registra aqui.
+    if app.try_state::<Diagnostics>().is_none() {
+        app.manage(Diagnostics::default());
+    }
+    app.state::<Diagnostics>().init(dir, settings);
     sample_system(app.handle().clone());
 }
 
@@ -143,7 +166,7 @@ pub fn diagnostics_status(app: AppHandle) -> DiagnosticsStatus {
 #[tauri::command]
 pub fn set_diagnostics_enabled(app: AppHandle, enabled: bool) -> Result<DiagnosticsStatus, String> {
     let diagnostics = app.state::<Diagnostics>();
-    if let Some(path) = &diagnostics.settings {
+    if let Some(path) = diagnostics.settings() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
