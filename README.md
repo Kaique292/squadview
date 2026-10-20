@@ -35,7 +35,7 @@
 </p>
 
 > [!NOTE]
-> **Versão 0.3: voz e amigos.** A sala virou um canal de voz como o do Discord, e agora dá para ver os amigos online e pedir para entrar na sala deles. Um amigo transmite e o resto assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
+> **Versão 0.4: jogue do jeito que quiser.** Transmita em janela, sem bordas ou tela cheia: o app acompanha o jogo sozinho do cliente para a partida. A voz chega no mesmo volume do Discord, a página inicial é a dos amigos e o app se atualiza sozinho ao abrir. Um amigo transmite e o resto assiste dentro do app, direto de PC para PC. O repasse entre membros (a sala distribuindo o vídeo sozinha) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
 
 ## ✨ O que ele faz
 
@@ -51,7 +51,7 @@
 - **Salas com nome e código.** Dê um nome à sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
 - **Integração com o Discord.** Entre com a sua conta: seu nome e sua foto aparecem para toda a sala. Mostre no seu perfil do Discord que está numa sala, transmitindo ou assistindo, com o botão "Entrar na sala" se quiser.
 - **Visual que você já conhece.** Interface na organização do Discord, com identidade própria, configurações por categoria e efeito de vidro ajustável.
-- **Instala e atualiza como o Discord.** Sem assistente: o instalador termina em segundos e já abre o app. Quando sai versão nova, a setinha verde aparece na barra de título; um clique e o app se atualiza, com pacotes assinados. Se você estiver numa sala, ele volta sozinho para ela, e mostra as novidades da versão.
+- **Instala e atualiza como o Discord.** Sem assistente: o instalador termina em segundos e já abre o app. Se tiver versão nova quando você abre o app, ele já se atualiza ali, com uma barra para o download e outra para a instalação. Com o app aberto, a setinha verde aparece na barra de título; um clique e ele se atualiza. Os pacotes são assinados. Se você estiver numa sala, ele volta sozinho para ela, e mostra as novidades da versão.
 - **Registro de desempenho só no seu PC.** Pode ser desligado; um botão copia os arquivos para você mandar a quem for ajudar.
 
 **Em breve**
