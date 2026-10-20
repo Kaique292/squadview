@@ -27,3 +27,4 @@
 | [0009](adr/0009-login-com-discord.md)                     | Login com o Discord por OAuth2 com PKCE, sem segredo no app                         |
 | [0010](adr/0010-chat-de-voz-na-sala.md)                   | Chat de voz na sala: malha QUIC, Opus mono e supressão de ruído                     |
 | [0011](adr/0011-amigos-e-presenca.md)                     | Amigos, presença e pedido para entrar na sala, com identidade conferida pelo Worker |
+| [0012](adr/0012-malha-em-enxame.md)                       | Malha em enxame: várias árvores, paridade e repassador na nuvem de reserva          |

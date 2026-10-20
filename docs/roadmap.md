@@ -43,12 +43,18 @@ Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline func
 - [ ] Hole punching UDP e fallback por terceiro membro
 - [ ] Envio de mídia com NACK e pedido de keyframe
 
-## Fase 3 — Malha da sala
+## Fase 3 — Malha da sala ([ADR 0012](adr/0012-malha-em-enxame.md))
 
-- [ ] `sv-mesh`: construção da árvore e pai reserva
-- [ ] Simulcast/SVC com 2 camadas
-- [ ] FEC adaptativo
-- [ ] Simulador de sala para testes (perda, jitter, saída de membros)
+Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
+
+- [x] `sv-mesh`: planejador em enxame (4 faixas + paridade, faixa da casa, NAT, camadas)
+- [x] Simulador de sala (população do Brasil, CGNAT, saída de membros) com os números na ADR
+- [ ] Simulcast com 2 camadas no encoder (1080p60 e 720p30)
+- [ ] Faixas e paridade no envio (`sv-net`) e remontagem na recepção
+- [ ] Repasse pela faixa da casa e troca de pai sem congelar
+- [ ] Repassador na nuvem de reserva (MoQ/TURN), opt-in
+- [ ] Voz em salas grandes: só quem está falando é repassado
+- [ ] Sinalização para centenas de membros (e gossip para milhares)
 
 ## Fase 4 — App completo
 
