@@ -218,6 +218,27 @@ describe("menu de um membro", () => {
     );
   });
 
+  it("explica por que não dá para adicionar quem não foi conferido", async () => {
+    useFriendsStore.setState({ status: "online" });
+    render(<App />);
+    emit("room-members", [ME, { ...BETO, discord: { id: "222222222222222222", avatar: null }, verified: false }]);
+    fireEvent.contextMenu(within(screen.getByRole("list", { name: "Membros da sala" })).getByText("Beto"));
+    const item = await screen.findByRole("menuitem", { name: /Adicionar amigo/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveTextContent("Beto precisa entrar de novo com o Discord");
+  });
+
+  it("sem a nossa sessão, pede para entrar de novo com o Discord", async () => {
+    useFriendsStore.setState({ status: "signed-out" });
+    render(<App />);
+    emit("room-members", [ME, { ...BETO, discord: { id: "222222222222222222", avatar: null }, verified: true }]);
+    fireEvent.contextMenu(within(screen.getByRole("list", { name: "Membros da sala" })).getByText("Beto"));
+    const item = await screen.findByRole("menuitem", { name: /Adicionar amigo/ });
+    expect(item).toHaveTextContent("Entre de novo com o Discord");
+    fireEvent.click(item);
+    expect(invoke).not.toHaveBeenCalledWith("friends_action", expect.anything());
+  });
+
   it("não oferece adicionar quem já é amigo ou já tem pedido", async () => {
     useFriendsStore.setState({
       status: "online",

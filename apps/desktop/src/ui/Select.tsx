@@ -1,6 +1,7 @@
 import * as RadixSelect from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
+import { useOverlayMenu } from "./overlay";
 
 export interface SelectOption {
   value: string;
@@ -18,9 +19,10 @@ export function Select(props: {
   onChange: (value: string) => void;
   icon?: ReactNode;
 }) {
+  const onOpenChange = useOverlayMenu();
   const current = props.options.find((o) => o.value === props.value);
   return (
-    <RadixSelect.Root value={props.value} onValueChange={props.onChange}>
+    <RadixSelect.Root value={props.value} onValueChange={props.onChange} onOpenChange={onOpenChange}>
       <RadixSelect.Trigger
         aria-label={props.label}
         className="group flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-transparent bg-surface-0 px-3 text-left text-sm text-text transition-colors outline-none hover:border-black/40 focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:border-brand"

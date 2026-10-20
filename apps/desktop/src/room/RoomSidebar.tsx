@@ -25,6 +25,7 @@ import { avatarUrl, displayName, useAccountStore } from "../account/account-stor
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { useStreamStore } from "../stream/stream-store";
+import { useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { toast } from "../ui/toast-store";
 import { Avatar } from "../ui/Avatar";
@@ -104,6 +105,7 @@ function RoomHeader(props: { code: string }) {
   const renameRoom = useRoomStore((s) => s.renameRoom);
   const [renaming, setRenaming] = useState(false);
   const title = roomTitle(props.code, roomName);
+  const onMenuOpenChange = useOverlayMenu();
   return (
     <div className="flex h-12 shrink-0 items-center border-b border-white/[0.06]">
       <NameDialog
@@ -115,7 +117,7 @@ function RoomHeader(props: { code: string }) {
         initial={roomName ?? ""}
         onSave={(name) => void renameRoom(name)}
       />
-      <Menu.Root>
+      <Menu.Root onOpenChange={onMenuOpenChange}>
         <Menu.Trigger asChild>
           <button
             type="button"

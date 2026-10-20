@@ -17,6 +17,8 @@ export interface Member {
   deafened?: boolean;
   /** Conta do Discord vinculada (só id e hash da foto). Ausente em apps antigos. */
   discord?: { id: string; avatar: string | null } | null;
+  /** A conta foi conferida pelo SquadView (entrou com o Discord nesta versão): pode virar amigo. */
+  verified?: boolean;
 }
 
 /** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */
@@ -311,6 +313,54 @@ export async function listenToRoomEvents() {
     offs.forEach((off) => off());
     offAccount();
   };
+}
+
+/** Sala para voltar depois de atualizar (o app fecha para instalar). */
+const REJOIN_KEY = "squadview.voltar-para-sala";
+/** Depois disso, a volta para a sala já não faz sentido (a atualização travou ou demorou). */
+export const REJOIN_WITHIN_MS = 10 * 60 * 1000;
+
+/** Guarda a sala atual para voltar depois de atualizar. */
+export function rememberRoomToRejoin(now = Date.now()) {
+  const code = useRoomStore.getState().code;
+  if (!code) return;
+  try {
+    localStorage.setItem(REJOIN_KEY, JSON.stringify({ code, at: now }));
+  } catch {
+    // Sem armazenamento: só não volta sozinho.
+  }
+}
+
+/** A atualização não aconteceu: não há para onde voltar. */
+export function forgetRoomToRejoin() {
+  try {
+    localStorage.removeItem(REJOIN_KEY);
+  } catch {
+    // Nada a apagar.
+  }
+}
+
+/** A sala de antes da atualização, se ela foi há pouco (vale uma vez só). */
+export function takeRoomToRejoin(now = Date.now()): string | null {
+  try {
+    const raw = localStorage.getItem(REJOIN_KEY);
+    localStorage.removeItem(REJOIN_KEY);
+    const saved = raw ? (JSON.parse(raw) as { code: string; at: number }) : null;
+    return saved && now - saved.at < REJOIN_WITHIN_MS ? saved.code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Depois de uma atualização feita numa sala, entra de novo nela com o nosso nome de sempre. */
+export async function rejoinAfterUpdate() {
+  const code = takeRoomToRejoin();
+  if (!code || useRoomStore.getState().code) return;
+  const profile = useAccountStore.getState().profile;
+  const name = profile ? displayName(profile) : savedName() || "Você";
+  if (await useRoomStore.getState().join(code, name)) {
+    toast.success("Você voltou para a sala depois da atualização.", "Atualizado");
+  }
 }
 
 /** Pega o convite guardado pelo Rust (se houver) e pede confirmação para entrar. */

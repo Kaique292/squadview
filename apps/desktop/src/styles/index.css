@@ -47,6 +47,8 @@
   --animate-modal-in: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-modal-out: modal-out 140ms ease-in forwards;
   --animate-step-in: step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Quadro da voz entrando em foco (ou a grade voltando). */
+  --animate-focus-in: focus-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Menus e dicas: aparecem crescendo um pouco a partir do ponto de origem. */
   --animate-menu-in: menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-tooltip-in: menu-in 120ms ease-out;
@@ -109,6 +111,12 @@
     to {
       opacity: 0;
       transform: translateY(6px) scale(0.97);
+    }
+  }
+  @keyframes focus-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
     }
   }
   /* Troca de passo dentro de um modal (ex.: escolher a fonte → qualidade). */
