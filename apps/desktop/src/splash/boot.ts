@@ -27,6 +27,12 @@ export interface BootStep {
 
 /** Tempo mínimo da splash: abaixo disso ela só pisca e ninguém vê a animação. */
 export const MIN_SPLASH_MS = 1400;
+/**
+ * Depois do "Pronto!", quanto a splash espera a barra chegar ao fim (a transição da largura em
+ * `splash.html` leva 450 ms). Sem isso, quando as etapas passam do tempo mínimo (ex.: voltando
+ * para a sala depois de atualizar), a splash fechava com a barra ainda na metade.
+ */
+export const FINISH_MS = 500;
 /** Nenhuma etapa segura a abertura por mais que isso (ex.: GitHub fora do ar). */
 export const STEP_TIMEOUT_MS = 4000;
 
@@ -52,7 +58,6 @@ export async function boot(opts: {
   }
   opts.progress({ value: 1, text: "Pronto!" });
 
-  const left = MIN_SPLASH_MS - (now() - started);
-  if (left > 0) await sleep(left);
+  await sleep(Math.max(FINISH_MS, MIN_SPLASH_MS - (now() - started)));
   await opts.ready();
 }
