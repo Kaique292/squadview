@@ -40,6 +40,15 @@ describe("mensagens do cliente", () => {
     });
   });
 
+  it("lê o pedido de conferir a sessão já na sala", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "verify", session: "abc.def" }))).toEqual({
+      type: "verify",
+      session: "abc.def",
+    });
+    expect(parseClientMessage(JSON.stringify({ type: "verify", session: "" }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: "verify", session: "x".repeat(513) }))).toBeNull();
+  });
+
   it("recusa conta do Discord fora do formato (nada de URL)", () => {
     for (const discord of [
       { id: "abc", avatar: null },

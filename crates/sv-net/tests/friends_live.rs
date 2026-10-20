@@ -297,3 +297,47 @@ async fn pedidos_cancelados_e_recusados() {
     ana.send(&FriendAction::Invite { id: beto_id.clone() });
     wait(&mut ana_rx, "convite recusado", |v| v["type"] == "error").await;
 }
+
+/// O caso do DK: entrou na sala com o login antigo (sem sessão) e depois entrou com o Discord de
+/// novo, já na sala. Vira conferido para os outros e entra nos recentes, sem sair e entrar.
+#[tokio::test]
+async fn quem_entra_com_o_discord_ja_na_sala_vira_conferido() {
+    let Some((url, secret)) = worker() else { return };
+    let (ana_id, beto_id) = fresh_ids();
+    let (ana_session, beto_session) = (session(&secret, &ana_id), session(&secret, &beto_id));
+    let (_ana, mut ana_rx) = FriendsClient::connect(&url, &ana_session).await.unwrap();
+    let code = new_room_code();
+    let (_ana_room, mut ana_room_rx) = RoomClient::join(&url, &code, "Ana", None, Some(&ana_session), None)
+        .await
+        .unwrap();
+    room_event(&mut ana_room_rx, "welcome", |e| matches!(e, RoomEvent::Joined { .. })).await;
+    // Beto entra sem sessão: não conferido.
+    let (beto_room, _beto_room_rx) = RoomClient::join(&url, &code, "Beto", None, None, None).await.unwrap();
+    let RoomEvent::MemberJoined(beto) = room_event(&mut ana_room_rx, "Beto entrou", |e| {
+        matches!(e, RoomEvent::MemberJoined(_))
+    })
+    .await
+    else {
+        unreachable!()
+    };
+    assert!(!beto.verified);
+    // Beto entra com o Discord, já na sala.
+    beto_room.verify(&beto_session);
+    let RoomEvent::MemberUpdated(beto) = room_event(
+        &mut ana_room_rx,
+        "Beto conferido",
+        |e| matches!(e, RoomEvent::MemberUpdated(m) if m.verified),
+    )
+    .await
+    else {
+        unreachable!()
+    };
+    assert_eq!(beto.discord.map(|d| d.id), Some(beto_id.clone()));
+    wait(&mut ana_rx, "Beto nos recentes", |v| {
+        v["type"] == "state"
+            && v["recents"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|p| p["id"] == beto_id.as_str()))
+    })
+    .await;
+}

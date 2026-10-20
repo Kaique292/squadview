@@ -111,6 +111,10 @@ pub async fn discord_login<R: Runtime>(app: AppHandle<R>) -> Result<DiscordProfi
     save(&app, Some(&profile))?;
     crate::friends::save_session(&app, session.as_deref());
     crate::friends::start(&app);
+    // Já numa sala: a sala confere a conta agora, sem precisar sair e entrar.
+    if let Some(session) = session.as_deref() {
+        crate::room::verify_in_room(&app, session);
+    }
     Ok(profile)
 }
 
