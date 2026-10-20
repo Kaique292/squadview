@@ -19,6 +19,8 @@ export interface Member {
   discord?: { id: string; avatar: string | null } | null;
   /** A conta foi conferida pelo SquadView (entrou com o Discord nesta versão): pode virar amigo. */
   verified?: boolean;
+  /** Quem este membro está assistindo (id). Ausente em apps até o 0.4.0. */
+  watching?: string | null;
 }
 
 /** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */

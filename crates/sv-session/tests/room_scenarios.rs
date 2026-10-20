@@ -218,8 +218,19 @@ fn apelido_perfil_mudo_e_surdo_chegam_aos_outros() {
     ana.members("surda na lista", |m| m[0].deafened);
     updated(&mut beto, "a Ana surda", &|m| m.muted && m.deafened);
 
+    // A Ana conta para a sala quem está assistindo (quem transmite vê quantos e quem assistem).
+    ana.room.set_watching(Some("0123456789abcdef"));
+    ana.members("assistindo na lista", |m| {
+        m[0].watching.as_deref() == Some("0123456789abcdef")
+    });
+    updated(&mut beto, "quem a Ana assiste", &|m| {
+        m.watching.as_deref() == Some("0123456789abcdef")
+    });
+    ana.room.set_watching(None);
+    updated(&mut beto, "a Ana parar de assistir", &|m| m.watching.is_none());
+
     // O Beto fica ao vivo: a Ana vê.
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.name == "Beto" && x.live));
 
     // O Beto sai: some da lista e a voz é atualizada.
@@ -294,7 +305,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
         beto.client.signal(&ana_id, &signal);
     }
     // Um marcador depois dos sinais: até ele chegar, nada de assistir nem de voz.
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchReady { .. } | RoomUpdate::WatchFailed { .. } | RoomUpdate::VoiceFailed { .. } => {
@@ -563,7 +574,7 @@ fn pedido_para_assistir_sem_resposta_desiste_sozinho() {
     // Resposta atrasada, depois de desistir: ignorada.
     beto.client
         .signal(&ana_id, &Signal::WatchDeny { reason: "tarde".into() });
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchFailed { .. } => panic!("resposta atrasada não pode falhar de novo"),

@@ -22,6 +22,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
+import { Viewers } from "./Viewers";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { useStreamStore } from "../stream/stream-store";
@@ -335,6 +336,7 @@ function MemberRow(props: {
             Ao vivo
           </span>
         )}
+        {member.live && <Viewers streamerId={member.id} compact />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">
             <button
