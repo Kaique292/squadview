@@ -13,7 +13,7 @@ use quinn::Connection;
 use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
-use sv_net::{Broadcaster, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun};
+use sv_net::{Broadcaster, DiscordUser, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun};
 use tokio::runtime::Runtime;
 
 use crate::surface::lock;
@@ -122,6 +122,7 @@ impl Room {
         signaling_url: &str,
         code: &str,
         name: &str,
+        discord: Option<DiscordUser>,
         room_name: Option<&str>,
         voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
@@ -141,7 +142,7 @@ impl Room {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
                 .map_err(|e| format!("rede indisponível: {e}"))?;
-            let (client, mut events) = RoomClient::join(signaling_url, code, name, room_name).await?;
+            let (client, mut events) = RoomClient::join(signaling_url, code, name, discord.as_ref(), room_name).await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
                 Some(WireEvent::Joined { you, members, room }) => (you, members, room),
@@ -160,6 +161,7 @@ impl Room {
                     live: false,
                     muted: false,
                     deafened: false,
+                    discord,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -204,6 +206,16 @@ impl Room {
     pub fn set_name(&self, name: &str) {
         lock(&self.inner.me).name = name.to_owned();
         lock(&self.inner.client).set_name(name);
+        self.inner.publish_members();
+    }
+
+    /// Troca o nome e a conta do Discord (a pessoa vinculou ou desvinculou já na sala).
+    pub fn set_profile(&self, name: &str, discord: Option<DiscordUser>) {
+        lock(&self.inner.client).set_profile(name, discord.as_ref());
+        let mut me = lock(&self.inner.me);
+        me.name = name.to_owned();
+        me.discord = discord;
+        drop(me);
         self.inner.publish_members();
     }
 
@@ -396,6 +408,7 @@ impl Inner {
                         live: true,
                         muted: false,
                         deafened: false,
+                        discord: None,
                     });
                     match result {
                         Ok(conn) => (inner.on_update)(RoomUpdate::WatchReady {
@@ -522,13 +535,19 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
     (inner.on_update)(RoomUpdate::Reconnecting);
     for delay in RECONNECT_DELAYS_S {
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-        let (name, live) = {
+        let (name, discord, live) = {
             let me = lock(&inner.me);
-            (me.name.clone(), me.live)
+            (me.name.clone(), me.discord.clone(), me.live)
         };
         let room_name = lock(&inner.room_name).clone();
-        let Ok((client, mut events)) =
-            RoomClient::join(&inner.signaling_url, &inner.code, &name, room_name.as_deref()).await
+        let Ok((client, mut events)) = RoomClient::join(
+            &inner.signaling_url,
+            &inner.code,
+            &name,
+            discord.as_ref(),
+            room_name.as_deref(),
+        )
+        .await
         else {
             continue;
         };

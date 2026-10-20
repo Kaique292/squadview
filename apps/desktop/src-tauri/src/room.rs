@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::json;
-use sv_session::{Member, RemoteView, Room, RoomUpdate, WindowEvent};
+use sv_session::{DiscordUser, Member, RemoteView, Room, RoomUpdate, WindowEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::diagnostics::Diagnostics;
@@ -65,6 +65,17 @@ fn clean_name(value: &str) -> Option<String> {
     ((1..=32).contains(&len) && !name.chars().any(char::is_control)).then(|| name.to_owned())
 }
 
+/// Conta do Discord no formato que o Worker aceita (id numérico, hash da foto em hex). Fora
+/// disso vai sem conta, em vez de o Worker recusar a entrada.
+fn clean_discord(user: DiscordUser) -> Option<DiscordUser> {
+    let id_ok = (15..=21).contains(&user.id.len()) && user.id.bytes().all(|b| b.is_ascii_digit());
+    let avatar_ok = user.avatar.as_deref().is_none_or(|a| {
+        let hash = a.strip_prefix("a_").unwrap_or(a);
+        hash.len() == 32 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    });
+    (id_ok && avatar_ok).then_some(user)
+}
+
 pub(crate) fn lock(state: &RoomState) -> std::sync::MutexGuard<'_, Running> {
     state.0.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -76,6 +87,7 @@ pub async fn room_join(
     app: AppHandle,
     code: Option<String>,
     name: String,
+    discord: Option<DiscordUser>,
     room_name: Option<String>,
     voice: Option<crate::voice::VoicePrefs>,
 ) -> Result<RoomInfo, String> {
@@ -85,6 +97,7 @@ pub async fn room_join(
     };
     let name = clean_name(&name).ok_or("Escolha um nome de 1 a 32 caracteres para a galera te reconhecer.")?;
     let room_name = room_name.as_deref().and_then(clean_name);
+    let discord = discord.and_then(clean_discord);
     let url = signaling_url();
     let events_app = app.clone();
     let (join_code, join_url) = (code.clone(), url.clone());
@@ -94,6 +107,7 @@ pub async fn room_join(
             &join_url,
             &join_code,
             &name,
+            discord,
             room_name.as_deref(),
             settings,
             move |update| on_update(&events_app, update),
@@ -157,6 +171,18 @@ pub fn room_set_name(state: State<'_, RoomState>, name: String) -> Result<(), St
         .as_ref()
         .ok_or("Entre numa sala primeiro.")?
         .set_name(&name);
+    Ok(())
+}
+
+/// Vinculou ou desvinculou o Discord já na sala: troca o nome e a foto para todos.
+#[tauri::command]
+pub fn room_set_profile(state: State<'_, RoomState>, name: String, discord: Option<DiscordUser>) -> Result<(), String> {
+    let name = clean_name(&name).ok_or("O nome precisa ter de 1 a 32 caracteres.")?;
+    let running = lock(&state);
+    // Fora de uma sala não há o que avisar.
+    if let Some(room) = running.room.as_ref() {
+        room.set_profile(&name, discord.and_then(clean_discord));
+    }
     Ok(())
 }
 

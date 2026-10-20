@@ -31,12 +31,12 @@ fn url() -> String {
 fn um_amigo_assiste_o_outro_pela_sala() {
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
-    let ana = Room::join(&url(), &code, "Ana", None, None, move |u| {
+    let ana = Room::join(&url(), &code, "Ana", None, None, None, move |u| {
         let _ = ana_tx.send(u);
     })
     .expect("Ana entra");
     let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
-    let beto = Room::join(&url(), &code, "Beto", None, None, move |u| {
+    let beto = Room::join(&url(), &code, "Beto", None, None, None, move |u| {
         let _ = beto_tx.send(u);
     })
     .expect("Beto entra");
@@ -125,14 +125,30 @@ fn um_amigo_assiste_o_outro_pela_sala() {
 fn dois_amigos_ligam_a_voz_ao_entrar() {
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
-    let _ana = Room::join(&url(), &code, "Ana", None, Some(VoiceSettings::default()), move |u| {
-        let _ = ana_tx.send(u);
-    })
+    let _ana = Room::join(
+        &url(),
+        &code,
+        "Ana",
+        None,
+        None,
+        Some(VoiceSettings::default()),
+        move |u| {
+            let _ = ana_tx.send(u);
+        },
+    )
     .expect("Ana entra");
     let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
-    let _beto = Room::join(&url(), &code, "Beto", None, Some(VoiceSettings::default()), move |u| {
-        let _ = beto_tx.send(u);
-    })
+    let _beto = Room::join(
+        &url(),
+        &code,
+        "Beto",
+        None,
+        None,
+        Some(VoiceSettings::default()),
+        move |u| {
+            let _ = beto_tx.send(u);
+        },
+    )
     .expect("Beto entra");
 
     let linked = |rx: &mpsc::Receiver<RoomUpdate>| {

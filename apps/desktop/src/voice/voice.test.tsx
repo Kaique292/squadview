@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { act } from "react";
+import { useAccountStore } from "../account/account-store";
 import { App } from "../App";
 import { listenToRoomEvents, type Member, useRoomStore } from "../room/room-store";
 import { DEFAULT_QUALITY, useStreamStore } from "../stream/stream-store";
@@ -129,6 +130,35 @@ describe("chat de voz", () => {
     const controles = screen.getByRole("navigation", { name: "Controles da voz" });
     fireEvent.click(within(controles).getByRole("button", { name: "Sair da sala" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_leave"));
+  });
+
+  it("ensurdecido aparece com o microfone e o fone cortados", () => {
+    render(<App />);
+    emit("room-members", [ME, { ...ANA, live: false, muted: true, deafened: true }]);
+    const grade = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(within(grade).getByLabelText("Microfone silenciado")).toBeInTheDocument();
+    expect(within(grade).getByLabelText("Ensurdecido")).toBeInTheDocument();
+  });
+
+  it("mostra a foto do Discord dos outros membros", () => {
+    render(<App />);
+    emit("room-members", [ME, { ...ANA, discord: { id: "123456789012345678", avatar: "a".repeat(32) } }]);
+    const grade = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(grade.querySelector('img[src*="cdn.discordapp.com/avatars/123456789012345678/"]')).not.toBeNull();
+  });
+
+  it("vincular o Discord já na sala avisa a galera do nome e da foto", async () => {
+    useRoomStore.setState({ members: [ME] });
+    const profile = { id: "123456789012345678", username: "kaique", globalName: "K.A", avatar: "b".repeat(32) };
+    act(() => useAccountStore.setState({ profile }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_set_profile", {
+        name: "K.A",
+        discord: { id: profile.id, avatar: profile.avatar },
+      }),
+    );
+    act(() => useAccountStore.setState({ profile: null }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_set_profile", { name: "Kaique", discord: null }));
   });
 
   it("organiza a grade como o Discord", () => {

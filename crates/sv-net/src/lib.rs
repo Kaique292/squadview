@@ -19,7 +19,7 @@ pub mod stun;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
-pub use signaling::{Member, RoomClient, RoomEvent};
+pub use signaling::{DiscordUser, Member, RoomClient, RoomEvent};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.
 pub const PROTOCOL_VERSION: u16 = 1;

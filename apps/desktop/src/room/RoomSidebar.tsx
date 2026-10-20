@@ -35,7 +35,7 @@ import { RoomDialog } from "./RoomDialog";
 import { inviteUrl } from "./invite";
 import { MemberMenu } from "./MemberMenu";
 import { NameDialog } from "./NameDialog";
-import { type Member, roomTitle, useRoomStore } from "./room-store";
+import { type Member, memberPhoto, roomTitle, useRoomStore } from "./room-store";
 
 /**
  * Barra lateral no estilo da lista de canais do Discord: cabeçalho da sala com menu e a sala como
@@ -316,7 +316,7 @@ function MemberRow(props: {
           size={24}
           live={member.live}
           speaking={speaking}
-          src={props.isMe && profile ? avatarUrl(profile, 64) : undefined}
+          src={memberPhoto(member, !!props.isMe, profile, 64)}
         />
         <span
           className={`min-w-0 flex-1 truncate text-sm ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
@@ -324,11 +324,10 @@ function MemberRow(props: {
           {member.name}
           {props.isMe && <span className="text-text-faint"> (você)</span>}
         </span>
-        {deafened ? (
-          <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />
-        ) : (
-          muted && <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
+        {(muted || deafened) && (
+          <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
         )}
+        {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && (
           <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
             <Radio size={10} /> AO VIVO

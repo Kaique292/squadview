@@ -60,7 +60,7 @@ export function displayName(p: DiscordProfile): string {
 }
 
 /** Foto do perfil no CDN do Discord; sem foto, o avatar padrão do Discord. */
-export function avatarUrl(p: DiscordProfile, size = 128): string {
+export function avatarUrl(p: Pick<DiscordProfile, "id" | "avatar">, size = 128): string {
   if (p.avatar) {
     const ext = p.avatar.startsWith("a_") ? "gif" : "png";
     return `https://cdn.discordapp.com/avatars/${p.id}/${p.avatar}.${ext}?size=${size}`;

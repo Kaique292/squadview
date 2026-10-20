@@ -23,6 +23,15 @@ const SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(45);
 pub const ROOM_CODE_ALPHABET: &str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 pub const ROOM_CODE_LENGTH: usize = 6;
 
+/// Conta do Discord de um membro: o id e o hash da foto (nunca uma URL; a interface monta o
+/// endereço do CDN do Discord). Serve para mostrar a foto; o Worker não confere a conta.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscordUser {
+    pub id: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
@@ -34,6 +43,9 @@ pub struct Member {
     /// Ensurdecido (não ouve ninguém). Ausente no Worker antigo.
     #[serde(default)]
     pub deafened: bool,
+    /// Conta do Discord vinculada. Ausente no Worker antigo.
+    #[serde(default)]
+    pub discord: Option<DiscordUser>,
 }
 
 /// Mensagens que mandamos.
@@ -46,6 +58,8 @@ enum Outgoing<'a> {
         /// Nome da sala; só vale para quem cria (entra na sala vazia).
         #[serde(skip_serializing_if = "Option::is_none")]
         room: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        discord: Option<&'a DiscordUser>,
     },
     Status {
         live: bool,
@@ -56,9 +70,11 @@ enum Outgoing<'a> {
     Room {
         name: &'a str,
     },
-    /// Troca o nosso apelido.
+    /// Troca o nosso apelido e, se vier `discord`, a conta (`Some(None)`: desvinculou).
     Rename {
         name: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        discord: Option<Option<&'a DiscordUser>>,
     },
     Signal {
         to: &'a str,
@@ -166,6 +182,7 @@ impl RoomClient {
         base_url: &str,
         code: &str,
         name: &str,
+        discord: Option<&DiscordUser>,
         room: Option<&str>,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
@@ -183,6 +200,7 @@ impl RoomClient {
             name,
             protocol: SIGNALING_PROTOCOL,
             room,
+            discord,
         })
         .expect("json");
         write
@@ -243,7 +261,15 @@ impl RoomClient {
 
     /// Troca o nosso apelido (os outros recebem [`RoomEvent::MemberUpdated`]).
     pub fn set_name(&self, name: &str) {
-        self.send(&Outgoing::Rename { name });
+        self.send(&Outgoing::Rename { name, discord: None });
+    }
+
+    /// Troca o nome e a conta do Discord (vinculou ou desvinculou já na sala).
+    pub fn set_profile(&self, name: &str, discord: Option<&DiscordUser>) {
+        self.send(&Outgoing::Rename {
+            name,
+            discord: Some(discord),
+        });
     }
 
     pub fn signal(&self, to: &str, signal: &Signal) {
@@ -300,6 +326,7 @@ mod tests {
             name: "Ana",
             protocol: 1,
             room: None,
+            discord: None,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
@@ -308,6 +335,7 @@ mod tests {
             name: "Ana",
             protocol: 1,
             room: Some("Galera"),
+            discord: None,
         })
         .unwrap();
         assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
@@ -316,8 +344,33 @@ mod tests {
             r#"{"type":"room","name":"Squad"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Outgoing::Rename { name: "K.A" }).unwrap(),
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: None
+            })
+            .unwrap(),
             r#"{"type":"rename","name":"K.A"}"#
+        );
+        let conta = DiscordUser {
+            id: "123456789012345678".into(),
+            avatar: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: Some(Some(&conta))
+            })
+            .unwrap(),
+            r#"{"type":"rename","name":"K.A","discord":{"id":"123456789012345678","avatar":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#
+        );
+        // Desvinculou: vai `null`, para a sala tirar a foto.
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Rename {
+                name: "K.A",
+                discord: Some(None)
+            })
+            .unwrap(),
+            r#"{"type":"rename","name":"K.A","discord":null}"#
         );
         let status = serde_json::to_string(&Outgoing::Status {
             live: true,
@@ -354,6 +407,7 @@ mod tests {
                     live: true,
                     muted: false,
                     deafened: false,
+                    discord: None,
                 }],
                 room: None,
             })

@@ -131,6 +131,7 @@ pub fn run() {
             room::room_leave,
             room::room_rename,
             room::room_set_name,
+            room::room_set_profile,
             room::room_watch,
             room::room_stop_watching,
             room::set_watch_listening,

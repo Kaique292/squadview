@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { avatarUrl, type DiscordProfile, displayName, useAccountStore } from "../account/account-store";
 import type { StreamStats } from "../stream/stream-store";
 import { toast } from "../ui/toast-store";
 import { toRust, useVoiceStore } from "../voice/voice-store";
@@ -14,6 +15,22 @@ export interface Member {
   muted?: boolean;
   /** Ensurdecido (não ouve ninguém). */
   deafened?: boolean;
+  /** Conta do Discord vinculada (só id e hash da foto). Ausente em apps antigos. */
+  discord?: { id: string; avatar: string | null } | null;
+}
+
+/** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */
+function discordOf(profile: DiscordProfile | null) {
+  return profile ? { id: profile.id, avatar: profile.avatar } : null;
+}
+
+/**
+ * Foto de um membro: a nossa vem do perfil salvo (muda na hora ao vincular); a dos outros, da
+ * conta do Discord que eles vincularam. Sem conta, `undefined` (a inicial colorida).
+ */
+export function memberPhoto(member: Member, isMe: boolean, profile: DiscordProfile | null, size = 128) {
+  if (isMe) return profile ? avatarUrl(profile, size) : undefined;
+  return member.discord ? avatarUrl(member.discord, size) : undefined;
 }
 
 const NAME_KEY = "squadview.nome";
@@ -140,6 +157,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const info = await invoke<{ code: string; roomName?: string | null }>("room_join", {
         code,
         name,
+        discord: discordOf(useAccountStore.getState().profile),
         roomName,
         voice,
       });
@@ -279,9 +297,20 @@ export async function listenToRoomEvents() {
     // Convite clicado com o app já aberto.
     listen<string>("invite", () => void takePendingInvite()),
   ]);
+  // Vinculou ou desvinculou o Discord já na sala: a galera vê o nome e a foto novos na hora.
+  const offAccount = useAccountStore.subscribe((s, prev) => {
+    if (s.profile === prev.profile || !useRoomStore.getState().code) return;
+    const name = s.profile ? displayName(s.profile) : (useRoomStore.getState().members[0]?.name ?? savedName());
+    if (!name) return;
+    if (s.profile) saveName(name);
+    void invoke("room_set_profile", { name, discord: discordOf(s.profile) }).catch(() => {});
+  });
   // Convite que abriu o app.
   await takePendingInvite();
-  return () => offs.forEach((off) => off());
+  return () => {
+    offs.forEach((off) => off());
+    offAccount();
+  };
 }
 
 /** Pega o convite guardado pelo Rust (se houver) e pede confirmação para entrar. */

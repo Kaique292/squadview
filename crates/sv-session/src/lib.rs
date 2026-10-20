@@ -28,7 +28,7 @@ pub use remote::RemoteView;
 pub use room::{Room, RoomUpdate};
 pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};
-pub use sv_net::Member;
+pub use sv_net::{DiscordUser, Member};
 pub use system::{SystemLoad, SystemMonitor};
 pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
 pub use voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};

@@ -1,8 +1,8 @@
 import { Eye, HeadphoneOff, Loader2, MicOff, MonitorUp, PhoneOff, Radio, UserPlus, Volume2 } from "lucide-react";
-import { avatarUrl, useAccountStore } from "../account/account-store";
+import { useAccountStore } from "../account/account-store";
 import { inviteUrl } from "../room/invite";
 import { MemberMenu } from "../room/MemberMenu";
-import { type Member, roomTitle, useRoomStore } from "../room/room-store";
+import { type Member, memberPhoto, roomTitle, useRoomStore } from "../room/room-store";
 import { StreamDialog } from "../stream/StreamDialog";
 import { Avatar, avatarColor } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
@@ -67,7 +67,7 @@ export function VoiceRoom() {
                     speaking={!!speaking[isMe ? "me" : m.id]}
                     muted={isMe ? myPrefs.muted || myPrefs.deafened : !!m.muted}
                     deafened={isMe ? myPrefs.deafened : !!m.deafened}
-                    photo={isMe && profile ? avatarUrl(profile, 128) : undefined}
+                    photo={memberPhoto(m, isMe, profile, 128)}
                     pending={pendingWatch === m.id}
                     onWatch={() => void watch(m)}
                   />
@@ -150,11 +150,10 @@ function Tile(props: {
 
       <span className="absolute bottom-2 left-2 flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-black/60 px-2 py-1 text-sm font-medium">
         <span className="truncate">{member.name}</span>
-        {props.deafened ? (
-          <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-live" />
-        ) : (
-          props.muted && <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-live" />
+        {(props.muted || props.deafened) && (
+          <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-live" />
         )}
+        {props.deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-live" />}
       </span>
     </div>
   );
