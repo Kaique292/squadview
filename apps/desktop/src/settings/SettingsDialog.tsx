@@ -1,10 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Activity, Gamepad2, LogOut, Mic, Palette, Pencil, RotateCcw, Search, User, X } from "lucide-react";
+import { Activity, Bell, Gamepad2, LogOut, Mic, Palette, Pencil, RotateCcw, Search, User, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { Avatar } from "../ui/Avatar";
 import { holdOverlay } from "../ui/overlay";
+import { SoundsSection } from "../sounds/SoundsSection";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
@@ -13,7 +14,7 @@ import { DiagnosticsSection } from "./DiagnosticsSection";
 import { usePresenceSettings } from "./presence-store";
 import { VoiceSection } from "./VoiceSection";
 
-type Page = "conta" | "voz" | "discord" | "aparencia" | "desempenho";
+type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "desempenho";
 
 interface Item {
   id: Page;
@@ -45,6 +46,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
           { id: "voz-processamento", label: "Processamento de voz" },
         ],
       },
+      {
+        id: "sons",
+        label: "Sons",
+        icon: <Bell size={18} />,
+        keywords: "aviso notificação mudo surdo entrar sair alerta",
+      },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
       { id: "desempenho", label: "Desempenho", icon: <Activity size={18} />, keywords: "registro fps gpu diagnóstico" },
     ],
@@ -65,6 +72,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
 const TITLES: Record<Page, string> = {
   conta: "Minha conta",
   voz: "Voz e vídeo",
+  sons: "Sons",
   discord: "Status no Discord",
   aparencia: "Aparência",
   desempenho: "Desempenho",
@@ -122,6 +130,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
               <div key={page} className="mx-auto max-w-[680px] animate-step-in text-left">
                 {page === "conta" && <AccountSection />}
                 {page === "voz" && <VoiceSection />}
+                {page === "sons" && <SoundsSection />}
                 {page === "discord" && <PresenceSection />}
                 {page === "aparencia" && <AppearanceSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
