@@ -5,6 +5,7 @@
 //! - [`cert`]: certificados por sessão, conferidos pela fingerprint combinada na sinalização.
 //! - [`media`]: vídeo (um stream por frame), áudio (datagramas) e controle.
 //! - [`protocol`]: os formatos que viajam; [`clock`]: estimativa do relógio do outro lado.
+//! - [`signaling`]: a sala; [`friends`]: o registro de amigos e presença.
 //!
 //! Quando dois membros não conseguem se ver (CGNAT simétrico), a conexão falha com uma mensagem
 //! clara; a ponte por um terceiro membro da sala vem na Fase 3.
@@ -12,6 +13,7 @@
 pub mod cert;
 pub mod clock;
 pub mod endpoint;
+pub mod friends;
 pub mod media;
 pub mod protocol;
 pub mod signaling;
@@ -19,7 +21,7 @@ pub mod stun;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
-pub use signaling::{DiscordUser, Member, RoomClient, RoomEvent};
+pub use signaling::{DiscordUser, JoinRequester, Member, RoomClient, RoomEvent};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.
 pub const PROTOCOL_VERSION: u16 = 1;

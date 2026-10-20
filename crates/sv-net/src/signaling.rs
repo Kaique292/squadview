@@ -32,6 +32,15 @@ pub struct DiscordUser {
     pub avatar: Option<String>,
 }
 
+/// Quem pediu para entrar na sala (um amigo de alguém daqui, conferido pelo Worker).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequester {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
@@ -60,6 +69,9 @@ enum Outgoing<'a> {
         room: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         discord: Option<&'a DiscordUser>,
+        /// Sessão do SquadView (ADR 0011): o Worker confere e o membro conta como conferido.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session: Option<&'a str>,
     },
     Status {
         live: bool,
@@ -79,6 +91,11 @@ enum Outgoing<'a> {
     Signal {
         to: &'a str,
         payload: &'a Signal,
+    },
+    /// Resposta a um pedido de entrada.
+    JoinAnswer {
+        id: &'a str,
+        accept: bool,
     },
     Leave,
 }
@@ -110,6 +127,13 @@ enum Incoming {
         from: String,
         payload: serde_json::Value,
     },
+    JoinRequest {
+        id: String,
+        from: JoinRequester,
+    },
+    JoinRequestClosed {
+        id: String,
+    },
     Error {
         code: String,
     },
@@ -133,6 +157,13 @@ pub enum RoomEvent {
         from: String,
         signal: Signal,
     },
+    /// Um amigo de alguém da sala quer entrar (qualquer membro aceita ou recusa).
+    JoinRequest {
+        id: String,
+        from: JoinRequester,
+    },
+    /// O pedido foi respondido por alguém ou venceu.
+    JoinRequestClosed(String),
     /// Erro vindo do Worker (ex.: `room-full`, `version-mismatch`).
     Error(String),
     /// A conexão com a sinalização caiu ou foi fechada.
@@ -152,6 +183,8 @@ impl RoomEvent {
                 from,
                 signal: serde_json::from_value(payload).ok()?,
             },
+            Incoming::JoinRequest { id, from } => Self::JoinRequest { id, from },
+            Incoming::JoinRequestClosed { id } => Self::JoinRequestClosed(id),
             Incoming::Error { code } => Self::Error(code),
         })
     }
@@ -183,6 +216,7 @@ impl RoomClient {
         code: &str,
         name: &str,
         discord: Option<&DiscordUser>,
+        session: Option<&str>,
         room: Option<&str>,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
@@ -201,6 +235,7 @@ impl RoomClient {
             protocol: SIGNALING_PROTOCOL,
             room,
             discord,
+            session,
         })
         .expect("json");
         write
@@ -272,6 +307,11 @@ impl RoomClient {
         });
     }
 
+    /// Aceita ou recusa um pedido de entrada.
+    pub fn answer_join(&self, id: &str, accept: bool) {
+        self.send(&Outgoing::JoinAnswer { id, accept });
+    }
+
     pub fn signal(&self, to: &str, signal: &Signal) {
         self.send(&Outgoing::Signal { to, payload: signal });
     }
@@ -327,6 +367,7 @@ mod tests {
             protocol: 1,
             room: None,
             discord: None,
+            session: None,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
@@ -336,6 +377,7 @@ mod tests {
             protocol: 1,
             room: Some("Galera"),
             discord: None,
+            session: None,
         })
         .unwrap();
         assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
@@ -423,6 +465,25 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"room-updated","name":"Squad"}"#),
             Some(RoomEvent::RoomRenamed("Squad".into()))
+        );
+        assert_eq!(
+            parse(r#"{"type":"join-request","id":"cc","from":{"id":"1","name":"Beto","avatar":null}}"#),
+            Some(RoomEvent::JoinRequest {
+                id: "cc".into(),
+                from: JoinRequester {
+                    id: "1".into(),
+                    name: "Beto".into(),
+                    avatar: None
+                }
+            })
+        );
+        assert_eq!(
+            parse(r#"{"type":"join-request-closed","id":"cc"}"#),
+            Some(RoomEvent::JoinRequestClosed("cc".into()))
+        );
+        assert_eq!(
+            serde_json::to_string(&Outgoing::JoinAnswer { id: "cc", accept: true }).unwrap(),
+            r#"{"type":"join-answer","id":"cc","accept":true}"#
         );
         assert_eq!(
             parse(r#"{"type":"member-left","id":"bb"}"#),

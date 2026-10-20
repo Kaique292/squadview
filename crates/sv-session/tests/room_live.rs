@@ -10,7 +10,7 @@ use sv_gpu::Size;
 use sv_net::protocol::FrameHeader;
 use sv_net::signaling::new_room_code;
 use sv_net::{Receiver, ReceiverSink};
-use sv_session::{KeyframeHandle, Room, RoomUpdate, StreamInfo, VoiceSettings};
+use sv_session::{JoinAs, KeyframeHandle, Room, RoomUpdate, StreamInfo, VoiceSettings};
 
 struct Frames(mpsc::Sender<FrameHeader>);
 
@@ -31,12 +31,12 @@ fn url() -> String {
 fn um_amigo_assiste_o_outro_pela_sala() {
     let code = new_room_code();
     let (ana_tx, ana_rx) = mpsc::channel::<RoomUpdate>();
-    let ana = Room::join(&url(), &code, "Ana", None, None, None, move |u| {
+    let ana = Room::join(&url(), &code, JoinAs::named("Ana"), None, None, move |u| {
         let _ = ana_tx.send(u);
     })
     .expect("Ana entra");
     let (beto_tx, beto_rx) = mpsc::channel::<RoomUpdate>();
-    let beto = Room::join(&url(), &code, "Beto", None, None, None, move |u| {
+    let beto = Room::join(&url(), &code, JoinAs::named("Beto"), None, None, move |u| {
         let _ = beto_tx.send(u);
     })
     .expect("Beto entra");
@@ -128,8 +128,7 @@ fn dois_amigos_ligam_a_voz_ao_entrar() {
     let _ana = Room::join(
         &url(),
         &code,
-        "Ana",
-        None,
+        JoinAs::named("Ana"),
         None,
         Some(VoiceSettings::default()),
         move |u| {
@@ -141,8 +140,7 @@ fn dois_amigos_ligam_a_voz_ao_entrar() {
     let _beto = Room::join(
         &url(),
         &code,
-        "Beto",
-        None,
+        JoinAs::named("Beto"),
         None,
         Some(VoiceSettings::default()),
         move |u| {

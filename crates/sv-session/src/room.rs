@@ -13,7 +13,9 @@ use quinn::Connection;
 use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
-use sv_net::{Broadcaster, DiscordUser, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun};
+use sv_net::{
+    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun,
+};
 use tokio::runtime::Runtime;
 
 use crate::surface::lock;
@@ -40,6 +42,10 @@ pub enum RoomUpdate {
     },
     /// Não deu para assistir (recusado ou sem conexão direta).
     WatchFailed { member_id: String, reason: String },
+    /// Um amigo de alguém da sala pediu para entrar.
+    JoinRequest { id: String, from: JoinRequester },
+    /// O pedido de entrada foi respondido ou venceu.
+    JoinRequestClosed(String),
     /// Erro da sala (cheia, versão diferente...).
     Error(String),
     /// A conexão com a sinalização caiu; tentando voltar para a sala.
@@ -68,6 +74,12 @@ impl std::fmt::Debug for RoomUpdate {
                 .field("member_id", member_id)
                 .field("reason", reason)
                 .finish(),
+            Self::JoinRequest { id, from } => f
+                .debug_struct("JoinRequest")
+                .field("id", id)
+                .field("from", from)
+                .finish(),
+            Self::JoinRequestClosed(id) => f.debug_tuple("JoinRequestClosed").field(id).finish(),
             Self::Error(e) => f.debug_tuple("Error").field(e).finish(),
             Self::Reconnecting => f.write_str("Reconnecting"),
             Self::Reconnected => f.write_str("Reconnected"),
@@ -87,6 +99,8 @@ struct Inner {
     /// Trocado quando a sala reconecta depois de uma queda.
     client: Mutex<RoomClient>,
     signaling_url: String,
+    /// Sessão do SquadView, para entrar de novo como conferido ao reconectar.
+    session: Option<String>,
     code: String,
     peer: Peer,
     me: Mutex<Member>,
@@ -116,17 +130,38 @@ impl std::fmt::Debug for Room {
     }
 }
 
+/// Quem entra na sala.
+#[derive(Debug, Clone, Default)]
+pub struct JoinAs {
+    pub name: String,
+    /// Conta do Discord vinculada (para a foto).
+    pub discord: Option<DiscordUser>,
+    /// Sessão do SquadView (ADR 0011): a sala confere e passa a saber quem somos de verdade.
+    pub session: Option<String>,
+}
+
+impl JoinAs {
+    /// Só o nome (sem Discord), como nos testes.
+    pub fn named(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            ..Self::default()
+        }
+    }
+}
+
 impl Room {
     /// Entra na sala `code` em `signaling_url`. Bloqueia até a sala responder (ou falhar).
     pub fn join(
         signaling_url: &str,
         code: &str,
-        name: &str,
-        discord: Option<DiscordUser>,
+        me: JoinAs,
         room_name: Option<&str>,
         voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
+        let JoinAs { name, discord, session } = me;
+        let name = name.as_str();
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -142,7 +177,15 @@ impl Room {
             let peer = Peer::bind(stun::DEFAULT_SERVERS)
                 .await
                 .map_err(|e| format!("rede indisponível: {e}"))?;
-            let (client, mut events) = RoomClient::join(signaling_url, code, name, discord.as_ref(), room_name).await?;
+            let (client, mut events) = RoomClient::join(
+                signaling_url,
+                code,
+                name,
+                discord.as_ref(),
+                session.as_deref(),
+                room_name,
+            )
+            .await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
                 Some(WireEvent::Joined { you, members, room }) => (you, members, room),
@@ -153,6 +196,7 @@ impl Room {
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
+                session: session.clone(),
                 code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
@@ -200,6 +244,11 @@ impl Room {
     /// Renomeia a sala para todos. A confirmação volta como [`RoomUpdate::RoomName`].
     pub fn rename_room(&self, name: &str) {
         lock(&self.inner.client).set_room_name(name);
+    }
+
+    /// Aceita ou recusa o pedido de entrada `id` (o primeiro membro que responder decide).
+    pub fn answer_join(&self, id: &str, accept: bool) {
+        lock(&self.inner.client).answer_join(id, accept);
     }
 
     /// Troca o nosso apelido na sala.
@@ -512,6 +561,8 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 inner.publish_voice_peers();
             }
             WireEvent::Signal { from, signal } => inner.on_signal(from, signal),
+            WireEvent::JoinRequest { id, from } => (inner.on_update)(RoomUpdate::JoinRequest { id, from }),
+            WireEvent::JoinRequestClosed(id) => (inner.on_update)(RoomUpdate::JoinRequestClosed(id)),
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
             WireEvent::Disconnected => return,
         }
@@ -545,6 +596,7 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
             &inner.code,
             &name,
             discord.as_ref(),
+            inner.session.as_deref(),
             room_name.as_deref(),
         )
         .await

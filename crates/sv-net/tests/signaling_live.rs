@@ -21,7 +21,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     let url = std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into());
     let code = new_room_code();
 
-    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, Some("Galera"))
+    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, Some("Galera"))
         .await
         .unwrap();
     let RoomEvent::Joined {
@@ -32,7 +32,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     };
     assert!(members.is_empty());
 
-    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None).await.unwrap();
+    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None, None).await.unwrap();
     let RoomEvent::Joined {
         you: beto_id,
         members,
@@ -73,7 +73,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
 async fn fica_na_sala_parado_sem_cair() {
     let url = std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into());
     let code = new_room_code();
-    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None).await.unwrap();
+    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, None).await.unwrap();
     assert!(matches!(next(&mut ana_rx).await, RoomEvent::Joined { .. }));
     let quiet = tokio::time::timeout(std::time::Duration::from_secs(70), ana_rx.recv()).await;
     assert!(quiet.is_err(), "a sala mandou algo ou caiu: {quiet:?}");
