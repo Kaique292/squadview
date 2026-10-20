@@ -25,7 +25,13 @@ const NOTES = `## [0.2.0](https://github.com/Kaique292/squadview/compare/v0.1.0.
 `;
 
 function fakeUpdate(download: (onEvent: (e: ProgressEvent) => void) => Promise<void>) {
-  return { version: "0.2.0", body: NOTES, downloadAndInstall: vi.fn(download) };
+  return {
+    version: "0.2.0",
+    body: NOTES,
+    downloadAndInstall: vi.fn(download),
+    download: vi.fn(download),
+    install: vi.fn(async () => {}),
+  };
 }
 
 beforeEach(() => {
@@ -136,6 +142,49 @@ describe("atualização automática", () => {
     localStorage.setItem("squadview.novidades", JSON.stringify({ version: "0.2.1", notes: null }));
     render(<UpdateButton />);
     expect(screen.getByText("Correções e melhorias.")).toBeInTheDocument();
+  });
+
+  it("ao abrir com versão nova, baixa e instala na splash, com as duas barras indo até o fim", async () => {
+    const update = fakeUpdate(async (onEvent) => {
+      onEvent({ event: "Started", data: { contentLength: 400 } });
+      onEvent({ event: "Progress", data: { chunkLength: 100 } });
+      onEvent({ event: "Progress", data: { chunkLength: 300 } });
+      onEvent({ event: "Finished" });
+    });
+    check.mockResolvedValue(update);
+    await useUpdateStore.getState().checkForUpdate();
+    const seen: { download: number | null; install: number }[] = [];
+    await useUpdateStore.getState().installAtStartup(
+      (p) => seen.push({ download: p.download, install: p.install }),
+      async () => {},
+    );
+    expect(seen.map((p) => p.download)).toEqual([0, 25, 100, 100, 100, 100, 100]);
+    expect(seen.at(-1)).toEqual({ download: 100, install: 100 });
+    // A instalação só começa com a barra cheia.
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(relaunch).toHaveBeenCalledOnce();
+    expect(takeWhatsNew()).toEqual({ version: "0.2.0", notes: NOTES });
+  });
+
+  it("sem versão nova, a abertura segue sem barras", async () => {
+    const report = vi.fn();
+    await useUpdateStore.getState().installAtStartup(report);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it("se a atualização na abertura falhar, o app abre normal e a setinha fica vermelha", async () => {
+    const update = fakeUpdate(async () => {
+      throw new Error("rede caiu");
+    });
+    check.mockResolvedValue(update);
+    await useUpdateStore.getState().checkForUpdate();
+    await useUpdateStore.getState().installAtStartup(
+      () => {},
+      async () => {},
+    );
+    expect(useUpdateStore.getState().status.kind).toBe("error");
+    expect(update.install).not.toHaveBeenCalled();
+    expect(takeWhatsNew()).toBeNull();
   });
 
   it("transforma as notas da release em listas simples", () => {
