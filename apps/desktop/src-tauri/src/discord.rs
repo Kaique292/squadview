@@ -105,16 +105,10 @@ pub async fn discord_login<R: Runtime>(app: AppHandle<R>) -> Result<DiscordProfi
         .await
         .map_err(|e| e.to_string())?;
 
-    // Sessão do SquadView para os amigos. Se o Worker não aceitar, o login segue sem amigos.
-    let session = crate::friends::exchange(&http, &token.access_token).await;
-    drop(token);
     save(&app, Some(&profile))?;
-    crate::friends::save_session(&app, session.as_deref());
-    crate::friends::start(&app);
-    // Já numa sala: a sala confere a conta agora, sem precisar sair e entrar.
-    if let Some(session) = session.as_deref() {
-        crate::room::verify_in_room(&app, session);
-    }
+    // Sessão do SquadView: liga os amigos e, já numa sala, a sala confere a conta na hora. Se o
+    // Worker falhar, segue tentando em segundo plano (não precisa entrar de novo).
+    crate::friends::activate(&app, http, token.access_token).await;
     Ok(profile)
 }
 
