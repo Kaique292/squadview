@@ -9,6 +9,7 @@ import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
+import { VoiceRoom } from "./voice/VoiceRoom";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
 
@@ -52,7 +53,7 @@ export function App() {
             fullscreen ? "bg-surface-2 p-0" : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
           }`}
         >
-          {watching ? <WatchView member={watching} /> : live ? <StreamView /> : <Empty />}
+          {watching ? <WatchView member={watching} /> : live ? <StreamView /> : code ? <VoiceRoom /> : <Empty />}
         </main>
       </div>
     </div>

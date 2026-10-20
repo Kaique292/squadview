@@ -3,11 +3,11 @@ import {
   ChevronDown,
   Copy,
   Eye,
-  Headphones,
   HeadphoneOff,
   Loader2,
   LogIn,
   LogOut,
+  MicOff,
   MonitorUp,
   Pencil,
   PhoneOff,
@@ -27,7 +27,10 @@ import { StreamDialog } from "../stream/StreamDialog";
 import { useStreamStore } from "../stream/stream-store";
 import { ScrollArea } from "../ui/ScrollArea";
 import { toast } from "../ui/toast-store";
+import { Avatar } from "../ui/Avatar";
 import { Tooltip } from "../ui/Tooltip";
+import { DeafenButton, MicButton } from "../voice/VoiceButtons";
+import { useVoiceStore } from "../voice/voice-store";
 import { RoomDialog } from "./RoomDialog";
 import { inviteUrl } from "./invite";
 import { MemberMenu } from "./MemberMenu";
@@ -296,6 +299,10 @@ function MemberRow(props: {
 }) {
   const { member } = props;
   const profile = useAccountStore((s) => s.profile);
+  const speaking = useVoiceStore((s) => !!s.speaking[props.isMe ? "me" : member.id]);
+  const myPrefs = useVoiceStore((s) => s.prefs);
+  const muted = props.isMe ? myPrefs.muted || myPrefs.deafened : !!member.muted;
+  const deafened = props.isMe ? myPrefs.deafened : !!member.deafened;
   const canWatch = member.live && !props.isMe;
   return (
     <MemberMenu member={member} isMe={!!props.isMe} onWatch={props.onWatch}>
@@ -308,6 +315,7 @@ function MemberRow(props: {
           name={member.name}
           size={24}
           live={member.live}
+          speaking={speaking}
           src={props.isMe && profile ? avatarUrl(profile, 64) : undefined}
         />
         <span
@@ -316,6 +324,11 @@ function MemberRow(props: {
           {member.name}
           {props.isMe && <span className="text-text-faint"> (você)</span>}
         </span>
+        {deafened ? (
+          <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />
+        ) : (
+          muted && <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
+        )}
         {member.live && (
           <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
             <Radio size={10} /> AO VIVO
@@ -407,9 +420,8 @@ function UserPanel() {
   const name = me?.name ?? (profile ? displayName(profile) : "Você");
   const code = useRoomStore((s) => s.code);
   const watching = useRoomStore((s) => s.watching);
-  const watchListening = useRoomStore((s) => s.watchListening);
-  const setWatchListening = useRoomStore((s) => s.setWatchListening);
   const live = useStreamStore((s) => s.status === "live");
+  const speaking = useVoiceStore((s) => !!s.speaking.me);
   const status = live ? "Transmitindo" : watching ? `Assistindo ${watching.name}` : code ? "Na sala" : "Fora de sala";
 
   return (
@@ -419,6 +431,7 @@ function UserPanel() {
           name={name}
           size={32}
           live={live}
+          speaking={speaking}
           status={code ? "online" : "offline"}
           src={profile ? avatarUrl(profile) : undefined}
         />
@@ -427,18 +440,8 @@ function UserPanel() {
           <p className="truncate text-xs leading-tight text-text-muted">{status}</p>
         </div>
       </div>
-      {watching && (
-        <Tooltip label={watchListening ? "Silenciar" : "Ativar som"} side="top">
-          <button
-            type="button"
-            aria-label={watchListening ? "Silenciar a sala" : "Ativar o som da sala"}
-            onClick={() => void setWatchListening(!watchListening)}
-            className={`rounded p-1.5 transition-colors hover:bg-surface-hover ${watchListening ? "text-text-muted hover:text-text" : "text-live"}`}
-          >
-            {watchListening ? <Headphones size={18} /> : <HeadphoneOff size={18} />}
-          </button>
-        </Tooltip>
-      )}
+      <MicButton />
+      <DeafenButton />
       <SettingsDialog
         trigger={
           <Tooltip label="Configurações" side="top">
@@ -453,51 +456,5 @@ function UserPanel() {
         }
       />
     </footer>
-  );
-}
-
-/** Bolinha com a inicial, cor fixa por nome, anel vermelho se ao vivo e ponto de status. */
-function Avatar(props: {
-  name: string;
-  size: number;
-  live: boolean;
-  status?: "online" | "offline";
-  /** Foto (do Discord); sem ela, a bolinha com a inicial. */
-  src?: string;
-}) {
-  const colors = ["#f0b232", "#23a55a", "#3ba0ff", "#e06c9f", "#6e4ff6", "#f23f43"];
-  const hash = [...props.name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
-  return (
-    <span aria-hidden className="relative shrink-0">
-      {props.src ? (
-        <img
-          src={props.src}
-          alt=""
-          width={props.size}
-          height={props.size}
-          className={`rounded-full object-cover ${props.live ? "ring-2 ring-live" : ""}`}
-          style={{ width: props.size, height: props.size }}
-        />
-      ) : (
-        <span
-          className={`grid place-items-center rounded-full font-semibold text-white ${props.live ? "ring-2 ring-live" : ""}`}
-          style={{
-            width: props.size,
-            height: props.size,
-            fontSize: props.size * 0.42,
-            background: colors[hash % colors.length],
-          }}
-        >
-          {props.name.slice(0, 1).toUpperCase()}
-        </span>
-      )}
-      {props.status && (
-        <span
-          className={`absolute -right-0.5 -bottom-0.5 size-3.5 rounded-full border-[3px] border-surface-panel ${
-            props.status === "online" ? "bg-online" : "bg-text-faint"
-          }`}
-        />
-      )}
-    </span>
   );
 }

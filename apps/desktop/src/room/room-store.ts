@@ -3,12 +3,17 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type { StreamStats } from "../stream/stream-store";
 import { toast } from "../ui/toast-store";
+import { toRust, useVoiceStore } from "../voice/voice-store";
 
 /** Espelha `sv_net::Member`. */
 export interface Member {
   id: string;
   name: string;
   live: boolean;
+  /** Microfone silenciado (chat de voz). Ausente em apps antigos. */
+  muted?: boolean;
+  /** Ensurdecido (não ouve ninguém). */
+  deafened?: boolean;
 }
 
 const NAME_KEY = "squadview.nome";
@@ -130,7 +135,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   async join(code, name, roomName = null) {
     set({ joining: true, joinError: null });
     try {
-      const info = await invoke<{ code: string; roomName?: string | null }>("room_join", { code, name, roomName });
+      // A voz liga junto com a sala, com os dispositivos, volumes, mudo e surdo salvos.
+      const voice = toRust(useVoiceStore.getState().prefs);
+      const info = await invoke<{ code: string; roomName?: string | null }>("room_join", {
+        code,
+        name,
+        roomName,
+        voice,
+      });
       saveName(name.trim());
       set({
         code: info.code,

@@ -62,7 +62,10 @@ describe("criar e entrar em sala", () => {
     fireEvent.click(submit);
     // Sem nome digitado, a sala ganha o nome padrão "Sala de <nome>".
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("room_join", { code: null, name: " Kaique ", roomName: "Sala de Kaique" }),
+      expect(invoke).toHaveBeenCalledWith(
+        "room_join",
+        expect.objectContaining({ code: null, name: " Kaique ", roomName: "Sala de Kaique" }),
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
@@ -86,7 +89,10 @@ describe("criar e entrar em sala", () => {
     expect(code).toHaveValue("B8RJ2Q");
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("room_join", { code: "B8RJ2Q", name: "Beto", roomName: null }),
+      expect(invoke).toHaveBeenCalledWith(
+        "room_join",
+        expect.objectContaining({ code: "B8RJ2Q", name: "Beto", roomName: null }),
+      ),
     );
   });
 
@@ -130,7 +136,11 @@ describe("na sala", () => {
     const list = screen.getByRole("list", { name: "Membros da sala" });
     expect(list).toHaveTextContent("Kaique (você)");
     expect(list).toHaveTextContent("Ana AO VIVO");
-    expect(screen.getByRole("heading", { name: "Ana está ao vivo" })).toBeInTheDocument();
+    // Na grade da voz, quem está ao vivo tem o selo e o botão de assistir.
+    const grid = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(grid).toHaveTextContent("Ana");
+    expect(within(grid).getAllByText("AO VIVO")).toHaveLength(1);
+    expect(within(grid).getByRole("button", { name: "Assistir a transmissão" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Assistir Beto" })).not.toBeInTheDocument();
   });
 
@@ -139,7 +149,7 @@ describe("na sala", () => {
     emit("room-members", [ME, ANA]);
     fireEvent.click(screen.getAllByRole("button", { name: "Assistir Ana" })[0]);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_watch", { memberId: ANA.id }));
-    expect(screen.getByText("Conectando com Ana…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conectando…" })).toBeInTheDocument();
 
     emit("watch-started", ANA);
     expect(screen.getByRole("status", { name: "Sucesso" })).toHaveTextContent("Conectado direto com Ana.");
@@ -231,7 +241,7 @@ describe("na sala", () => {
   it("sai da sala", async () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
-    fireEvent.click(screen.getByRole("button", { name: "Sair da sala" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Sair da sala" })[0]);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_leave"));
     expect(screen.getByRole("button", { name: "Entrar com código" })).toBeInTheDocument();
   });
@@ -239,13 +249,14 @@ describe("na sala", () => {
   it("vários amigos ao vivo aparecem juntos", () => {
     render(<App />);
     emit("room-members", [ME, ANA, { ...BETO, live: true }]);
-    expect(screen.getByRole("heading", { name: "2 amigos ao vivo" })).toBeInTheDocument();
+    const grid = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(within(grid).getAllByText("AO VIVO")).toHaveLength(2);
   });
 
   it("avisa quando não consegue copiar o convite", async () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("negado")) } });
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Convidar pessoas" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Convidar pessoas" })[0]);
     expect(await screen.findByRole("status", { name: "Aviso" })).toHaveTextContent(
       "O link é https://kaique292.github.io/squadview/convite/?sala=B8RJ2Q",
     );
@@ -281,9 +292,11 @@ describe("na sala", () => {
   it("o painel do usuário mostra o que estamos fazendo", () => {
     useRoomStore.setState({ watching: ANA, members: [ME, ANA] });
     render(<App />);
-    expect(screen.getByRole("contentinfo")).toHaveTextContent("Assistindo Ana");
-    fireEvent.click(screen.getByRole("button", { name: "Silenciar a sala" }));
-    expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: false });
+    const panel = screen.getByRole("contentinfo");
+    expect(panel).toHaveTextContent("Assistindo Ana");
+    // O painel tem o microfone e o fone da voz, como no Discord.
+    expect(within(panel).getByRole("button", { name: "Silenciar microfone" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Ensurdecer" })).toBeInTheDocument();
   });
 });
 
@@ -302,7 +315,10 @@ describe("nome da sala e apelido", () => {
     fireEvent.change(screen.getByPlaceholderText("Sala de Kaique"), { target: { value: "Galera do LoL" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Criar sala" }).at(-1)!);
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("room_join", { code: null, name: "Kaique", roomName: "Galera do LoL" }),
+      expect(invoke).toHaveBeenCalledWith(
+        "room_join",
+        expect.objectContaining({ code: null, name: "Kaique", roomName: "Galera do LoL" }),
+      ),
     );
     emit("room-members", [ME]);
     expect(await screen.findByRole("button", { name: /Galera do LoL/ })).toBeInTheDocument();

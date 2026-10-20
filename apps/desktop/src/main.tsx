@@ -8,6 +8,7 @@ import { useAccountStore } from "./account/account-store";
 import { listenToRoomEvents, useRoomStore } from "./room/room-store";
 import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
 import { SPLASH_EVENT, boot } from "./splash/boot";
+import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { toast } from "./ui/toast-store";
 import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
@@ -25,7 +26,15 @@ createRoot(document.getElementById("root")!).render(
 if ("__TAURI_INTERNALS__" in window) {
   void boot({
     steps: [
-      { text: "Conectando os fios…", run: () => Promise.all([listenToStreamEvents(), listenToRoomEvents()]) },
+      {
+        text: "Conectando os fios…",
+        run: () =>
+          Promise.all([
+            listenToStreamEvents(),
+            listenToRoomEvents(),
+            listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name),
+          ]),
+      },
       { text: "Carregando seu perfil…", run: () => useAccountStore.getState().load() },
       // Só no app instalado (no `yarn dev` não há updater).
       ...(import.meta.env.DEV
@@ -56,6 +65,7 @@ if (import.meta.env.DEV) {
       appearance: useAppearanceStore,
       account: useAccountStore,
       update: useUpdateStore,
+      voice: useVoiceStore,
     },
   });
 }

@@ -5,11 +5,12 @@ import { avatarUrl, displayName, useAccountStore } from "../account/account-stor
 import { Modal, ModalClose } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
 import { DiagnosticsSection } from "./DiagnosticsSection";
+import { VoiceSection } from "./VoiceSection";
 import { usePresenceSettings } from "./presence-store";
 import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 
-/** Configurações do app: conta, status no Discord, registro de desempenho e aparência. */
+/** Configurações do app: conta, voz, status no Discord, registro de desempenho e aparência. */
 export function SettingsDialog(props: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   const glass = useAppearanceStore((s) => s.glass);
@@ -32,6 +33,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
       }
     >
       <AccountSection />
+      <VoiceSection />
       <PresenceSection />
       <DiagnosticsSection />
       <section aria-labelledby="aparencia" className="mt-5 flex flex-col gap-3 text-left">
