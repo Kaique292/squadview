@@ -37,7 +37,7 @@ base64 = "0.23.1"
 # servidorzinho local que recebe o retorno do navegador.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 getrandom = "0.4"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
 tauri-plugin-opener = "2"
