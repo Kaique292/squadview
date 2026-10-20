@@ -5,6 +5,7 @@ import { useStreamStore } from "../stream/stream-store";
 import { useVideoSlot } from "../stream/video-slot";
 import type { Member } from "./room-store";
 import { useRoomStore } from "./room-store";
+import { Viewers } from "./Viewers";
 import { VolumeControl } from "./VolumeControl";
 
 /** Sem nenhum quadro por esse tempo, avisamos que a imagem não está chegando. */
@@ -75,6 +76,9 @@ export function WatchView(props: { member: Member }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
+          <span className="mr-2">
+            <Viewers streamerId={props.member.id} side="bottom" />
+          </span>
           <VolumeControl />
           <BarButton
             label={fullscreen ? "Sair da tela cheia" : "Tela cheia"}

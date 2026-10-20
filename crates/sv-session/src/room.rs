@@ -207,6 +207,7 @@ impl Room {
                     deafened: false,
                     discord,
                     verified: false,
+                    watching: None,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -367,6 +368,19 @@ impl Room {
         self.inner.publish_members();
     }
 
+    /// Começamos (`Some`) ou paramos (`None`) de assistir alguém: a sala fica sabendo, para quem
+    /// transmite ver quantos e quem assistem (inclusive quem recebe repassado por outro membro).
+    pub fn set_watching(&self, member_id: Option<&str>) {
+        let mut me = lock(&self.inner.me);
+        if me.watching.as_deref() == member_id {
+            return;
+        }
+        me.watching = member_id.map(str::to_owned);
+        drop(me);
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
     /// Quantos amigos estão assistindo a gente.
     pub fn viewer_count(&self) -> usize {
         self.inner.broadcaster.viewer_count()
@@ -385,7 +399,7 @@ impl Inner {
     /// Manda para a sala o nosso estado (ao vivo, mudo, surdo).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
-        lock(&self.client).set_status(me.live, me.muted, me.deafened);
+        lock(&self.client).set_status(me.live, me.muted, me.deafened, me.watching.as_deref());
     }
 
     /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
@@ -467,6 +481,7 @@ impl Inner {
                         deafened: false,
                         discord: None,
                         verified: false,
+                        watching: None,
                     });
                     match result {
                         Ok(conn) => (inner.on_update)(RoomUpdate::WatchReady {
@@ -745,6 +760,7 @@ mod tests {
             deafened: false,
             discord: None,
             verified: false,
+            watching: None,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![
             (RoomUpdate::Members(vec![member.clone()]), "Members(["),

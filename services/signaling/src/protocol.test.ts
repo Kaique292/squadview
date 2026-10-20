@@ -86,12 +86,19 @@ describe("mensagens do cliente", () => {
       live: true,
       muted: false,
       deafened: false,
+      watching: null,
     });
     expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
       type: "status",
       live: false,
       muted: true,
       deafened: true,
+      watching: null,
+    });
+    // Quem estamos assistindo (para quem transmite ver quem assiste).
+    expect(parseClientMessage(`{"type":"status","live":false,"watching":"${PEER}"}`)).toMatchObject({
+      type: "status",
+      watching: PEER,
     });
     expect(parseClientMessage(`{"type":"signal","to":"${PEER}","payload":{"candidates":[]}}`)).toEqual({
       type: "signal",
@@ -111,6 +118,8 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"","protocol":1}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":"sim"}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":true,"muted":"sim"}')).toBeNull();
+    expect(parseClientMessage('{"type":"status","live":true,"watching":"não é um id"}')).toBeNull();
+    expect(parseClientMessage('{"type":"status","live":true,"watching":7}')).toBeNull();
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();

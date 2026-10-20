@@ -248,8 +248,16 @@ pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
         preview::hand_off_exit(&app, watching.view.snapshot());
         drop(watching);
         preview::set_watching(&app, false);
+        announce_watching(&app, None);
     })
     .await
+}
+
+/// Conta para a sala quem estamos assistindo (quem transmite vê quantos e quem assistem).
+fn announce_watching<R: Runtime>(app: &AppHandle<R>, member_id: Option<&str>) {
+    if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
+        room.set_watching(member_id);
+    }
 }
 
 /// Liga ou desliga o som de quem estamos assistindo.
@@ -419,6 +427,7 @@ fn start_watching<R: Runtime>(
                     }
                     drop(ended);
                     preview::set_watching(&app, false);
+                    announce_watching(&app, None);
                     let _ = app.emit(
                         WATCH_ENDED_EVENT,
                         WatchEnded {
@@ -452,6 +461,7 @@ fn start_watching<R: Runtime>(
         view,
     });
     preview::set_watching(app, true);
+    announce_watching(app, Some(&member.id));
     let _ = app.emit(WATCH_STARTED_EVENT, member);
 }
 

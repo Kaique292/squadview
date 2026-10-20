@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useRoomStore } from "../room/room-store";
+import { Viewers } from "../room/Viewers";
 import { Tooltip } from "../ui/Tooltip";
 import { StatsCard } from "./StatsCard";
 import { useStreamStore } from "./stream-store";
@@ -23,6 +24,7 @@ export function StreamView() {
   const { stats, notice, listening, fullscreen, setListening, setFullscreen, stop } = useStreamStore();
   const [details, setDetails] = useState(false);
   const code = useRoomStore((s) => s.code);
+  const myId = useRoomStore((s) => s.members[0]?.id);
   const slot = useVideoSlot();
 
   return (
@@ -64,6 +66,12 @@ export function StreamView() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
+          {/* A dica abre para baixo: em cima está o vídeo nativo, que a cobriria. */}
+          {code && myId && (
+            <span className="mr-2">
+              <Viewers streamerId={myId} side="bottom" />
+            </span>
+          )}
           {stats?.audioActive && (
             <BarButton
               label={listening ? "Parar de ouvir a prévia" : "Ouvir o som da prévia"}

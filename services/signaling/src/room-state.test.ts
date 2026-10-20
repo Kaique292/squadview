@@ -268,7 +268,16 @@ describe("status ao vivo", () => {
     send(ana, { type: "status", live: true });
     expect(beto.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false, discord: null, verified: false },
+      member: {
+        id: idOf(ana),
+        name: "Ana",
+        live: true,
+        muted: false,
+        deafened: false,
+        discord: null,
+        verified: false,
+        watching: null,
+      },
     });
 
     const caio = join("Caio");
@@ -292,10 +301,21 @@ describe("estado de voz", () => {
         deafened: false,
         discord: null,
         verified: false,
+        watching: null,
       },
     });
     send(beto, { type: "status", live: true, muted: true, deafened: true });
     expect(ana.last()).toMatchObject({ member: { live: true, muted: true, deafened: true } });
+  });
+
+  it("conta para a sala quem cada membro está assistindo", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(ana, { type: "status", live: true });
+    send(beto, { type: "status", live: false, watching: idOf(ana) });
+    expect(ana.last()).toMatchObject({ type: "member-updated", member: { id: idOf(beto), watching: idOf(ana) } });
+    send(beto, { type: "status", live: false, watching: null });
+    expect(ana.last()).toMatchObject({ member: { id: idOf(beto), watching: null } });
   });
 });
 

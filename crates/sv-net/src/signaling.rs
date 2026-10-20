@@ -58,6 +58,9 @@ pub struct Member {
     /// Conta conferida pela sessão do SquadView (só conferidos viram amigos).
     #[serde(default)]
     pub verified: bool,
+    /// Quem este membro está assistindo (id). Ausente no Worker antigo e em apps até o 0.4.0.
+    #[serde(default)]
+    pub watching: Option<String>,
 }
 
 /// Mensagens que mandamos.
@@ -80,6 +83,8 @@ enum Outgoing<'a> {
         live: bool,
         muted: bool,
         deafened: bool,
+        /// Quem estamos assistindo: quem transmite vê quantos e quem assistem.
+        watching: Option<&'a str>,
     },
     /// Renomeia a sala.
     Room {
@@ -288,12 +293,17 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.set_status(live, false, false);
+        self.set_status(live, false, false, None);
     }
 
-    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado e ensurdecido.
-    pub fn set_status(&self, live: bool, muted: bool, deafened: bool) {
-        self.send(&Outgoing::Status { live, muted, deafened });
+    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido e quem assistimos.
+    pub fn set_status(&self, live: bool, muted: bool, deafened: bool, watching: Option<&str>) {
+        self.send(&Outgoing::Status {
+            live,
+            muted,
+            deafened,
+            watching,
+        });
     }
 
     /// Renomeia a sala (todos recebem [`RoomEvent::RoomRenamed`], inclusive nós).
@@ -430,9 +440,21 @@ mod tests {
             live: true,
             muted: false,
             deafened: true,
+            watching: None,
         })
         .unwrap();
-        assert_eq!(status, r#"{"type":"status","live":true,"muted":false,"deafened":true}"#);
+        assert_eq!(
+            status,
+            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null}"#
+        );
+        let watching = serde_json::to_string(&Outgoing::Status {
+            live: false,
+            muted: false,
+            deafened: false,
+            watching: Some("0123456789abcdef"),
+        })
+        .unwrap();
+        assert!(watching.ends_with(r#""watching":"0123456789abcdef"}"#), "{watching}");
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
         };
@@ -463,6 +485,7 @@ mod tests {
                     deafened: false,
                     discord: None,
                     verified: false,
+                    watching: None,
                 }],
                 room: None,
             })
