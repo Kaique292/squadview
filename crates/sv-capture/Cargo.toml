@@ -17,6 +17,7 @@ windows-core.workspace = true
 
 [dev-dependencies]
 serde_json = "1"
+sv-gpu = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

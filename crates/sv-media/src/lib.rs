@@ -7,6 +7,7 @@ mod mic;
 pub mod opus;
 mod playback;
 pub mod voice;
+mod wasapi;
 mod window;
 
 pub use decode::Decoder;

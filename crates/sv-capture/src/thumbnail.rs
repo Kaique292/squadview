@@ -122,6 +122,69 @@ mod tests {
     }
 
     #[test]
+    fn linha_sem_sobra_e_imagem_vazia() {
+        assert_eq!(bgra_rows_to_rgb(&[10, 20, 30, 0], 4, 1, 1), vec![30, 20, 10]);
+        assert!(bgra_rows_to_rgb(&[], 4, 0, 0).is_empty());
+    }
+
+    fn gpu_frame(texture: ID3D11Texture2D, size: Size) -> sv_gpu::GpuFrame {
+        sv_gpu::GpuFrame {
+            texture,
+            slice: 0,
+            size,
+            timestamp_us: 0,
+        }
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo"]
+    fn foto_de_um_quadro_bgra_reduzida_e_em_rgb() {
+        let gpu = Gpu::new().unwrap();
+        let size = Size::new(1280, 720);
+        // Azul em BGRA (B = 200).
+        let frame = gpu_frame(
+            sv_gpu::testing::solid_bgra(&gpu, size, [200, 40, 10, 255]).unwrap(),
+            size,
+        );
+        let thumb = read_frame(&gpu, &frame, Size::new(320, 320)).unwrap();
+        assert_eq!((thumb.width, thumb.height), (320, 180), "cabe na caixa sem distorcer");
+        assert_eq!(thumb.rgb.len(), 320 * 180 * 3);
+        let px = &thumb.rgb[..3];
+        assert!(
+            px[0].abs_diff(10) <= 3 && px[1].abs_diff(40) <= 3 && px[2].abs_diff(200) <= 3,
+            "{px:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo"]
+    fn foto_do_ultimo_quadro_decodificado_em_nv12() {
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
+        let gpu = Gpu::new().unwrap();
+        let size = Size::new(64, 32);
+        // Cinza médio no NV12 de estúdio.
+        let mut nv12 = vec![126u8; 64 * 32];
+        nv12.extend(std::iter::repeat_n(128u8, 64 * 16));
+        let texture = sv_gpu::testing::texture(&gpu, size, DXGI_FORMAT_NV12, Some(&nv12)).unwrap();
+        let thumb = read_frame(&gpu, &gpu_frame(texture, size), Size::new(64, 64)).unwrap();
+        assert_eq!((thumb.width, thumb.height), (64, 32));
+        assert!(thumb.rgb.iter().all(|&c| c.abs_diff(128) <= 8), "{:?}", &thumb.rgb[..3]);
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo"]
+    fn fonte_que_nao_existe_nao_tem_miniatura() {
+        let gpu = Gpu::new().unwrap();
+        let none = thumbnail(
+            &gpu,
+            CaptureSource::Window(0x7fff_fff0),
+            Size::new(320, 180),
+            Duration::from_millis(500),
+        );
+        assert_eq!(none, None);
+    }
+
+    #[test]
     #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]
     fn tira_miniatura_do_monitor_principal() {
         let gpu = Gpu::new().unwrap();

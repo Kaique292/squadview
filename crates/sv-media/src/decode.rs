@@ -82,7 +82,7 @@ impl Decoder {
         let sample = self.input_sample(data)?;
         // SAFETY: amostra válida, tempos em unidades de 100 ns.
         unsafe {
-            sample.SetSampleTime(timestamp_us as i64 * 10)?;
+            sample.SetSampleTime(mfu::us_to_mf_time(timestamp_us))?;
             self.transform.ProcessInput(0, &sample, 0)?;
         }
         loop {
@@ -106,9 +106,7 @@ impl Decoder {
         let i = self.next_input;
         self.next_input = (i + 1) % INPUT_POOL;
         let needed = data.len() as u32;
-        if self.inputs.get(i).is_none_or(|(_, _, cap)| *cap < needed) {
-            // Cresce em degraus para não realocar a cada keyframe um pouco maior.
-            let capacity = needed.next_power_of_two().max(256 * 1024);
+        if let Some(capacity) = grow_to(self.inputs.get(i).map(|(_, _, cap)| *cap), needed) {
             // SAFETY: criação de amostra e buffer de memória.
             let entry = unsafe {
                 let buffer = MFCreateMemoryBuffer(capacity)?;
@@ -141,7 +139,7 @@ impl Decoder {
             // SAFETY: amostra própria para decoders que não fornecem a de saída (sem D3D).
             unsafe {
                 let sample = MFCreateSample()?;
-                sample.AddBuffer(&MFCreateMemoryBuffer(self.size.width * self.size.height * 3 / 2)?)?;
+                sample.AddBuffer(&MFCreateMemoryBuffer(nv12_bytes(self.size))?)?;
                 Some(sample)
             }
         };
@@ -176,7 +174,7 @@ impl Decoder {
             dxgi.GetResource(&ID3D11Texture2D::IID, &mut raw)?;
             let texture = ID3D11Texture2D::from_raw(raw);
             let slice = dxgi.GetSubresourceIndex()?;
-            let timestamp_us = (sample.GetSampleTime().unwrap_or(0) / 10).max(0) as u64;
+            let timestamp_us = mfu::mf_time_to_us(sample.GetSampleTime().unwrap_or(0));
             Ok(Output::Frame(GpuFrame {
                 texture,
                 slice,
@@ -209,4 +207,138 @@ enum Output {
     Frame(GpuFrame),
     NeedMoreInput,
     FormatChanged,
+}
+
+/// Menor buffer de entrada: cabe um keyframe 1080p comum sem realocar.
+const MIN_INPUT_CAPACITY: u32 = 256 * 1024;
+
+/// Novo tamanho para o buffer de entrada que hoje tem `current` bytes (ou nenhum), se ele não
+/// comporta `needed`. Cresce em degraus (potências de 2) para não realocar a cada keyframe um
+/// pouco maior; `None` quando o buffer atual serve.
+fn grow_to(current: Option<u32>, needed: u32) -> Option<u32> {
+    if current.is_some_and(|cap| cap >= needed) {
+        return None;
+    }
+    Some(needed.next_power_of_two().max(MIN_INPUT_CAPACITY))
+}
+
+/// Bytes de uma imagem NV12 compacta (Y inteiro + UV com metade da altura).
+fn nv12_bytes(size: Size) -> u32 {
+    size.width * size.height * 3 / 2
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use sv_core::QualityLayer;
+    use sv_encode::{EncodedFrame, Encoder, EncoderConfig, MfEncoder};
+    use sv_gpu::testing::texture;
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
+
+    use super::*;
+
+    #[test]
+    fn buffer_de_entrada_so_cresce_quando_nao_cabe() {
+        assert_eq!(grow_to(None, 1_000), Some(MIN_INPUT_CAPACITY), "primeiro uso: 256 KB");
+        assert_eq!(grow_to(Some(MIN_INPUT_CAPACITY), 1_000), None, "cabe: reaproveita");
+        assert_eq!(grow_to(Some(MIN_INPUT_CAPACITY), MIN_INPUT_CAPACITY), None);
+        // Keyframe de 300 KB: sobe para o próximo degrau.
+        assert_eq!(grow_to(Some(MIN_INPUT_CAPACITY), 300_000), Some(512 * 1024));
+        assert_eq!(grow_to(None, 3_000_000), Some(4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn tamanho_de_uma_imagem_nv12() {
+        assert_eq!(nv12_bytes(Size::new(1920, 1080)), 1920 * 1080 * 3 / 2);
+        assert_eq!(nv12_bytes(Size::new(2, 2)), 6);
+    }
+
+    /// Codifica `count` frames com o encoder de hardware e devolve o que saiu.
+    fn encode_frames(gpu: &Gpu, config: EncoderConfig, count: u64) -> Vec<EncodedFrame> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let encoder = MfEncoder::start(gpu, config, move |f| {
+            let _ = tx.send(f);
+        })
+        .expect("encoder");
+        let input = texture(gpu, config.size, DXGI_FORMAT_NV12, None).unwrap();
+        for i in 0..count {
+            let frame = GpuFrame {
+                texture: input.clone(),
+                slice: 0,
+                size: config.size,
+                timestamp_us: i * 33_333,
+            };
+            while !encoder.submit(frame.clone()) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        drop(encoder);
+        rx.try_iter().collect()
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo com encoder e decoder H.264"]
+    fn decodifica_o_que_o_encoder_de_hardware_produziu() {
+        let gpu = Gpu::new().unwrap();
+        let config = EncoderConfig::for_layer(QualityLayer::Low);
+        let frames = encode_frames(&gpu, config, 30);
+        assert!(frames.len() >= 25, "só {} frames codificados", frames.len());
+
+        let mut decoder = Decoder::new(&gpu, config.size, config.fps).expect("decoder");
+        assert!(format!("{decoder:?}").contains("1280"));
+        let mut decoded = Vec::new();
+        for f in &frames {
+            decoder
+                .decode(&f.data, f.timestamp_us, |out| {
+                    decoded.push((out.size, out.timestamp_us, out.slice));
+                })
+                .unwrap();
+        }
+        assert!(
+            decoded.len() >= frames.len() - 3,
+            "{} de {}",
+            decoded.len(),
+            frames.len()
+        );
+        assert!(decoded.iter().all(|(size, _, _)| *size == config.size));
+        // Os timestamps atravessam o decoder.
+        let first_ts = decoded[0].1;
+        assert!(frames.iter().any(|f| f.timestamp_us == first_ts));
+        // As amostras de entrada são reaproveitadas: nunca mais que o pool.
+        assert!(decoder.inputs.len() <= INPUT_POOL);
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo com encoder e decoder H.264"]
+    fn depois_do_flush_volta_a_decodificar_no_proximo_keyframe() {
+        let gpu = Gpu::new().unwrap();
+        let config = EncoderConfig::for_layer(QualityLayer::Low);
+        let frames = encode_frames(&gpu, config, 10);
+        let mut decoder = Decoder::new(&gpu, config.size, config.fps).unwrap();
+        for f in &frames[..5] {
+            decoder.decode(&f.data, f.timestamp_us, |_| {}).unwrap();
+        }
+        decoder.flush();
+        // Recomeça pelo keyframe (o primeiro frame, que traz SPS/PPS).
+        let mut out = 0;
+        for f in &frames {
+            decoder.decode(&f.data, f.timestamp_us, |_| out += 1).unwrap();
+        }
+        assert!(out > 0, "nada saiu depois do flush");
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo com decoder H.264"]
+    fn lixo_na_entrada_nao_derruba_o_decoder() {
+        let gpu = Gpu::new().unwrap();
+        let mut decoder = Decoder::new(&gpu, Size::new(640, 360), 30).unwrap();
+        // Frame grande (força o buffer de entrada a crescer) e sem nada decodificável.
+        let junk = vec![0x5a; 600 * 1024];
+        let mut out = 0;
+        let _ = decoder.decode(&junk, 0, |_| out += 1);
+        assert_eq!(out, 0);
+        assert!(decoder.inputs[0].2 >= 600 * 1024);
+    }
 }

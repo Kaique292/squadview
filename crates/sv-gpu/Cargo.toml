@@ -9,6 +9,10 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Ajudantes de teste (texturas com conteúdo e leitura de volta). Só para dev-dependencies.
+testing = []
+
 [dependencies]
 windows.workspace = true
 
