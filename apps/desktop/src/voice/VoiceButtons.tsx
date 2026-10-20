@@ -193,24 +193,25 @@ function RadioItem(props: { value: string; children: ReactNode }) {
 /** Controle de volume dentro do menu (as setas do teclado mexem nele, não no menu). */
 export function VolumeSlider(props: { label: string; value: number; onChange: (v: number) => void }) {
   return (
-    <div className="px-2 py-2" onKeyDown={(e) => e.stopPropagation()}>
-      <div className="mb-2 flex items-center justify-between text-sm font-medium">
-        <label>
+    <div className="w-full px-2 py-2" onKeyDown={(e) => e.stopPropagation()}>
+      {/* Bloco na largura toda: o controle ocupa a linha inteira, como no Discord. */}
+      <label className="block w-full text-sm font-medium">
+        <span className="flex items-center justify-between">
           {props.label}
-          <input
-            type="range"
-            aria-label={props.label}
-            min={0}
-            max={MAX_VOICE_VOLUME}
-            step={5}
-            value={props.value}
-            onChange={(e) => props.onChange(Number(e.target.value))}
-            style={{ "--fill": `${(props.value / MAX_VOICE_VOLUME) * 100}%` } as CSSProperties}
-            className="glass-slider mt-2 block w-full"
-          />
-        </label>
-      </div>
-      <p className="text-right text-xs text-text-faint tabular-nums">{props.value}%</p>
+          <span className="text-xs font-normal text-text-faint tabular-nums">{props.value}%</span>
+        </span>
+        <input
+          type="range"
+          aria-label={props.label}
+          min={0}
+          max={MAX_VOICE_VOLUME}
+          step={5}
+          value={props.value}
+          onChange={(e) => props.onChange(Number(e.target.value))}
+          style={{ "--fill": `${(props.value / MAX_VOICE_VOLUME) * 100}%` } as CSSProperties}
+          className="glass-slider mt-3 block w-full"
+        />
+      </label>
     </div>
   );
 }

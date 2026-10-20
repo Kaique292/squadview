@@ -138,7 +138,9 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
   async loadDevices() {
     try {
-      set({ devices: await invoke<VoiceState["devices"]>("voice_devices") });
+      const devices = await invoke<VoiceState["devices"] | null>("voice_devices");
+      // Resposta fora do esperado não pode derrubar os botões: fica a lista vazia.
+      if (devices && Array.isArray(devices.inputs) && Array.isArray(devices.outputs)) set({ devices });
     } catch {
       // Fora do app (navegador, testes): sem lista.
     }
