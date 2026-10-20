@@ -52,7 +52,7 @@ impl Gpu {
 
         let video_device: ID3D11VideoDevice = device.cast()?;
         let video_context: ID3D11VideoContext1 = context.cast()?;
-        let adapter_name = adapter_name(&device).unwrap_or_else(|_| "placa desconhecida".into());
+        let adapter_name = adapter_name(&device).unwrap_or_else(|_| UNKNOWN_ADAPTER.into());
 
         Ok(Self {
             device,
@@ -69,21 +69,24 @@ impl Gpu {
     }
 }
 
+const UNKNOWN_ADAPTER: &str = "placa desconhecida";
+
 fn adapter_name(device: &ID3D11Device) -> Result<String> {
     // SAFETY: chamadas COM de leitura em objetos válidos.
-    unsafe {
-        let desc = device.cast::<IDXGIDevice>()?.GetAdapter()?.GetDesc()?;
-        let len = desc
-            .Description
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(desc.Description.len());
-        Ok(String::from_utf16_lossy(&desc.Description[..len]))
-    }
+    let desc = unsafe { device.cast::<IDXGIDevice>()?.GetAdapter()?.GetDesc()? };
+    Ok(utf16_until_nul(&desc.Description))
+}
+
+/// Texto de um buffer UTF-16 de tamanho fixo do Windows, até o primeiro zero (ou o buffer todo).
+pub(crate) fn utf16_until_nul(buf: &[u16]) -> String {
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..len])
 }
 
 #[cfg(test)]
 mod tests {
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP;
+
     use super::*;
 
     #[test]
@@ -91,5 +94,45 @@ mod tests {
     fn cria_device_com_suporte_a_video() {
         let gpu = Gpu::new().expect("device");
         assert!(!gpu.adapter_name().is_empty());
+        assert!(!gpu.adapter_name().contains("Basic Render"), "{}", gpu.adapter_name());
+    }
+
+    /// O adaptador de software (WARP) existe em todo Windows, inclusive na esteira, mas não
+    /// tem a API de vídeo do D3D11 (VideoDevice/VideoProcessor). Por isso a conversão e o
+    /// encode/decode só são testados com placa de vídeo. Se um dia o WARP passar a ter, este
+    /// teste avisa e os testes de conversão podem rodar na esteira.
+    #[test]
+    fn warp_nao_oferece_a_api_de_video_do_d3d11() {
+        let mut device = None;
+        // SAFETY: ponteiro de saída válido e vivo até o fim da chamada.
+        let result = unsafe {
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_WARP,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                None,
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                None,
+                None,
+            )
+        };
+        result.expect("o WARP existe em todo Windows");
+        let device: ID3D11Device = device.unwrap();
+        assert!(device.cast::<ID3D11VideoDevice>().is_err());
+        assert_eq!(adapter_name(&device).unwrap(), "Microsoft Basic Render Driver");
+    }
+
+    #[test]
+    fn nome_do_adaptador_para_no_primeiro_zero() {
+        let mut buf = [0u16; 8];
+        for (dst, c) in buf.iter_mut().zip("RTX".encode_utf16()) {
+            *dst = c;
+        }
+        assert_eq!(utf16_until_nul(&buf), "RTX");
+        let cheio: Vec<u16> = "ABCD".encode_utf16().collect();
+        assert_eq!(utf16_until_nul(&cheio), "ABCD");
+        assert_eq!(utf16_until_nul(&[]), "");
     }
 }

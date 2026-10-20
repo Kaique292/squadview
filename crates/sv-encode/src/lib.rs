@@ -54,6 +54,7 @@ impl EncoderConfig {
         let (width, height, fps) = match layer {
             QualityLayer::Low => (1280, 720, 30),
             QualityLayer::High => (1920, 1080, 60),
+            QualityLayer::Ultra => (2560, 1440, 60),
         };
         Self {
             size: Size::new(width, height),

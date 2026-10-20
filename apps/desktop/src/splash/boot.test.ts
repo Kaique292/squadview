@@ -59,4 +59,22 @@ describe("abertura com splash", () => {
     expect(ready).toHaveBeenCalled();
     expect(c.now()).toBeGreaterThanOrEqual(STEP_TIMEOUT_MS);
   });
+
+  it("a etapa sem prazo (baixar a atualização) espera terminar antes de abrir o app", async () => {
+    const ready = vi.fn(async () => {});
+    let finish = () => {};
+    const download = new Promise<void>((r) => (finish = r));
+    const opened = boot({
+      steps: [{ text: "Atualizando…", run: () => download, untimed: true }],
+      progress: () => {},
+      ready,
+      ...clock(),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    finish();
+    await opened;
+    expect(ready).toHaveBeenCalled();
+  });
 });

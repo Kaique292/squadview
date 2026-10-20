@@ -8,6 +8,8 @@ mod invite;
 mod presence;
 mod preview;
 mod room;
+#[cfg(test)]
+mod test_support;
 mod voice;
 
 /// Versão do app, exibida na interface e usada pelo auto-update.

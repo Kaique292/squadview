@@ -29,6 +29,49 @@ struct Shared {
     on_closed: Mutex<Option<OnClosed>>,
 }
 
+impl Shared {
+    fn new(desc: &StreamDescription, streamer_name: &str, on_stats: OnStats, on_closed: OnClosed) -> Arc<Self> {
+        Arc::new(Self {
+            meter: Mutex::new(StatsMeter::new()),
+            base: Mutex::new(StreamStats {
+                width: desc.width,
+                height: desc.height,
+                encoder: format!("transmitido por {streamer_name}"),
+                audio_active: desc.audio,
+                ..Default::default()
+            }),
+            viewer: Mutex::new(None),
+            audio: Mutex::new(None),
+            surface: Mutex::new(Surface::default()),
+            keyframes: OnceLock::new(),
+            rtt_us: OnceLock::new(),
+            on_stats: Mutex::new(on_stats),
+            on_closed: Mutex::new(Some(on_closed)),
+        })
+    }
+
+    fn on_audio_event(&self, event: ReceiverEvent) {
+        match event {
+            ReceiverEvent::Lost => lock(&self.meter).record_audio_lost(),
+            ReceiverEvent::PlaybackFailed(e) => {
+                lock(&self.base).audio_error = Some(format!("não deu para tocar o som: {e}"));
+            }
+        }
+    }
+
+    fn on_viewer_event(&self, event: ViewerEvent) {
+        match event {
+            ViewerEvent::Presented { latency_us } => lock(&self.meter).record_presented(latency_us),
+            ViewerEvent::NeedKeyframe => {
+                if let Some(k) = self.keyframes.get() {
+                    k.request();
+                }
+            }
+            ViewerEvent::Closed | ViewerEvent::Failed(_) => {}
+        }
+    }
+}
+
 /// O stream de um amigo sendo assistido. Para ao ser descartado.
 pub struct RemoteView {
     // A ordem importa: a conexão fecha antes do decoder e da janela.
@@ -53,33 +96,13 @@ impl RemoteView {
         on_stats: impl FnMut(StreamStats) + Send + 'static,
         on_closed: impl FnOnce(String) + Send + 'static,
     ) -> Self {
-        let state = Arc::new(Shared {
-            meter: Mutex::new(StatsMeter::new()),
-            base: Mutex::new(StreamStats {
-                width: desc.width,
-                height: desc.height,
-                encoder: format!("transmitido por {streamer_name}"),
-                audio_active: desc.audio,
-                ..Default::default()
-            }),
-            viewer: Mutex::new(None),
-            audio: Mutex::new(None),
-            surface: Mutex::new(Surface::default()),
-            keyframes: OnceLock::new(),
-            rtt_us: OnceLock::new(),
-            on_stats: Mutex::new(Box::new(on_stats)),
-            on_closed: Mutex::new(Some(Box::new(on_closed))),
-        });
+        let state = Shared::new(&desc, streamer_name, Box::new(on_stats), Box::new(on_closed));
 
         // O som do jogo do amigo toca direto (diferente da prévia, aqui ele não sai duplicado).
         let audio_state = Arc::downgrade(&state);
         let audio = AudioReceiver::start(true, move |event| {
-            let Some(state) = audio_state.upgrade() else { return };
-            match event {
-                ReceiverEvent::Lost => lock(&state.meter).record_audio_lost(),
-                ReceiverEvent::PlaybackFailed(e) => {
-                    lock(&state.base).audio_error = Some(format!("não deu para tocar o som: {e}"));
-                }
+            if let Some(state) = audio_state.upgrade() {
+                state.on_audio_event(event);
             }
         });
         *lock(&state.audio) = audio.ok();
@@ -105,15 +128,8 @@ impl RemoteView {
                 }
             },
             move |event| {
-                let Some(state) = event_state.upgrade() else { return };
-                match event {
-                    ViewerEvent::Presented { latency_us } => lock(&state.meter).record_presented(latency_us),
-                    ViewerEvent::NeedKeyframe => {
-                        if let Some(k) = state.keyframes.get() {
-                            k.request();
-                        }
-                    }
-                    ViewerEvent::Closed | ViewerEvent::Failed(_) => {}
+                if let Some(state) = event_state.upgrade() {
+                    state.on_viewer_event(event);
                 }
             },
         );
@@ -218,5 +234,123 @@ impl ReceiverSink for Sink {
         if let Some(cb) = lock(&self.state.on_closed).take() {
             cb(reason);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
+
+    use super::*;
+
+    type Seen = Arc<Mutex<Vec<StreamStats>>>;
+
+    /// O estado de quem assiste, sem decoder, janela nem saída de som.
+    fn state() -> (Arc<Shared>, Seen, Arc<Mutex<Vec<String>>>) {
+        let stats: Seen = Arc::default();
+        let closed: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (s, c) = (stats.clone(), closed.clone());
+        let desc = StreamDescription {
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            audio: true,
+        };
+        let state = Shared::new(
+            &desc,
+            "Ana",
+            Box::new(move |st| lock(&s).push(st)),
+            Box::new(move |reason| lock(&c).push(reason)),
+        );
+        (state, stats, closed)
+    }
+
+    fn header(seq: u32) -> FrameHeader {
+        FrameHeader {
+            seq,
+            timestamp_us: clock::now_us(),
+            keyframe: seq == 0,
+            encode_us: 3_000,
+        }
+    }
+
+    /// Passa da janela de 500 ms das estatísticas.
+    fn next_window() {
+        std::thread::sleep(Duration::from_micros(StatsMeter::WINDOW_US + 30_000));
+    }
+
+    #[test]
+    fn estatisticas_de_quem_assiste_trazem_o_formato_e_quem_transmite() {
+        let (state, stats, _) = state();
+        let rtt = Arc::new(AtomicU64::new(25_000));
+        let _ = state.rtt_us.set(rtt);
+        let mut sink = Sink { state: state.clone() };
+        sink.video(header(0), vec![0; 10_000]);
+        assert!(lock(&stats).is_empty(), "a janela ainda não fechou");
+        sink.audio(0, 0, 0.5, &[0; 200]);
+        state.on_viewer_event(ViewerEvent::Presented { latency_us: 40_000 });
+        next_window();
+        sink.video(header(1), vec![0; 10_000]);
+        let got = lock(&stats).clone();
+        assert_eq!(got.len(), 1);
+        let s = &got[0];
+        assert_eq!((s.width, s.height), (1920, 1080));
+        assert_eq!(s.encoder, "transmitido por Ana");
+        assert!(s.audio_active);
+        assert_eq!(s.rtt_ms, 25.0);
+        assert_eq!(s.encode_ms, 3.0);
+        assert_eq!(s.latency_ms, 40.0);
+        assert_eq!(s.audio_level, 0.5);
+        assert!(s.bitrate_kbps > 0 && s.audio_kbps > 0);
+    }
+
+    #[test]
+    fn sem_medida_da_conexao_a_ida_e_volta_fica_em_zero() {
+        let (state, stats, _) = state();
+        let mut sink = Sink { state };
+        sink.video(header(0), vec![1; 100]);
+        next_window();
+        sink.video(header(1), vec![1; 100]);
+        assert_eq!(lock(&stats)[0].rtt_ms, 0.0);
+    }
+
+    #[test]
+    fn som_perdido_e_falha_na_saida_aparecem_nas_estatisticas() {
+        let (state, stats, _) = state();
+        state.on_audio_event(ReceiverEvent::Lost);
+        state.on_audio_event(ReceiverEvent::Lost);
+        state.on_audio_event(ReceiverEvent::PlaybackFailed("sem fone".into()));
+        // Pedir keyframe sem conexão, janela fechada ou falha: não derruba nada.
+        state.on_viewer_event(ViewerEvent::NeedKeyframe);
+        state.on_viewer_event(ViewerEvent::Closed);
+        state.on_viewer_event(ViewerEvent::Failed("x".into()));
+        let mut sink = Sink { state };
+        sink.video(header(0), vec![1; 100]);
+        next_window();
+        sink.video(header(1), vec![1; 100]);
+        let s = &lock(&stats)[0];
+        assert_eq!(s.audio_lost, 2);
+        assert_eq!(s.audio_error.as_deref(), Some("não deu para tocar o som: sem fone"));
+    }
+
+    #[test]
+    fn som_recebido_vai_para_o_receptor_de_audio() {
+        let (state, _, _) = state();
+        *lock(&state.audio) = Some(AudioReceiver::start(false, |_| {}).unwrap());
+        let mut sink = Sink { state: state.clone() };
+        for seq in 0..5 {
+            sink.audio(seq, u64::from(seq), 0.1, &[0xF8, 0xFF, 0xFE]);
+        }
+        assert!(lock(&state.audio).is_some());
+    }
+
+    #[test]
+    fn fim_da_conexao_avisa_uma_vez_so() {
+        let (state, _, closed) = state();
+        let mut sink = Sink { state };
+        sink.closed("quem transmite parou".into());
+        sink.closed("de novo".into());
+        assert_eq!(*lock(&closed), ["quem transmite parou"]);
     }
 }

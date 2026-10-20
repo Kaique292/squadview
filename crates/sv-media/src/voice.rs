@@ -9,6 +9,7 @@ use std::fmt;
 use nnnoiseless::DenoiseState;
 use opus_rs::{Application, OpusDecoder, OpusEncoder};
 
+use crate::level::{AutoGain, soft_clip, volume_gain};
 use crate::opus::{OpusError, SAMPLE_RATE, peak};
 
 /// Amostras em cada pacote de voz (20 ms, mono).
@@ -31,8 +32,10 @@ const MAX_PACKET: usize = 1275;
 pub struct VoiceOptions {
     /// Supressão de ruído (o "Isolamento de voz" do Discord).
     pub noise_suppression: bool,
-    /// Ganho do microfone, de 0 a 2 (1 = sem mudança).
+    /// Volume do microfone, de 0 a 2 (1 = sem mudança), com a curva de [`volume_gain`].
     pub input_gain: f32,
+    /// Controle automático de ganho: deixa a voz no mesmo volume para todos (como no Discord).
+    pub auto_gain: bool,
 }
 
 impl Default for VoiceOptions {
@@ -40,6 +43,7 @@ impl Default for VoiceOptions {
         Self {
             noise_suppression: true,
             input_gain: 1.0,
+            auto_gain: true,
         }
     }
 }
@@ -68,6 +72,7 @@ pub struct VoiceEncoder {
     packet: Vec<u8>,
     /// Pacotes que o portão ainda fica aberto depois da última fala.
     hangover: u32,
+    agc: AutoGain,
 }
 
 impl fmt::Debug for VoiceEncoder {
@@ -97,6 +102,7 @@ impl VoiceEncoder {
             frame_vad: 0.0,
             packet: vec![0; MAX_PACKET],
             hangover: 0,
+            agc: AutoGain::new(),
         })
     }
 
@@ -117,7 +123,7 @@ impl VoiceEncoder {
         let mut start = 0;
         while self.input.len() - start >= DENOISE_FRAME {
             let chunk = &self.input[start..start + DENOISE_FRAME];
-            let gain = self.options.input_gain.clamp(0.0, 2.0);
+            let gain = volume_gain(self.options.input_gain);
             let vad = if self.options.noise_suppression {
                 // O RNNoise trabalha na escala de i16.
                 for (dst, s) in self.denoise_in.iter_mut().zip(chunk) {
@@ -147,6 +153,16 @@ impl VoiceEncoder {
                 };
                 on_level(level, open);
                 if open {
+                    // Nível da fala para todos: o AGC sobe o microfone baixo e o limitador segura
+                    // o estourado (sem corte seco). Só aprende enquanto há fala de verdade.
+                    let voiced = self.frame_vad >= VAD_THRESHOLD;
+                    let frame = &mut self.frame[..VOICE_FRAME];
+                    if self.options.auto_gain {
+                        self.agc.process(frame, voiced);
+                    } else {
+                        frame.iter_mut().for_each(|s| *s = soft_clip(*s));
+                    }
+                    let level = peak(frame);
                     let n = self
                         .encoder
                         .encode(&self.frame[..VOICE_FRAME], VOICE_FRAME, &mut self.packet)
@@ -226,6 +242,7 @@ mod tests {
     const PLAIN: VoiceOptions = VoiceOptions {
         noise_suppression: false,
         input_gain: 1.0,
+        auto_gain: false,
     };
 
     #[test]
@@ -258,6 +275,7 @@ mod tests {
             VoiceOptions {
                 noise_suppression: false,
                 input_gain: 0.0,
+                auto_gain: true,
             },
             &tone(0.5, 0.3),
             480,

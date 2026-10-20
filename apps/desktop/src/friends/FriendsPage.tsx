@@ -5,7 +5,7 @@ import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, useAccountStore } from "../account/account-store";
 import { useRoomStore } from "../room/room-store";
 import { Avatar } from "../ui/Avatar";
-import { holdOverlay } from "../ui/overlay";
+import { holdOverlay, useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
 import { type Friend, type Person, presenceText, useFriendsStore } from "./friends-store";
@@ -184,6 +184,7 @@ function FriendRow(props: { friend: Friend }) {
   const act = useFriendsStore((s) => s.act);
   const waitingFor = useFriendsStore((s) => s.waitingFor);
   const p = friend.presence;
+  const onMenuOpenChange = useOverlayMenu();
   return (
     <Row person={friend} online={p.online} detail={presenceText(p)}>
       {p.inRoom && (
@@ -201,7 +202,7 @@ function FriendRow(props: { friend: Friend }) {
           <UserPlus size={18} />
         </RoundAction>
       )}
-      <Menu.Root>
+      <Menu.Root onOpenChange={onMenuOpenChange}>
         <Menu.Trigger asChild>
           <button
             type="button"

@@ -16,6 +16,19 @@ use crate::voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};
 /// Conexões de voz abertas, por membro.
 type Conns = Arc<Mutex<HashMap<String, Connection>>>;
 
+/// Manda cada pacote do nosso microfone para todos com quem a voz está ligada.
+fn send_to_all(conns: Conns) -> OnPacket {
+    // Um buffer por chamada é pequeno (~100 bytes) e a voz manda no máximo 50 pacotes por segundo.
+    Arc::new(move |seq, peak, opus| {
+        let mut datagram = Vec::with_capacity(opus.len() + 16);
+        encode_audio(seq, sv_gpu::clock::now_us(), peak, opus, &mut datagram);
+        let datagram = bytes::Bytes::from(datagram);
+        for conn in lock(&conns).values() {
+            let _ = conn.send_datagram(datagram.clone());
+        }
+    })
+}
+
 pub(crate) struct VoiceMesh {
     conns: Conns,
     /// Fingerprint de quem chamou a gente → membro (para reconhecer a conexão quando chegar).
@@ -33,17 +46,12 @@ impl VoiceMesh {
         on_event: impl Fn(VoiceEvent) + Send + Sync + 'static,
     ) -> Self {
         let conns: Conns = Arc::default();
-        let send_conns = conns.clone();
-        // Um buffer por chamada é pequeno (~100 bytes) e a voz manda no máximo 50 pacotes por segundo.
-        let on_packet: OnPacket = Arc::new(move |seq, peak, opus| {
-            let mut datagram = Vec::with_capacity(opus.len() + 16);
-            encode_audio(seq, sv_gpu::clock::now_us(), peak, opus, &mut datagram);
-            let datagram = bytes::Bytes::from(datagram);
-            for conn in lock(&send_conns).values() {
-                let _ = conn.send_datagram(datagram.clone());
-            }
-        });
+        let on_packet = send_to_all(conns.clone());
         let engine = settings.and_then(|s| VoiceEngine::start(s, on_packet, on_event).ok().map(Arc::new));
+        Self::with_engine(conns, engine)
+    }
+
+    fn with_engine(conns: Conns, engine: Option<Arc<VoiceEngine>>) -> Self {
         Self {
             conns,
             fingerprints: Mutex::new(HashMap::new()),
@@ -126,5 +134,142 @@ impl VoiceMesh {
         for (_, conn) in lock(&self.conns).drain() {
             conn.close(quinn::VarInt::from_u32(0), b"tchau");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use sv_net::{Peer, Purpose};
+
+    use super::*;
+
+    /// Uma malha com voz, mas sem microfone nem saída de verdade.
+    fn mesh() -> Arc<VoiceMesh> {
+        let conns: Conns = Arc::default();
+        let settings = VoiceSettings {
+            noise_suppression: false,
+            ..VoiceSettings::default()
+        };
+        let engine = VoiceEngine::without_devices(settings, send_to_all(conns.clone()), |_| {});
+        Arc::new(VoiceMesh::with_engine(conns, Some(Arc::new(engine))))
+    }
+
+    /// Uma conexão de voz entre dois pontos no mesmo PC: (quem chamou, quem atendeu).
+    async fn voice_link() -> (Peer, Peer, Connection, Connection) {
+        let caller = Peer::bind(&[]).await.unwrap();
+        let callee = Peer::bind(&[]).await.unwrap();
+        callee.allowed().allow(caller.fingerprint());
+        let (accepted, conn) = tokio::join!(
+            callee.accept(),
+            caller.connect_for(callee.candidates(), callee.fingerprint(), Purpose::Voice)
+        );
+        let accepted = accepted.expect("aceitar");
+        assert_eq!(accepted.purpose, Purpose::Voice);
+        (caller, callee, conn.expect("conectar"), accepted.conn)
+    }
+
+    async fn until(what: &str, mut done: impl FnMut() -> bool) {
+        for _ in 0..100 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("não aconteceu: {what}");
+    }
+
+    #[test]
+    fn sem_voz_ninguem_e_chamado() {
+        let mesh = VoiceMesh::start(None, |_| {});
+        assert!(mesh.engine().is_none());
+        assert!(!mesh.should_offer("a", "b"));
+        assert!(mesh.connected().is_empty());
+        mesh.unregister("b");
+        mesh.close();
+    }
+
+    #[test]
+    fn quem_tem_o_id_menor_chama_uma_vez_so() {
+        let mesh = mesh();
+        assert!(mesh.should_offer("a", "b"));
+        assert!(!mesh.should_offer("a", "b"), "convite já mandado");
+        assert!(!mesh.should_offer("b", "a"), "quem tem o id maior espera ser chamado");
+        assert!(mesh.answered("b"));
+        assert!(!mesh.answered("b"), "a mesma resposta não conecta duas vezes");
+        assert!(!mesh.answered("c"), "resposta de quem não chamamos é ignorada");
+        // Saiu antes de responder: um convite novo pode ser feito quando voltar.
+        assert!(mesh.should_offer("a", "c"));
+        mesh.unregister("c");
+        assert!(mesh.should_offer("a", "c"));
+    }
+
+    #[test]
+    fn reconhece_quem_chamou_pela_fingerprint() {
+        let mesh = mesh();
+        mesh.expect("beto", "fp-beto");
+        assert_eq!(mesh.member_for("fp-beto").as_deref(), Some("beto"));
+        assert_eq!(mesh.member_for("fp-outro"), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sem_voz_recusa_a_conexao_que_chega() {
+        let (_caller, _callee, caller_conn, callee_conn) = voice_link().await;
+        let mesh = Arc::new(VoiceMesh::start(None, |_| {}));
+        mesh.register(&tokio::runtime::Handle::current(), "ana".into(), callee_conn);
+        let reason = caller_conn.closed().await;
+        assert!(reason.to_string().contains("sem voz"), "{reason}");
+        assert!(mesh.connected().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_voz_de_um_chega_no_buffer_do_outro() {
+        let (_caller, _callee, ana_side, beto_side) = voice_link().await;
+        let runtime = tokio::runtime::Handle::current();
+        // Ana fala com o Beto pela conexão `ana_side`; o Beto ouve pela `beto_side`.
+        let ana = mesh();
+        let beto = mesh();
+        ana.register(&runtime, "beto".into(), ana_side);
+        beto.register(&runtime, "ana".into(), beto_side);
+        assert_eq!(ana.connected(), ["beto"]);
+        assert_eq!(beto.engine().unwrap().peers(), ["ana"]);
+
+        let mut mic = ana.engine().unwrap().fake_mic();
+        let tone: Vec<f32> = (0..48_000)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        for block in tone.chunks(480) {
+            mic(block);
+        }
+        let engine = beto.engine().unwrap();
+        until("pacotes da Ana no Beto", || engine.buffered("ana").unwrap_or(0) >= 10).await;
+
+        // A Ana sai: o Beto para de ouvir e a conexão fecha.
+        beto.unregister("ana");
+        assert!(beto.connected().is_empty());
+        assert_eq!(engine.buffered("ana"), None);
+        until("a Ana ver a conexão cair", || ana.connected().is_empty()).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn conexao_nova_do_mesmo_amigo_substitui_a_antiga() {
+        let runtime = tokio::runtime::Handle::current();
+        let beto = mesh();
+        let (_a1, _b1, old_remote, old_local) = voice_link().await;
+        let (_a2, _b2, _new_remote, new_local) = voice_link().await;
+        beto.register(&runtime, "ana".into(), old_local);
+        beto.register(&runtime, "ana".into(), new_local.clone());
+        let reason = old_remote.closed().await;
+        assert!(reason.to_string().contains("substituida"), "{reason}");
+        // A antiga caiu, mas a nova continua valendo.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(beto.connected(), ["ana"]);
+        assert_eq!(
+            lock(&beto.conns).get("ana").map(Connection::stable_id),
+            Some(new_local.stable_id())
+        );
+        beto.close();
+        assert!(beto.connected().is_empty());
     }
 }

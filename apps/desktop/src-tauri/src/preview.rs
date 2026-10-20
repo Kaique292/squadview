@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::json;
-use sv_capture::{CaptureSource, Source};
+use sv_capture::{CaptureSource, FollowStatus, FollowStep, GameFollower, Observer, Source, SwitchReason};
 use sv_core::StreamQuality;
 use sv_encode::EncodedFrame;
 use sv_session::{AudioPacket, Bounds, LocalPreview, StreamInfo, StreamTap, WindowEvent, WindowTarget};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
 
@@ -23,9 +23,7 @@ pub const NOTICE_EVENT: &str = "stream-notice";
 /// Pedido de tela cheia feito dentro do vídeo: `"toggle"` (dois cliques, F11) ou `"exit"` (Esc).
 pub const FULLSCREEN_EVENT: &str = "video-fullscreen";
 
-/// Sem estatística por esse tempo, com a janela viva, avisamos que não está chegando imagem.
-const STALL_AFTER_MS: u64 = 4_000;
-/// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar de janela.
+/// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar a captura.
 const CHANGED_NOTICE_FOR: Duration = Duration::from_secs(6);
 
 /// Agora, em ms do relógio do pipeline (o mesmo nas threads da prévia e do vigia).
@@ -113,7 +111,7 @@ const EXIT_HANDOFF: Duration = Duration::from_millis(160);
 
 /// Manda a foto do último quadro para a interface e dá tempo de ela aparecer. Chame fora da
 /// thread principal, logo antes de fechar o vídeo.
-pub(crate) fn hand_off_exit(app: &AppHandle, photo: Option<sv_capture::Thumbnail>) {
+pub(crate) fn hand_off_exit<R: Runtime>(app: &AppHandle<R>, photo: Option<sv_capture::Thumbnail>) {
     if let Some(url) = photo.as_ref().and_then(jpeg_data_url) {
         let _ = app.emit(VIDEO_EXIT_EVENT, url);
         std::thread::sleep(EXIT_HANDOFF);
@@ -150,8 +148,8 @@ pub async fn off_main<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'stat
 
 /// Começa a prévia local. Substitui a anterior, se houver.
 #[tauri::command]
-pub async fn start_preview(
-    app: AppHandle,
+pub async fn start_preview<R: Runtime>(
+    app: AppHandle<R>,
     source: CaptureSource,
     quality: StreamQuality,
     audio_pid: Option<u32>,
@@ -159,8 +157,8 @@ pub async fn start_preview(
     off_main(move || start_preview_blocking(app, source, quality, audio_pid)).await?
 }
 
-fn start_preview_blocking(
-    app: AppHandle,
+fn start_preview_blocking<R: Runtime>(
+    app: AppHandle<R>,
     source: CaptureSource,
     quality: StreamQuality,
     audio_pid: Option<u32>,
@@ -207,7 +205,7 @@ pub fn set_preview_listening(state: State<'_, PreviewState>, listening: bool) {
 #[tauri::command]
 /// Para a transmissão. Antes de fechar o vídeo, manda a foto do último quadro para a animação
 /// de saída (evento `video-exit`).
-pub async fn stop_preview(app: AppHandle) -> Result<(), String> {
+pub async fn stop_preview<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     off_main(move || {
         let state = app.state::<PreviewState>();
         let stopped = {
@@ -226,8 +224,8 @@ pub async fn stop_preview(app: AppHandle) -> Result<(), String> {
     .await
 }
 
-fn launch(
-    app: &AppHandle,
+fn launch<R: Runtime>(
+    app: &AppHandle<R>,
     source: CaptureSource,
     quality: StreamQuality,
     audio_pid: Option<u32>,
@@ -270,7 +268,7 @@ fn launch(
 }
 
 /// Entramos ou saímos de uma sala: o stream em andamento passa a ir (ou deixa de ir) para ela.
-pub fn restart_for_room(app: &AppHandle) {
+pub fn restart_for_room<R: Runtime>(app: &AppHandle<R>) {
     let slot = app.state::<Arc<TapSlot>>().inner().clone();
     let tap = crate::room::tap(app);
     *slot.tap.lock().unwrap_or_else(|e| e.into_inner()) = tap.clone();
@@ -285,7 +283,7 @@ pub fn restart_for_room(app: &AppHandle) {
 }
 
 /// Posição atual pedida pela interface.
-pub fn layout(app: &AppHandle) -> Layout {
+pub fn layout<R: Runtime>(app: &AppHandle<R>) -> Layout {
     app.state::<PreviewState>()
         .0
         .lock()
@@ -295,7 +293,7 @@ pub fn layout(app: &AppHandle) -> Layout {
 
 /// Começamos ou paramos de assistir um amigo: a área do vídeo passa a ser dele (a nossa prévia
 /// sai da tela, mas a transmissão continua para quem estiver nos assistindo).
-pub fn set_watching(app: &AppHandle, watching: bool) {
+pub fn set_watching<R: Runtime>(app: &AppHandle<R>, watching: bool) {
     let state = app.state::<PreviewState>();
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.watching = watching;
@@ -305,7 +303,7 @@ pub fn set_watching(app: &AppHandle, watching: bool) {
 }
 
 /// O vídeo abre dentro da janela principal do app, como no Discord.
-pub fn video_target(app: &AppHandle) -> Result<WindowTarget, String> {
+pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, String> {
     let window = app
         .get_webview_window("main")
         .ok_or("janela principal não encontrada")?;
@@ -333,7 +331,14 @@ impl Layout {
 
 /// A área do stream na interface mudou de lugar ou de tamanho (pixels físicos, relativos à janela).
 #[tauri::command]
-pub fn set_video_bounds(app: AppHandle, state: State<'_, PreviewState>, x: i32, y: i32, width: u32, height: u32) {
+pub fn set_video_bounds<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, PreviewState>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.bounds = Bounds { x, y, width, height };
     let layout = running.layout;
@@ -346,7 +351,7 @@ pub fn set_video_bounds(app: AppHandle, state: State<'_, PreviewState>, x: i32, 
 
 /// Um modal da interface abriu (o vídeo nativo ficaria por cima dele) ou fechou.
 #[tauri::command]
-pub fn set_video_hidden(app: AppHandle, state: State<'_, PreviewState>, hidden: bool) {
+pub fn set_video_hidden<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewState>, hidden: bool) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.hidden = hidden;
     let layout = running.layout;
@@ -359,17 +364,21 @@ pub fn set_video_hidden(app: AppHandle, state: State<'_, PreviewState>, hidden: 
 
 /// Liga ou desliga a tela cheia da janela do app (o stream ocupa tudo).
 #[tauri::command]
-pub fn set_fullscreen(app: AppHandle, fullscreen: bool) -> Result<(), String> {
+pub fn set_fullscreen<R: Runtime>(app: AppHandle<R>, fullscreen: bool) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or("janela principal não encontrada")?;
     window.set_fullscreen(fullscreen).map_err(|e| e.to_string())
 }
 
-/// Vigia a prévia: avisa quando ela é fechada, segue o jogo quando ele troca de janela
-/// (ex.: LoL saindo do lobby para a partida) e avisa quando a imagem para de chegar.
-fn watch(
-    app: AppHandle,
+/// Vigia a prévia: avisa quando ela é fechada, **segue o jogo** (cliente → partida → cliente,
+/// tela cheia → monitor do jogo e de volta) e avisa quando a imagem para de chegar.
+///
+/// A decisão é do [`GameFollower`] (lógica pura, testada em `sv-capture`); aqui só se observa as
+/// janelas e se troca a captura. Roda a cada 500 ms numa thread própria, nunca no caminho do frame,
+/// e não segura o lock da prévia enquanto consulta o Windows. Ver `docs/captura.md`.
+fn watch<R: Runtime>(
+    app: AppHandle<R>,
     generation: u64,
     source: Option<Source>,
     quality: StreamQuality,
@@ -377,72 +386,71 @@ fn watch(
     last_stats: Arc<AtomicU64>,
 ) {
     std::thread::spawn(move || {
-        let mut current = source;
+        // Só uma janela escolhida é seguida; um monitor escolhido fica como está.
+        let mut follower = source
+            .filter(|s| matches!(s.id, CaptureSource::Window(_)))
+            .map(GameFollower::new);
+        let mut observer = Observer::new();
         let mut audio_pid = audio_pid;
         let mut changed: Option<(Instant, Notice)> = None;
         let mut notice: Option<Notice> = None;
         loop {
             std::thread::sleep(Duration::from_millis(500));
-            let state = app.state::<PreviewState>();
-            let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
-            if running.generation != generation {
-                return; // Parada pela interface ou trocada por outra prévia.
-            }
-            if running.preview.as_ref().is_none_or(LocalPreview::is_closed) {
-                let closed = running.preview.take();
-                drop(running);
-                drop(closed);
-                crate::room::stream_changed(&app, None);
-                app.state::<Diagnostics>()
-                    .write("stream-end", &json!({ "reason": "janela da prévia fechada" }));
-                let _ = app.emit(ENDED_EVENT, ());
-                return;
+            {
+                let state = app.state::<PreviewState>();
+                let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                if running.generation != generation {
+                    return; // Parada pela interface ou trocada por outra prévia.
+                }
+                if running.preview.as_ref().is_none_or(LocalPreview::is_closed) {
+                    let closed = running.preview.take();
+                    drop(running);
+                    end_preview(&app, closed, "janela da prévia fechada");
+                    return;
+                }
             }
 
-            let Some(src) = current.clone() else { continue };
-            let next = if sv_capture::is_alive(src.id) {
-                let quiet_ms = now_ms().saturating_sub(last_stats.load(Ordering::Relaxed));
-                // Tela parada também não gera quadros; só janelas (jogos desenham sem parar) contam.
-                let stalled = matches!(src.id, CaptureSource::Window(_)) && quiet_ms > STALL_AFTER_MS;
-                stalled.then(|| Notice {
-                    kind: "no-frames",
-                    message: "A imagem parou de chegar. Se o jogo estiver em tela cheia exclusiva, troque para \
-                              \"janela sem bordas\" nas opções de vídeo dele."
-                        .into(),
-                })
-            } else if let Some(replacement) = sv_capture::find_replacement(&src) {
-                drop(running);
-                // O áudio era do jogo: passa a ser do processo da janela nova.
-                let next_audio = if audio_pid.is_some() && audio_pid == src.process_id {
-                    replacement.process_id
-                } else {
-                    audio_pid
-                };
-                match switch(&app, generation, &src, &replacement, quality, next_audio, &last_stats) {
-                    Some(()) => {
-                        audio_pid = next_audio;
-                        let msg = Notice {
-                            kind: "source-changed",
-                            message: format!("O jogo trocou de janela. Agora transmitindo “{}”.", replacement.name),
-                        };
-                        changed = Some((Instant::now(), msg));
-                        current = Some(replacement);
-                        None
+            let Some(follower) = follower.as_mut() else { continue };
+            let quiet_ms = now_ms().saturating_sub(last_stats.load(Ordering::Relaxed));
+            let observation = observer.observe(follower, quiet_ms);
+            let from = follower.game().clone();
+            let next = match follower.step(&observation) {
+                FollowStep::Stay(status) => status_notice(status, &follower.game().name),
+                FollowStep::Switch { capture, game, reason } => {
+                    let next_audio = audio_after_switch(audio_pid, &from, &game);
+                    let target = capture_target(capture, &game);
+                    match switch(
+                        &app,
+                        generation,
+                        &from,
+                        &target,
+                        reason,
+                        quality,
+                        next_audio,
+                        &last_stats,
+                    ) {
+                        Some(()) => {
+                            audio_pid = next_audio;
+                            changed = Some((Instant::now(), switch_notice(reason, &game.name)));
+                            None
+                        }
+                        None => return,
                     }
-                    None => return,
                 }
-            } else {
-                Some(Notice {
-                    kind: "source-lost",
-                    message: format!("“{}” sumiu. Esperando a janela do jogo voltar…", src.name),
-                })
+                FollowStep::Stop => {
+                    let state = app.state::<PreviewState>();
+                    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if running.generation != generation {
+                        return;
+                    }
+                    running.generation += 1;
+                    let stopped = running.preview.take();
+                    drop(running);
+                    end_preview(&app, stopped, "o jogo fechou enquanto o monitor dele era transmitido");
+                    return;
+                }
             };
-            // Logo depois de trocar de janela, o aviso da troca vale mais que "sem imagem" (a nova
-            // captura ainda está começando).
-            let next = match &changed {
-                Some((at, msg)) if at.elapsed() < CHANGED_NOTICE_FOR => Some(msg.clone()),
-                _ => next,
-            };
+            let next = prefer_recent_change(changed.as_ref(), next);
             if next != notice {
                 let _ = app.emit(NOTICE_EVENT, next.clone());
                 notice = next;
@@ -451,13 +459,96 @@ fn watch(
     });
 }
 
+/// Fecha a prévia (fora do lock) e avisa a sala e a interface de que a transmissão acabou.
+fn end_preview<R: Runtime>(app: &AppHandle<R>, preview: Option<LocalPreview>, reason: &str) {
+    drop(preview);
+    crate::room::stream_changed(app, None);
+    app.state::<Diagnostics>()
+        .write("stream-end", &json!({ "reason": reason }));
+    let _ = app.emit(ENDED_EVENT, ());
+}
+
+/// A fonte que vai ser capturada, com um nome para o registro: a janela do jogo ou o monitor dele.
+fn capture_target(capture: CaptureSource, game: &Source) -> Source {
+    let name = match capture {
+        CaptureSource::Window(_) => game.name.clone(),
+        CaptureSource::Monitor(_) => format!("monitor de “{}”", game.name),
+    };
+    Source {
+        id: capture,
+        name,
+        ..game.clone()
+    }
+}
+
+/// O áudio era do jogo: quando ele troca de janela, passa a ser do processo da janela nova.
+fn audio_after_switch(audio_pid: Option<u32>, from: &Source, to: &Source) -> Option<u32> {
+    if audio_pid.is_some() && audio_pid == from.process_id {
+        to.process_id
+    } else {
+        audio_pid
+    }
+}
+
+/// Aviso para a situação da captura. Nunca pede para mudar o modo de tela do jogo: o app se vira
+/// com qualquer um (ver `docs/captura.md`).
+fn status_notice(status: FollowStatus, name: &str) -> Option<Notice> {
+    let message = match status {
+        FollowStatus::Ok => return None,
+        FollowStatus::Waiting => return Some(source_lost_notice(name)),
+        FollowStatus::Minimized => {
+            format!("“{name}” está minimizado. A imagem volta quando você abrir o jogo de novo.")
+        }
+        FollowStatus::Covered => {
+            format!("Outra janela está na frente de “{name}”. A imagem volta quando o jogo voltar para a frente.")
+        }
+        FollowStatus::Stalled => format!(
+            "Nenhuma imagem nova de “{name}” há alguns segundos. Se o jogo estiver carregando, ela volta sozinha."
+        ),
+    };
+    Some(Notice {
+        kind: "no-frames",
+        message,
+    })
+}
+
+fn source_lost_notice(name: &str) -> Notice {
+    Notice {
+        kind: "source-lost",
+        message: format!("“{name}” sumiu. Esperando a janela do jogo voltar…"),
+    }
+}
+
+/// Aviso curto e informativo de que a captura mudou sozinha.
+fn switch_notice(reason: SwitchReason, name: &str) -> Notice {
+    let message = match reason {
+        SwitchReason::NewWindow => format!("Agora transmitindo “{name}”."),
+        SwitchReason::Fullscreen => "Jogo em tela cheia: transmitindo o monitor dele.".into(),
+        SwitchReason::BackToWindow => format!("Transmitindo a janela de “{name}” de novo."),
+    };
+    Notice {
+        kind: "source-changed",
+        message,
+    }
+}
+
+/// Logo depois de trocar de janela, o aviso da troca vale mais que "sem imagem" (a nova captura
+/// ainda está começando).
+fn prefer_recent_change(changed: Option<&(Instant, Notice)>, next: Option<Notice>) -> Option<Notice> {
+    match changed {
+        Some((at, msg)) if at.elapsed() < CHANGED_NOTICE_FOR => Some(msg.clone()),
+        _ => next,
+    }
+}
+
 /// Troca a fonte da prévia em andamento. `None` se a prévia foi parada no meio da troca.
 #[allow(clippy::too_many_arguments)]
-fn switch(
-    app: &AppHandle,
+fn switch<R: Runtime>(
+    app: &AppHandle<R>,
     generation: u64,
     from: &Source,
     to: &Source,
+    reason: SwitchReason,
     quality: StreamQuality,
     audio_pid: Option<u32>,
     last_stats: &Arc<AtomicU64>,
@@ -478,7 +569,7 @@ fn switch(
     }
     app.state::<Diagnostics>().write(
         "stream-source-changed",
-        &json!({ "from": from.name, "to": to.name, "ok": preview.is_ok() }),
+        &json!({ "from": from.name, "to": to.name, "reason": format!("{reason:?}"), "ok": preview.is_ok() }),
     );
     match preview {
         Ok(p) => {
@@ -501,6 +592,240 @@ fn switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{TestApp, test_app};
+
+    /// Destino de mentira: conta o que a prévia entrega.
+    #[derive(Default)]
+    struct CountingTap {
+        started: Mutex<u32>,
+        video: Mutex<u32>,
+        audio: Mutex<u32>,
+    }
+
+    impl StreamTap for CountingTap {
+        fn started(&self, _: &StreamInfo) {
+            *self.started.lock().unwrap() += 1;
+        }
+        fn video(&self, _: u32, _: &EncodedFrame) {
+            *self.video.lock().unwrap() += 1;
+        }
+        fn audio(&self, _: &AudioPacket) {
+            *self.audio.lock().unwrap() += 1;
+        }
+    }
+
+    fn window(name: &str, pid: Option<u32>) -> Source {
+        Source {
+            id: CaptureSource::Window(1),
+            name: name.into(),
+            process_id: pid,
+            process_name: None,
+            process_path: None,
+        }
+    }
+
+    fn frame() -> EncodedFrame {
+        EncodedFrame {
+            data: vec![0, 0, 0, 1],
+            keyframe: true,
+            timestamp_us: 0,
+            encode_us: 0,
+        }
+    }
+
+    fn packet() -> AudioPacket {
+        AudioPacket {
+            seq: 0,
+            data: vec![1],
+            peak: 0.0,
+            timestamp_us: 0,
+        }
+    }
+
+    #[test]
+    fn avisos_da_previa() {
+        assert_eq!(status_notice(FollowStatus::Ok, "LoL"), None);
+        assert_eq!(
+            status_notice(FollowStatus::Waiting, "LoL"),
+            Some(source_lost_notice("LoL"))
+        );
+        assert!(source_lost_notice("LoL").message.contains("“LoL” sumiu"));
+        for status in [FollowStatus::Minimized, FollowStatus::Covered, FollowStatus::Stalled] {
+            let n = status_notice(status, "LoL").unwrap();
+            assert_eq!(n.kind, "no-frames");
+            assert!(n.message.contains("“LoL”"), "{}", n.message);
+            // O app se vira com qualquer modo de tela: nunca pede para o jogador mudar o jogo.
+            assert!(
+                !n.message.contains("sem bordas") && !n.message.contains("tela cheia"),
+                "{}",
+                n.message
+            );
+        }
+        assert!(
+            status_notice(FollowStatus::Minimized, "LoL")
+                .unwrap()
+                .message
+                .contains("minimizado")
+        );
+
+        let changed = switch_notice(SwitchReason::NewWindow, "LoL partida");
+        assert_eq!(changed.kind, "source-changed");
+        assert_eq!(changed.message, "Agora transmitindo “LoL partida”.");
+        assert_eq!(
+            switch_notice(SwitchReason::Fullscreen, "LoL").message,
+            "Jogo em tela cheia: transmitindo o monitor dele."
+        );
+        assert!(
+            switch_notice(SwitchReason::BackToWindow, "LoL")
+                .message
+                .contains("janela de “LoL”")
+        );
+        // A troca recente ganha do "sem imagem"; depois de um tempo, não.
+        let lost = Some(source_lost_notice("x"));
+        let recent = (Instant::now(), changed.clone());
+        assert_eq!(prefer_recent_change(Some(&recent), lost.clone()), Some(changed.clone()));
+        let old = (Instant::now() - CHANGED_NOTICE_FOR - Duration::from_secs(1), changed);
+        assert_eq!(prefer_recent_change(Some(&old), lost.clone()), lost);
+        assert_eq!(prefer_recent_change(None, None), None);
+    }
+
+    #[test]
+    fn fonte_capturada_e_a_janela_ou_o_monitor_do_jogo() {
+        let game = window("Partida", Some(20));
+        let w = capture_target(CaptureSource::Window(7), &game);
+        assert_eq!(
+            (w.id, w.name.as_str(), w.process_id),
+            (CaptureSource::Window(7), "Partida", Some(20))
+        );
+        let m = capture_target(CaptureSource::Monitor(3), &game);
+        assert_eq!(m.id, CaptureSource::Monitor(3));
+        assert_eq!(m.name, "monitor de “Partida”");
+        assert_eq!(m.process_id, Some(20), "o áudio continua sendo o do jogo");
+        // Trocar para o monitor do mesmo jogo não muda o áudio.
+        assert_eq!(audio_after_switch(Some(20), &game, &m), Some(20));
+    }
+
+    #[test]
+    fn audio_do_jogo_segue_a_janela_nova() {
+        let lobby = window("Lobby", Some(10));
+        let partida = window("Partida", Some(20));
+        assert_eq!(audio_after_switch(Some(10), &lobby, &partida), Some(20));
+        // Áudio de outro app (ex.: Spotify) continua o mesmo; sem áudio, continua sem.
+        assert_eq!(audio_after_switch(Some(99), &lobby, &partida), Some(99));
+        assert_eq!(audio_after_switch(None, &lobby, &partida), None);
+    }
+
+    #[test]
+    fn previa_entrega_para_a_sala_atual_ou_para_ninguem() {
+        let slot = Arc::new(TapSlot::default());
+        let tap = DynamicTap(slot.clone());
+        let info = StreamInfo {
+            size: sv_gpu::Size::new(1920, 1080),
+            fps: 60,
+            encoder: "teste".into(),
+        };
+        // Sem sala: guarda o formato e não entrega para ninguém.
+        tap.started(&info);
+        tap.video(1, &frame());
+        tap.audio(&packet());
+        assert!(slot.info.lock().unwrap().is_some());
+        // Entrou numa sala: passa a entregar.
+        let room = Arc::new(CountingTap::default());
+        *slot.tap.lock().unwrap() = Some(room.clone());
+        tap.started(&info);
+        tap.video(2, &frame());
+        tap.audio(&packet());
+        assert_eq!(*room.started.lock().unwrap(), 1);
+        assert_eq!(*room.video.lock().unwrap(), 1);
+        assert_eq!(*room.audio.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn layout_do_video_sem_previa_rodando() {
+        let t = test_app();
+        let state = || t.app.state::<PreviewState>();
+        set_video_bounds(t.handle().clone(), state(), 10, 20, 640, 360);
+        set_video_hidden(t.handle().clone(), state(), true);
+        set_watching(t.handle(), true);
+        let l = layout(t.handle());
+        assert_eq!(
+            (l.bounds.x, l.bounds.y, l.bounds.width, l.bounds.height),
+            (10, 20, 640, 360)
+        );
+        assert!(l.hidden && l.watching);
+        set_preview_listening(state(), true);
+        assert!(state().0.lock().unwrap().listening);
+        // Sem sala e sem prévia, recomeçar para a sala só limpa o destino.
+        restart_for_room(t.handle());
+        assert!(t.app.state::<Arc<TapSlot>>().tap.lock().unwrap().is_none());
+        tauri::async_runtime::block_on(stop_preview(t.handle().clone())).unwrap();
+    }
+
+    fn idle(t: &TestApp) -> bool {
+        t.app.state::<PreviewState>().0.lock().unwrap().preview.is_none()
+    }
+
+    #[test]
+    fn tela_cheia_e_previa_sem_janela_nativa() {
+        let t = test_app();
+        set_fullscreen(t.handle().clone(), true).unwrap();
+        set_fullscreen(t.handle().clone(), false).unwrap();
+        let _ = video_target(t.handle());
+        // Com placa de vídeo (aqui), a prévia do monitor abre; sem ela (na esteira), avisa o erro.
+        // Nos dois casos, parar deixa tudo limpo e nada cai.
+        let ended = t.events(ENDED_EVENT);
+        let result = tauri::async_runtime::block_on(start_preview(
+            t.handle().clone(),
+            CaptureSource::Monitor(0),
+            StreamQuality::DEFAULT,
+            None,
+        ));
+        match result {
+            Ok(()) => {
+                assert!(!idle(&t));
+                set_preview_listening(t.app.state::<PreviewState>(), true);
+                set_watching(t.handle(), true);
+                set_video_bounds(t.handle().clone(), t.app.state::<PreviewState>(), 0, 0, 320, 180);
+                set_video_hidden(t.handle().clone(), t.app.state::<PreviewState>(), false);
+                // Trocar a prévia por outra para a anterior antes.
+                tauri::async_runtime::block_on(start_preview(
+                    t.handle().clone(),
+                    CaptureSource::Monitor(0),
+                    StreamQuality::DEFAULT,
+                    None,
+                ))
+                .unwrap();
+                tauri::async_runtime::block_on(stop_preview(t.handle().clone())).unwrap();
+            }
+            Err(e) => assert!(!e.is_empty()),
+        }
+        assert!(idle(&t));
+        drop(ended);
+    }
+
+    #[test]
+    fn foto_de_saida_vai_para_a_interface() {
+        let t = test_app();
+        let exits = t.events(VIDEO_EXIT_EVENT);
+        hand_off_exit(t.handle(), None);
+        hand_off_exit(
+            t.handle(),
+            Some(sv_capture::Thumbnail {
+                width: 1,
+                height: 1,
+                rgb: vec![0, 0, 0],
+            }),
+        );
+        exits.wait("foto", |v| v.as_str().is_some_and(|s| s.starts_with("data:image/jpeg")));
+    }
+
+    #[test]
+    fn lista_as_fontes_da_area_de_trabalho() {
+        // Na esteira pode não haver janelas; só não pode cair, e o que vier tem nome.
+        for s in list_sources() {
+            assert!(!s.name.is_empty());
+        }
+    }
 
     #[test]
     fn miniatura_vira_jpeg_em_data_url() {

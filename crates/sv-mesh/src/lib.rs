@@ -2,6 +2,12 @@
 //!
 //! É lógica pura, sem rede de verdade, para ser testada com cenários simulados.
 //! O protocolo está descrito em `docs/protocolo-malha.md`.
+//!
+//! - [`plan`]: o planejador em enxame (várias árvores, uma por faixa do vídeo; ADR 0012).
+//! - [`sim`]: o simulador de sala, com a população e a internet do Brasil.
+
+pub mod plan;
+pub mod sim;
 
 use sv_core::{PeerId, QualityLayer};
 

@@ -175,4 +175,28 @@ describe("chat de voz", () => {
   it("organiza a grade como o Discord", () => {
     expect([1, 2, 3, 4, 5, 6, 7, 8].map(gridColumns)).toEqual([1, 2, 2, 2, 3, 3, 4, 4]);
   });
+
+  it("mostra o nível do microfone e os avisos da voz", () => {
+    emit("voice-level", 0.4);
+    expect(useVoiceStore.getState().level).toBe(0.4);
+    emit("voice-error", "Microfone ocupado por outro app.");
+    expect(useToastStore.getState().toasts[0]).toMatchObject({
+      kind: "warning",
+      message: "Microfone ocupado por outro app.",
+    });
+  });
+
+  it("não reaplica nada para quem já estava na voz ou não tem escolha salva", () => {
+    useRoomStore.setState({ members: [ME, ANA, BETO] });
+    useVoiceStore.setState({ peers: { Ana: { volume: 100, muted: false } } });
+    emit("voice-peers", [ANA.id]);
+    emit("voice-peers", [ANA.id, BETO.id]);
+    expect(invoke).not.toHaveBeenCalledWith("voice_set_peer_volume", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("voice_set_peer_muted", expect.anything());
+  });
+
+  it("sem nome conhecido, o aviso de falha fala de um amigo", () => {
+    emit("voice-failed", { memberId: "dddddddddddddddd", reason: "sem rota" });
+    expect(useToastStore.getState().toasts[0].message).toBe("Sem voz com um amigo: sem rota");
+  });
 });

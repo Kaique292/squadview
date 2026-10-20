@@ -55,6 +55,8 @@ O nome da sala fica guardado nas conexões de quem está nela: quando o último 
 Desde a 0.3.0 ([ADR 0011](../../docs/adr/0011-amigos-e-presenca.md)):
 
 - `join` aceita `"session":"<sessão>"`. Se a sessão for válida, o membro conta como **conferido**: a conta do Discord dele passa a ser a da sessão, e ele não consegue trocá-la pela de outra pessoa no `rename`.
+- Todo membro sai com `"verified": true|false` (a conta foi conferida pela sessão). Só conferidos podem virar amigos.
+- `{"type":"verify","session":"<sessão>"}` (cliente → servidor): quem entrou com o Discord **já dentro da sala** confere a sessão sem sair e entrar. Os outros recebem `member-updated` com `verified: true`. Sessão que não confere é ignorada.
 - Membros conferidos na mesma sala entram nos recentes um do outro.
 - `{"type":"join-request","id":"<id>","from":{"id","name","avatar"}}` (servidor → todos): um amigo de alguém da sala quer entrar.
 - `{"type":"join-answer","id":"<id>","accept":true}` (cliente → servidor): qualquer membro aceita ou recusa. O primeiro a responder decide.

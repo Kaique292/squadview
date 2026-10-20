@@ -1,9 +1,9 @@
 //! Áudio do jogo: captura do processo → Opus (quem transmite) e Opus → buffer de jitter → saída
 //! (quem assiste).
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -90,59 +90,23 @@ impl AudioReceiver {
         let thread_flag = flag.clone();
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let thread_volume = volume.clone();
-        let mut decoder = AudioDecoder::new().map_err(|e| e.to_string())?;
-        let on_event = Arc::new(Mutex::new(on_event));
+        let decoder = AudioDecoder::new().map_err(|e| e.to_string())?;
+        let mut on_event = on_event;
         let thread = std::thread::Builder::new()
             .name("sv-audio-receiver".into())
             .spawn(move || {
-                let emit = |e| (on_event.lock().unwrap_or_else(|p| p.into_inner()))(e);
-                let mut jitter = JitterBuffer::new(JITTER_PACKETS);
-                let mut player: Option<AudioPlayer> = None;
-                // Volume já aplicado na saída atual (NaN = nenhum ainda).
-                let mut applied = f32::NAN;
-                let mut playback_failed = false;
-                let mut pcm = vec![0.0f32; FRAME_SAMPLES * CHANNELS];
+                let mut playout = Playout::new(decoder, || AudioPlayer::start().map_err(|e| e.to_string()));
                 loop {
                     match rx.recv_timeout(Duration::from_millis(100)) {
-                        Ok(packet) => jitter.push(packet.seq, packet.data),
+                        Ok(packet) => playout.push(packet),
                         Err(RecvTimeoutError::Timeout) => {}
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
-                    // Abre ou fecha a saída conforme o usuário liga ou desliga "ouvir".
-                    let wants = thread_flag.load(Ordering::Relaxed);
-                    if wants && player.is_none() && !playback_failed {
-                        match AudioPlayer::start() {
-                            Ok(p) => player = Some(p),
-                            Err(e) => {
-                                playback_failed = true;
-                                emit(ReceiverEvent::PlaybackFailed(e.to_string()));
-                            }
-                        }
-                    } else if !wants {
-                        player = None;
-                        applied = f32::NAN;
-                    }
-                    let wanted = f32::from_bits(thread_volume.load(Ordering::Relaxed));
-                    if let Some(player) = &player
-                        && wanted != applied
-                    {
-                        player.set_volume(wanted);
-                        applied = wanted;
-                    }
-                    while let Some(next) = jitter.pop() {
-                        let packet = match &next {
-                            Next::Packet(p) => Some(p.as_slice()),
-                            Next::Lost => {
-                                emit(ReceiverEvent::Lost);
-                                None
-                            }
-                        };
-                        if decoder.decode(packet, &mut pcm).is_ok()
-                            && let Some(player) = &player
-                        {
-                            player.push(&pcm);
-                        }
-                    }
+                    playout.tick(
+                        thread_flag.load(Ordering::Relaxed),
+                        f32::from_bits(thread_volume.load(Ordering::Relaxed)),
+                        &mut on_event,
+                    );
                 }
             })
             .expect("não foi possível criar a thread de áudio de quem assiste");
@@ -169,12 +133,100 @@ impl AudioReceiver {
 
     /// Volume de 0 (mudo) a 2 (200%).
     pub fn set_volume(&self, volume: f32) {
-        let volume = if volume.is_finite() {
-            volume.clamp(0.0, sv_media::MAX_VOLUME)
-        } else {
-            1.0
-        };
-        self.volume.store(volume.to_bits(), Ordering::Relaxed);
+        self.volume.store(clamp_volume(volume).to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Volume pedido pela interface, limitado de 0 a 2 (valor inválido volta para 100%).
+fn clamp_volume(volume: f32) -> f32 {
+    if volume.is_finite() {
+        volume.clamp(0.0, sv_media::MAX_VOLUME)
+    } else {
+        1.0
+    }
+}
+
+/// Saída de som de quem assiste: o [`AudioPlayer`] (nos testes, uma saída falsa).
+trait Speaker {
+    fn set_volume(&self, volume: f32);
+    fn push(&self, samples: &[f32]);
+}
+
+impl Speaker for AudioPlayer {
+    fn set_volume(&self, volume: f32) {
+        AudioPlayer::set_volume(self, volume);
+    }
+
+    fn push(&self, samples: &[f32]) {
+        AudioPlayer::push(self, samples);
+    }
+}
+
+/// O que a thread de quem assiste faz a cada volta: abre ou fecha a saída conforme "ouvir",
+/// aplica o volume e toca o que o buffer de jitter liberar. Os buffers são reaproveitados.
+struct Playout<S, Open> {
+    jitter: JitterBuffer,
+    decoder: AudioDecoder,
+    pcm: Vec<f32>,
+    player: Option<S>,
+    /// Volume já aplicado na saída atual (NaN = nenhum ainda).
+    applied: f32,
+    /// A saída falhou ao abrir: não tenta de novo (e só avisa uma vez).
+    failed: bool,
+    open: Open,
+}
+
+impl<S: Speaker, Open: FnMut() -> Result<S, String>> Playout<S, Open> {
+    fn new(decoder: AudioDecoder, open: Open) -> Self {
+        Self {
+            jitter: JitterBuffer::new(JITTER_PACKETS),
+            decoder,
+            pcm: vec![0.0f32; FRAME_SAMPLES * CHANNELS],
+            player: None,
+            applied: f32::NAN,
+            failed: false,
+            open,
+        }
+    }
+
+    fn push(&mut self, packet: AudioPacket) {
+        self.jitter.push(packet.seq, packet.data);
+    }
+
+    fn tick(&mut self, wants: bool, volume: f32, emit: &mut impl FnMut(ReceiverEvent)) {
+        // Abre ou fecha a saída conforme o usuário liga ou desliga "ouvir".
+        if wants && self.player.is_none() && !self.failed {
+            match (self.open)() {
+                Ok(p) => self.player = Some(p),
+                Err(e) => {
+                    self.failed = true;
+                    emit(ReceiverEvent::PlaybackFailed(e));
+                }
+            }
+        } else if !wants {
+            self.player = None;
+            self.applied = f32::NAN;
+        }
+        if let Some(player) = &self.player
+            && volume != self.applied
+        {
+            player.set_volume(volume);
+            self.applied = volume;
+        }
+        while let Some(next) = self.jitter.pop() {
+            let packet = match &next {
+                Next::Packet(p) => Some(p.as_slice()),
+                Next::Lost => {
+                    emit(ReceiverEvent::Lost);
+                    None
+                }
+            };
+            if self.decoder.decode(packet, &mut self.pcm).is_ok()
+                && let Some(player) = &self.player
+            {
+                player.push(&self.pcm);
+            }
+        }
     }
 }
 
@@ -216,6 +268,158 @@ mod tests {
         }
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(ReceiverEvent::Lost));
         drop(receiver);
+    }
+
+    /// O que a saída falsa recebeu.
+    #[derive(Default)]
+    struct Heard {
+        opened: u32,
+        closed: u32,
+        volumes: Vec<f32>,
+        pushed: usize,
+    }
+
+    struct FakeSpeaker(Arc<std::sync::Mutex<Heard>>);
+
+    impl Speaker for FakeSpeaker {
+        fn set_volume(&self, volume: f32) {
+            self.0.lock().unwrap().volumes.push(volume);
+        }
+        fn push(&self, samples: &[f32]) {
+            assert_eq!(samples.len(), FRAME_SAMPLES * CHANNELS);
+            self.0.lock().unwrap().pushed += 1;
+        }
+    }
+
+    impl Drop for FakeSpeaker {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().closed += 1;
+        }
+    }
+
+    type FakeOpen = Box<dyn FnMut() -> Result<FakeSpeaker, String>>;
+
+    fn playout(heard: &Arc<std::sync::Mutex<Heard>>) -> Playout<FakeSpeaker, FakeOpen> {
+        let heard = heard.clone();
+        Playout::new(
+            AudioDecoder::new().unwrap(),
+            Box::new(move || {
+                heard.lock().unwrap().opened += 1;
+                Ok(FakeSpeaker(heard.clone()))
+            }),
+        )
+    }
+
+    #[test]
+    fn ouvir_abre_a_saida_toca_o_que_chega_e_aplica_o_volume() {
+        let heard = Arc::new(std::sync::Mutex::new(Heard::default()));
+        let mut p = playout(&heard);
+        let mut got = Vec::new();
+        let mut emit = |e| got.push(e);
+        p.tick(true, 1.5, &mut emit);
+        for seq in 0..6 {
+            p.push(packet(seq));
+        }
+        p.tick(true, 1.5, &mut emit);
+        p.tick(true, 1.5, &mut emit);
+        let h = heard.lock().unwrap();
+        assert_eq!(h.opened, 1, "a saída abre uma vez só");
+        assert_eq!(h.volumes, vec![1.5], "o mesmo volume não é reaplicado");
+        assert!(h.pushed >= 3, "tocou {} pacotes", h.pushed);
+        drop(h);
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn mudar_o_volume_aplica_na_saida_aberta() {
+        let heard = Arc::new(std::sync::Mutex::new(Heard::default()));
+        let mut p = playout(&heard);
+        let mut emit = |_| {};
+        p.tick(true, 1.0, &mut emit);
+        p.tick(true, 0.25, &mut emit);
+        p.tick(true, 0.25, &mut emit);
+        assert_eq!(heard.lock().unwrap().volumes, vec![1.0, 0.25]);
+    }
+
+    #[test]
+    fn desligar_ouvir_fecha_a_saida_e_religar_reaplica_o_volume() {
+        let heard = Arc::new(std::sync::Mutex::new(Heard::default()));
+        let mut p = playout(&heard);
+        let mut emit = |_| {};
+        p.tick(true, 0.8, &mut emit);
+        p.tick(false, 0.8, &mut emit);
+        {
+            let h = heard.lock().unwrap();
+            assert_eq!((h.opened, h.closed), (1, 1));
+        }
+        // Sem ouvir, os pacotes continuam sendo decodificados (para medir), mas nada toca.
+        for seq in 0..6 {
+            p.push(packet(seq));
+        }
+        p.tick(false, 0.8, &mut emit);
+        assert_eq!(heard.lock().unwrap().pushed, 0);
+        p.tick(true, 0.8, &mut emit);
+        let h = heard.lock().unwrap();
+        assert_eq!(h.opened, 2);
+        assert_eq!(h.volumes, vec![0.8, 0.8], "a saída nova recebe o volume de novo");
+    }
+
+    #[test]
+    fn saida_que_nao_abre_avisa_uma_vez_e_nao_insiste() {
+        let tries = Arc::new(std::sync::Mutex::new(0u32));
+        let counter = tries.clone();
+        let open: Box<dyn FnMut() -> Result<FakeSpeaker, String>> = Box::new(move || {
+            *counter.lock().unwrap() += 1;
+            Err("sem placa de som".into())
+        });
+        let mut p = Playout::new(AudioDecoder::new().unwrap(), open);
+        let mut got = Vec::new();
+        let mut emit = |e| got.push(e);
+        for _ in 0..3 {
+            p.tick(true, 1.0, &mut emit);
+        }
+        assert_eq!(*tries.lock().unwrap(), 1);
+        assert_eq!(got, vec![ReceiverEvent::PlaybackFailed("sem placa de som".into())]);
+    }
+
+    #[test]
+    fn pacote_perdido_e_disfarcado_e_avisado() {
+        let heard = Arc::new(std::sync::Mutex::new(Heard::default()));
+        let mut p = playout(&heard);
+        let mut got = Vec::new();
+        let mut emit = |e| got.push(e);
+        for seq in [0, 1, 3, 4, 5, 6] {
+            p.push(packet(seq));
+        }
+        p.tick(true, 1.0, &mut emit);
+        assert_eq!(got, vec![ReceiverEvent::Lost]);
+        // O buraco também vira som (o decoder disfarça), então a saída recebe todos.
+        assert!(heard.lock().unwrap().pushed >= 4);
+    }
+
+    #[test]
+    fn volume_fica_entre_0_e_2_e_invalido_volta_para_100() {
+        assert_eq!(clamp_volume(0.5), 0.5);
+        assert_eq!(clamp_volume(-1.0), 0.0);
+        assert_eq!(clamp_volume(5.0), sv_media::MAX_VOLUME);
+        assert_eq!(clamp_volume(f32::NAN), 1.0);
+        assert_eq!(clamp_volume(f32::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn receptor_guarda_volume_e_ouvir_pedidos_pela_interface() {
+        let receiver = AudioReceiver::start(false, |_| {}).unwrap();
+        receiver.set_volume(3.0);
+        assert_eq!(
+            f32::from_bits(receiver.volume.load(Ordering::Relaxed)),
+            sv_media::MAX_VOLUME
+        );
+        receiver.set_volume(f32::NAN);
+        assert_eq!(f32::from_bits(receiver.volume.load(Ordering::Relaxed)), 1.0);
+        // Só a flag: a thread abriria a saída de verdade se "ouvir" ficasse ligado.
+        receiver.set_listening(false);
+        assert!(format!("{receiver:?}").contains("listening: false"));
+        assert!(receiver.submit(packet(0)));
     }
 
     #[test]

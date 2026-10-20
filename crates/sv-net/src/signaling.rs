@@ -55,6 +55,9 @@ pub struct Member {
     /// Conta do Discord vinculada. Ausente no Worker antigo.
     #[serde(default)]
     pub discord: Option<DiscordUser>,
+    /// Conta conferida pela sessão do SquadView (só conferidos viram amigos).
+    #[serde(default)]
+    pub verified: bool,
 }
 
 /// Mensagens que mandamos.
@@ -91,6 +94,10 @@ enum Outgoing<'a> {
     Signal {
         to: &'a str,
         payload: &'a Signal,
+    },
+    /// Entrou com o Discord já dentro da sala: confere a sessão.
+    Verify {
+        session: &'a str,
     },
     /// Resposta a um pedido de entrada.
     JoinAnswer {
@@ -307,6 +314,11 @@ impl RoomClient {
         });
     }
 
+    /// Confere a sessão do SquadView já dentro da sala (entrou com o Discord agora).
+    pub fn verify(&self, session: &str) {
+        self.send(&Outgoing::Verify { session });
+    }
+
     /// Aceita ou recusa um pedido de entrada.
     pub fn answer_join(&self, id: &str, accept: bool) {
         self.send(&Outgoing::JoinAnswer { id, accept });
@@ -450,6 +462,7 @@ mod tests {
                     muted: false,
                     deafened: false,
                     discord: None,
+                    verified: false,
                 }],
                 room: None,
             })
@@ -480,6 +493,10 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"join-request-closed","id":"cc"}"#),
             Some(RoomEvent::JoinRequestClosed("cc".into()))
+        );
+        assert_eq!(
+            serde_json::to_string(&Outgoing::Verify { session: "abc.def" }).unwrap(),
+            r#"{"type":"verify","session":"abc.def"}"#
         );
         assert_eq!(
             serde_json::to_string(&Outgoing::JoinAnswer { id: "cc", accept: true }).unwrap(),

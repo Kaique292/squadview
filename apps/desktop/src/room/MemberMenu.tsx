@@ -2,6 +2,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Check, Eye, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useFriendsStore } from "../friends/friends-store";
+import { useOverlayMenu } from "../ui/overlay";
 import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
 
 const DEFAULT_PEER = { volume: 100, muted: false };
@@ -16,10 +17,12 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
   const setNickname = useRoomStore((s) => s.setNickname);
   const [renaming, setRenaming] = useState(false);
   const { member } = props;
+  // O vídeo nativo fica por cima da interface: some enquanto o menu está aberto.
+  const onOpenChange = useOverlayMenu();
 
   return (
     <>
-      <ContextMenu.Root>
+      <ContextMenu.Root onOpenChange={onOpenChange}>
         <ContextMenu.Trigger asChild>{props.children}</ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content
@@ -70,7 +73,27 @@ function AddFriend(props: { member: Member }) {
     (s) => !id || s.friends.some((f) => f.id === id) || s.outgoing.some((p) => p.id === id),
   );
   const act = useFriendsStore((s) => s.act);
-  if (!id || known || status !== "online") return null;
+  if (!id || known) return null;
+  // Explica por que não dá, em vez de um erro genérico depois do clique.
+  const blocked =
+    status !== "online"
+      ? "Entre de novo com o Discord (Configurações › Minha conta) para usar os amigos."
+      : props.member.verified === false
+        ? `${props.member.name} precisa entrar de novo com o Discord no SquadView.`
+        : null;
+  if (blocked) {
+    return (
+      <ContextMenu.Item
+        disabled
+        className="flex flex-col items-start gap-0.5 rounded px-2 py-1.5 text-sm text-text-faint outline-none"
+      >
+        <span className="flex w-full items-center justify-between font-medium">
+          Adicionar amigo <UserPlus size={16} />
+        </span>
+        <span className="text-xs">{blocked}</span>
+      </ContextMenu.Item>
+    );
+  }
   return (
     <Item icon={<UserPlus size={16} />} onSelect={() => void act({ type: "friend-request", id })}>
       Adicionar amigo

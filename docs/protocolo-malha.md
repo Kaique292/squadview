@@ -1,10 +1,10 @@
 # Protocolo da malha (rascunho)
 
-> Status: **rascunho**, vira especificação na Fase 3. Mudanças aqui exigem uma ADR.
+> Status: **rascunho**, vira especificação na Fase 3. Mudanças aqui exigem uma ADR. O desenho atual é o da [ADR 0012](adr/0012-malha-em-enxame.md): malha em enxame com várias árvores.
 
 ## Objetivo
 
-Distribuir cada stream da sala para todos os membros usando o upload de quem tem sobra, com no máximo 2–3 saltos, e se recuperar em menos de 1 segundo quando alguém sai ou trava.
+Distribuir cada stream da sala para todos os membros, de 2 a milhares, com atraso de call (abaixo de 100 ms de rede) e sem pesar em quem transmite. O esforço de repasse se espalha por todos, como num torrent, e a saída de alguém não congela ninguém.
 
 ## Papéis
 
@@ -25,37 +25,42 @@ Cada membro publica para a sala, a cada 2 s:
 | `loss`                    | pacotes perdidos / esperados na janela                          |
 | `in_game`                 | processo em tela cheia detectado + escolha manual               |
 
-## Construção da árvore
+## Faixas e árvores
 
-1. Calcula a nota de cada candidato (`sv_mesh::PeerStats::relay_score`): vagas de repasse, penalizadas por latência e perda.
-2. O streamer alimenta direto os melhores, até o próprio limite de vagas (guardando banda para o jogo).
-3. Os demais membros entram como filhos do repassador de melhor nota com vaga livre, respeitando a profundidade máxima.
-4. Cada membro recebe também um **pai reserva**, já conectado e em espera.
-5. A árvore é recalculada quando a nota de alguém muda mais de 30% ou um membro entra ou sai. A troca é gradual: só muda quem ganha bastante com a mudança.
+1. O vídeo é cortado em **K = 4 faixas, mais P = 1 de paridade**: com quaisquer 4 das 5 faixas, a imagem é remontada.
+2. Cada faixa desce por uma **árvore própria**. Cada membro tem uma **faixa da casa** e só repassa nela: é galho numa árvore e folha nas outras.
+3. Quem transmite manda no máximo 2 cópias, divididas igualmente entre as árvores, para semear cada uma.
+4. **Tronco:** em cada árvore, quem tem ela como casa entra primeiro, do maior upload para o menor. Cada um pendura em quem transmite ou em outro do tronco, pelo menor atraso.
+5. **Folhas:** cada membro pega as outras faixas de quem está no tronco de cada árvore, pelo menor atraso, respeitando a vaga e o NAT.
+6. Quem está atrás de CGNAT, ou não tem upload para uma faixa, só recebe. Quem está jogando doa no máximo 1,5 Mbps.
+7. **Repassador na nuvem** (opcional): recebe uma cópia e só serve quem não alcança ninguém com vaga.
+8. A malha é refeita quando alguém entra, sai ou muda muito a medição. A troca é gradual: só muda quem ganha bastante com ela.
+
+O planejamento está em `sv_mesh::plan` e é testado com o simulador `sv_mesh::sim` (`cargo run -p sv-mesh --release --example simular`).
 
 ## Camadas de qualidade
 
-- O streamer gera duas camadas (alta e baixa) por simulcast ou SVC.
+- O streamer gera duas camadas (alta e baixa) por simulcast ou SVC, cada uma com as suas 5 faixas.
 - Cada membro assina a camada que o download dele aguenta (`sv_mesh::layer_for_download`).
 - Um repassador só encaminha as camadas que os filhos pediram.
 
 ## Recuperação de perda
 
 - **NACK:** o filho pede o pacote perdido ao pai, não ao streamer. O pai guarda os últimos ~500 ms.
-- **FEC:** pacotes de redundância ligados quando a perda passa de 2%.
+- **Paridade entre faixas:** a quinta faixa cobre a perda de qualquer outra, inclusive a saída de quem repassava.
+- **FEC dentro da faixa:** pacotes de redundância ligados quando a perda passa de 2%.
 - **Keyframe sob demanda:** se a perda tornar o vídeo irrecuperável, o pedido sobe até o streamer.
 
 ## Troca de pai
 
-- Se o pai some por mais de 300 ms, o filho passa para o pai reserva na hora.
-- A sala elege um novo pai reserva em seguida.
-- Meta: menos de 1 s de imagem congelada.
+- Se o pai de uma faixa some por mais de 300 ms, a imagem segue pela paridade (4 das 5 faixas) e o membro pede um pai novo naquela árvore.
+- Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar.
 
 ## Atravessar NAT
 
 1. Os membros trocam candidatos de endereço pela sinalização.
 2. Tentam conexão direta (hole punching UDP).
-3. Se falhar (CGNAT simétrico), a conexão passa por um terceiro membro que enxerga os dois.
+3. Se falhar (CGNAT simétrico), a faixa vem de quem tem rede aberta; se não houver ninguém com vaga, do repassador na nuvem.
 
 ## Mensagens (esboço)
 

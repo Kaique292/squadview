@@ -774,7 +774,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3566,9 +3566,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -4043,13 +4043,14 @@ dependencies = [
 
 [[package]]
 name = "squadview"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
  "jpeg-encoder",
  "quinn",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -4128,7 +4129,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sv-capture"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4139,7 +4140,7 @@ dependencies = [
 
 [[package]]
 name = "sv-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4147,7 +4148,7 @@ dependencies = [
 
 [[package]]
 name = "sv-encode"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "sv-core",
  "sv-gpu",
@@ -4156,14 +4157,14 @@ dependencies = [
 
 [[package]]
 name = "sv-gpu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "sv-media"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "nnnoiseless",
  "opus-rs",
@@ -4176,20 +4177,22 @@ dependencies = [
 
 [[package]]
 name = "sv-mesh"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "sv-core",
 ]
 
 [[package]]
 name = "sv-net"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
+ "base64 0.23.1",
  "bytes",
  "futures-util",
  "postcard",
  "quinn",
  "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -4201,7 +4204,7 @@ dependencies = [
 
 [[package]]
 name = "sv-session"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "quinn",
@@ -4889,11 +4892,11 @@ dependencies = [
  "futures-util",
  "log",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5438,24 +5441,6 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.9",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

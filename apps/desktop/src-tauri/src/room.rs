@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 use serde_json::json;
 use sv_session::{DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, WindowEvent};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
 use crate::preview::{self, FULLSCREEN_EVENT};
@@ -87,8 +87,8 @@ pub(crate) fn lock(state: &RoomState) -> std::sync::MutexGuard<'_, Running> {
 /// Entra na sala `code` (ou cria uma nova, se `code` vier vazio) com o nome `name`. Ao criar,
 /// `room_name` dá nome à sala.
 #[tauri::command]
-pub async fn room_join(
-    app: AppHandle,
+pub async fn room_join<R: Runtime>(
+    app: AppHandle<R>,
     code: Option<String>,
     name: String,
     discord: Option<DiscordUser>,
@@ -191,6 +191,14 @@ pub fn room_set_profile(state: State<'_, RoomState>, name: String, discord: Opti
     Ok(())
 }
 
+/// Entramos com o Discord já dentro da sala: a sala confere a sessão (vira conferido para os
+/// outros e entra nos recentes deles), sem sair e entrar.
+pub fn verify_in_room<R: Runtime>(app: &AppHandle<R>, session: &str) {
+    if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
+        room.verify(session);
+    }
+}
+
 /// Aceita ou recusa o pedido de entrada `id`.
 #[tauri::command]
 pub fn room_answer_join(state: State<'_, RoomState>, id: String, accept: bool) -> Result<(), String> {
@@ -205,7 +213,7 @@ pub fn room_answer_join(state: State<'_, RoomState>, id: String, accept: bool) -
 
 /// Sai da sala (para de assistir e, se estava transmitindo, os amigos são desconectados).
 #[tauri::command]
-pub async fn room_leave(app: AppHandle) -> Result<(), String> {
+pub async fn room_leave<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     preview::off_main(move || {
         let state = app.state::<RoomState>();
         let (watching, room) = {
@@ -231,7 +239,7 @@ pub fn room_watch(state: State<'_, RoomState>, member_id: String) -> Result<(), 
 
 /// Para de assistir. Antes de fechar o vídeo, manda a foto do último quadro (evento `video-exit`).
 #[tauri::command]
-pub async fn room_stop_watching(app: AppHandle) -> Result<(), String> {
+pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     preview::off_main(move || {
         let state = app.state::<RoomState>();
         let Some(watching) = lock(&state).watching.take() else {
@@ -261,12 +269,12 @@ pub fn set_watch_volume(state: State<'_, RoomState>, volume: f32) {
 }
 
 /// O que a prévia entrega para a sala (se estivermos numa).
-pub fn tap(app: &AppHandle) -> Option<std::sync::Arc<dyn sv_session::StreamTap>> {
+pub fn tap<R: Runtime>(app: &AppHandle<R>) -> Option<std::sync::Arc<dyn sv_session::StreamTap>> {
     lock(&app.state::<RoomState>()).room.as_ref().map(Room::tap)
 }
 
 /// A prévia começou ou parou: avisa a sala (aparece "AO VIVO" para os amigos).
-pub fn stream_changed(app: &AppHandle, keyframes: Option<sv_session::KeyframeHandle>) {
+pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_session::KeyframeHandle>) {
     let state = app.state::<RoomState>();
     let running = lock(&state);
     if let Some(room) = running.room.as_ref() {
@@ -278,7 +286,7 @@ pub fn stream_changed(app: &AppHandle, keyframes: Option<sv_session::KeyframeHan
 }
 
 /// Repassa a posição do vídeo para quem estamos assistindo.
-pub fn apply_layout(app: &AppHandle, bounds: sv_session::Bounds, hidden: bool) -> bool {
+pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, bounds: sv_session::Bounds, hidden: bool) -> bool {
     let state = app.state::<RoomState>();
     let running = lock(&state);
     match running.watching.as_ref() {
@@ -298,7 +306,7 @@ struct WatchEnded {
     reason: String,
 }
 
-fn on_update(app: &AppHandle, update: RoomUpdate) {
+fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
     match update {
         RoomUpdate::Members(members) => {
             let _ = app.emit(MEMBERS_EVENT, members);
@@ -365,7 +373,12 @@ fn on_update(app: &AppHandle, update: RoomUpdate) {
     }
 }
 
-fn start_watching(app: &AppHandle, member: Member, conn: quinn::Connection, desc: sv_net::protocol::StreamDescription) {
+fn start_watching<R: Runtime>(
+    app: &AppHandle<R>,
+    member: Member,
+    conn: quinn::Connection,
+    desc: sv_net::protocol::StreamDescription,
+) {
     let target = match preview::video_target(app) {
         Ok(t) => t,
         Err(e) => {
@@ -444,7 +457,139 @@ fn start_watching(app: &AppHandle, member: Member, conn: quinn::Connection, desc
 
 #[cfg(test)]
 mod tests {
-    use super::clean_name;
+    use super::*;
+    use crate::test_support::{TestApp, test_app, worker};
+
+    fn join(t: &TestApp, code: Option<&str>, name: &str) -> Result<RoomInfo, String> {
+        tauri::async_runtime::block_on(room_join(
+            t.handle().clone(),
+            code.map(str::to_owned),
+            name.into(),
+            None,
+            Some("Galera".into()),
+            None,
+        ))
+    }
+
+    fn members_named(v: &serde_json::Value) -> Vec<String> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(|m| m["name"].as_str().map(str::to_owned)).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn conta_do_discord_no_formato_do_worker() {
+        let ok = DiscordUser {
+            id: "123456789012345678".into(),
+            avatar: Some(format!("a_{}", "f".repeat(32))),
+        };
+        assert_eq!(clean_discord(ok.clone()), Some(ok));
+        let sem_foto = DiscordUser {
+            id: "123456789012345678".into(),
+            avatar: None,
+        };
+        assert!(clean_discord(sem_foto).is_some());
+        for (id, avatar) in [
+            ("123", None),
+            ("12345678901234567x", None),
+            ("123456789012345678", Some("https://exemplo.com/foto.png")),
+            ("123456789012345678", Some("ABCDEF")),
+        ] {
+            let user = DiscordUser {
+                id: id.into(),
+                avatar: avatar.map(str::to_owned),
+            };
+            assert_eq!(clean_discord(user), None, "{id} {avatar:?}");
+        }
+    }
+
+    #[test]
+    fn sem_sala_os_comandos_pedem_para_entrar_antes() {
+        let t = test_app();
+        let state = || t.app.state::<RoomState>();
+        let entre = "Entre numa sala primeiro.";
+        assert_eq!(room_rename(state(), "Squad".into()).unwrap_err(), entre);
+        assert_eq!(room_set_name(state(), "Ana".into()).unwrap_err(), entre);
+        assert_eq!(room_answer_join(state(), "aa".into(), true).unwrap_err(), entre);
+        assert_eq!(room_watch(state(), "aa".into()).unwrap_err(), entre);
+        // Sem sala e sem ninguém assistido, não acontece nada (nem cai).
+        assert!(room_set_profile(state(), "Ana".into(), None).is_ok());
+        set_watch_listening(state(), false);
+        set_watch_volume(state(), 1.5);
+        assert!(tap(t.handle()).is_none());
+        stream_changed(t.handle(), None);
+        assert!(!apply_layout(t.handle(), sv_session::Bounds::default(), false));
+        tauri::async_runtime::block_on(room_stop_watching(t.handle().clone())).unwrap();
+        tauri::async_runtime::block_on(room_leave(t.handle().clone())).unwrap();
+    }
+
+    #[test]
+    fn nomes_e_codigos_invalidos_sao_recusados_antes_de_conectar() {
+        let t = test_app();
+        assert!(join(&t, Some("AB"), "Ana").unwrap_err().contains("Código inválido"));
+        assert!(join(&t, None, "   ").unwrap_err().contains("1 a 32"));
+        let state = || t.app.state::<RoomState>();
+        assert!(room_rename(state(), " ".into()).unwrap_err().contains("1 a 32"));
+        assert!(room_set_name(state(), "".into()).unwrap_err().contains("1 a 32"));
+        assert!(
+            room_set_profile(state(), "".into(), None)
+                .unwrap_err()
+                .contains("1 a 32")
+        );
+    }
+
+    #[test]
+    fn dois_amigos_na_sala_pelos_comandos_do_app() {
+        if worker().is_none() {
+            return;
+        }
+        let ana = test_app();
+        let beto = test_app();
+        let ana_members = ana.events(MEMBERS_EVENT);
+        let beto_members = beto.events(MEMBERS_EVENT);
+        let beto_names = beto.events(ROOM_NAME_EVENT);
+        let beto_watch = beto.events(WATCH_ENDED_EVENT);
+
+        // Ana cria (código sorteado), Beto entra pelo código (com hífen e minúsculas).
+        let info = join(&ana, None, "Ana").unwrap();
+        assert_eq!(info.room_name.as_deref(), Some("Galera"));
+        assert!(info.url.starts_with("ws"));
+        let typed = format!("{}-{}", &info.code[..3], &info.code[3..]).to_lowercase();
+        let joined = join(&beto, Some(&typed), "Beto").unwrap();
+        assert_eq!(joined.code, info.code);
+        assert_eq!(joined.room_name.as_deref(), Some("Galera"));
+        let list = ana_members.wait("Beto entrou", |v| members_named(v) == ["Ana", "Beto"]);
+        // A lista vem com a gente primeiro.
+        let ana_id = list[0]["id"].as_str().unwrap().to_owned();
+        assert!(tap(ana.handle()).is_some());
+
+        // Renomear a sala, trocar o apelido e vincular o Discord chegam ao outro.
+        room_rename(ana.app.state::<RoomState>(), "Squad".into()).unwrap();
+        beto_names.wait("sala renomeada", |v| v == "Squad");
+        room_set_name(ana.app.state::<RoomState>(), "Aninha".into()).unwrap();
+        beto_members.wait("apelido", |v| members_named(v).contains(&"Aninha".to_owned()));
+        let conta = DiscordUser {
+            id: "123456789012345678".into(),
+            avatar: None,
+        };
+        room_set_profile(ana.app.state::<RoomState>(), "Ana".into(), Some(conta)).unwrap();
+        beto_members.wait("foto do Discord", |v| {
+            v.as_array()
+                .is_some_and(|a| a.iter().any(|m| m["discord"]["id"] == "123456789012345678"))
+        });
+        // Responder um pedido que não existe não faz nada.
+        room_answer_join(ana.app.state::<RoomState>(), "0000000000000000".into(), true).unwrap();
+
+        // Pedir para assistir quem não está ao vivo termina com o motivo.
+        room_watch(beto.app.state::<RoomState>(), ana_id).unwrap();
+        let ended = beto_watch.wait("assistir recusado", |v| v["reason"].is_string());
+        assert!(!ended["reason"].as_str().unwrap().is_empty());
+
+        // Ana sai: o Beto fica sozinho na lista.
+        tauri::async_runtime::block_on(room_leave(ana.handle().clone())).unwrap();
+        beto_members.wait("Ana saiu", |v| members_named(v) == ["Beto"]);
+        tauri::async_runtime::block_on(room_leave(beto.handle().clone())).unwrap();
+    }
 
     #[test]
     fn nome_segue_as_regras_do_worker() {

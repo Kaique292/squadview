@@ -120,8 +120,7 @@ fn run(
     on_window(window.control());
     let mut renderer = window.renderer(&gpu)?;
     let mut decoder = Decoder::new(&gpu, info.size, info.fps)?;
-    let mut waiting_keyframe = true;
-    let mut lost = false;
+    let mut gate = KeyframeGate::new();
     // O último quadro mostrado: só uma referência à textura (AddRef), sem cópia por frame.
     let mut last: Option<GpuFrame> = None;
 
@@ -139,15 +138,14 @@ fn run(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         };
-        if waiting_keyframe && !frame.keyframe {
-            if !lost {
-                lost = true;
+        match gate.admit(frame.keyframe) {
+            Admit::Decode => {}
+            Admit::Skip => continue,
+            Admit::SkipAndAsk => {
                 on_event(ViewerEvent::NeedKeyframe);
+                continue;
             }
-            continue;
         }
-        waiting_keyframe = false;
-        lost = false;
 
         let offset = clock_offset.load(Ordering::Relaxed);
         let mut present_error = None;
@@ -156,19 +154,138 @@ fn run(
                 present_error = Some(e);
             }
             last = Some(image.clone());
-            let captured_local = frame.timestamp_us as i64 + offset;
-            let latency = (clock::now_us() as i64 - captured_local).clamp(0, u32::MAX as i64) as u32;
-            on_event(ViewerEvent::Presented { latency_us: latency });
+            on_event(ViewerEvent::Presented {
+                latency_us: latency_us(frame.timestamp_us, offset, clock::now_us()),
+            });
         });
         if decoded.is_err() {
             // Frame corrompido ou perdido: limpa o decoder e espera o próximo keyframe.
             decoder.flush();
-            waiting_keyframe = true;
-            lost = true;
+            gate.decode_failed();
             on_event(ViewerEvent::NeedKeyframe);
         }
         if let Some(e) = present_error {
             return Err(e);
         }
+    }
+}
+
+/// O que fazer com um frame que chegou.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admit {
+    Decode,
+    /// Sem keyframe ainda: descarta (o keyframe já foi pedido).
+    Skip,
+    /// Sem keyframe ainda: descarta e pede um (só uma vez por espera).
+    SkipAndAsk,
+}
+
+/// Sem um keyframe o decoder não tem referência: no começo e depois de um erro, descarta tudo
+/// até o próximo keyframe, pedindo um só uma vez.
+#[derive(Debug)]
+struct KeyframeGate {
+    waiting: bool,
+    asked: bool,
+}
+
+impl KeyframeGate {
+    fn new() -> Self {
+        Self {
+            waiting: true,
+            asked: false,
+        }
+    }
+
+    fn admit(&mut self, keyframe: bool) -> Admit {
+        if self.waiting && !keyframe {
+            if self.asked {
+                return Admit::Skip;
+            }
+            self.asked = true;
+            return Admit::SkipAndAsk;
+        }
+        self.waiting = false;
+        self.asked = false;
+        Admit::Decode
+    }
+
+    /// O frame não decodificou (corrompido ou faltou um antes): quem chama já pediu keyframe.
+    fn decode_failed(&mut self) {
+        self.waiting = true;
+        self.asked = true;
+    }
+}
+
+/// Da captura (no relógio de quem transmite, corrigido por `offset`) até agora, em µs.
+fn latency_us(captured_us: u64, offset: i64, now_us: u64) -> u32 {
+    let captured_local = captured_us as i64 + offset;
+    (now_us as i64 - captured_local).clamp(0, u32::MAX as i64) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comeca_esperando_keyframe_e_pede_um_so_uma_vez() {
+        let mut gate = KeyframeGate::new();
+        assert_eq!(gate.admit(false), Admit::SkipAndAsk);
+        assert_eq!(gate.admit(false), Admit::Skip);
+        assert_eq!(gate.admit(false), Admit::Skip);
+        assert_eq!(gate.admit(true), Admit::Decode);
+        assert_eq!(gate.admit(false), Admit::Decode, "depois do keyframe, tudo decodifica");
+    }
+
+    #[test]
+    fn erro_de_decode_volta_a_esperar_keyframe_sem_pedir_de_novo() {
+        let mut gate = KeyframeGate::new();
+        assert_eq!(gate.admit(true), Admit::Decode);
+        gate.decode_failed();
+        assert_eq!(gate.admit(false), Admit::Skip, "o pedido já saiu junto com o erro");
+        assert_eq!(gate.admit(true), Admit::Decode);
+        // Outro erro depois de recuperar: o próximo keyframe recupera de novo.
+        gate.decode_failed();
+        assert_eq!(gate.admit(true), Admit::Decode);
+        assert_eq!(gate.admit(false), Admit::Decode);
+    }
+
+    #[test]
+    fn latencia_usa_o_relogio_corrigido_de_quem_transmite() {
+        assert_eq!(latency_us(1_000, 0, 31_000), 30_000);
+        // O relógio de quem transmite está 5 ms atrasado em relação ao nosso.
+        assert_eq!(latency_us(1_000, 5_000, 31_000), 25_000);
+        // Relógios mal estimados nunca dão latência negativa nem estouram.
+        assert_eq!(latency_us(50_000, 0, 31_000), 0);
+        assert_eq!(latency_us(0, -(u32::MAX as i64) * 2, 0), u32::MAX);
+    }
+
+    #[test]
+    #[ignore = "precisa de GPU (abre uma janela de vídeo)"]
+    fn sem_keyframe_pede_um_e_ainda_nao_tem_foto() {
+        let (tx, rx) = mpsc::channel();
+        let viewer = VideoViewer::start(
+            WindowTarget::Standalone {
+                title: "teste do SquadView".into(),
+            },
+            StreamInfo {
+                size: Size::new(640, 360),
+                fps: 30,
+                encoder: String::new(),
+            },
+            ClockOffset::default(),
+            |_| {},
+            move |e| {
+                let _ = tx.send(e);
+            },
+        );
+        assert!(viewer.submit(EncodedFrame {
+            data: vec![0; 100],
+            keyframe: false,
+            timestamp_us: 0,
+            encode_us: 0,
+        }));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(ViewerEvent::NeedKeyframe));
+        assert!(viewer.snapshot(SNAPSHOT_MAX, Duration::from_millis(400)).is_none());
+        assert!(format!("{viewer:?}").starts_with("VideoViewer"));
     }
 }

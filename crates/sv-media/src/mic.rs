@@ -8,12 +8,12 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioCaptureClient, IAudioClient,
-    WAVEFORMATEX,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 use crate::devices::{Flow, open_device};
+use crate::wasapi::{buffer_duration, copy_packet, float_format};
 
 /// Taxa entregue (a mesma do Opus e do supressor de ruído).
 pub const MIC_SAMPLE_RATE: u32 = 48_000;
@@ -110,12 +110,13 @@ impl Stream {
                         break;
                     }
                     let len = count as usize;
-                    buffer.clear();
-                    if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
-                        buffer.resize(len, 0.0);
+                    let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null();
+                    let samples = if silent {
+                        None
                     } else {
-                        buffer.extend_from_slice(std::slice::from_raw_parts(data as *const f32, len));
-                    }
+                        Some(std::slice::from_raw_parts(data as *const f32, len))
+                    };
+                    copy_packet(&mut buffer, samples, len);
                     let _ = self.capture.ReleaseBuffer(count);
                     on_samples(&buffer);
                 }
@@ -140,22 +141,14 @@ fn open(device: Option<&str>) -> windows::core::Result<Stream> {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let device = open_device(Flow::Input, device)?;
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
-        let format = WAVEFORMATEX {
-            wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
-            nChannels: 1,
-            nSamplesPerSec: MIC_SAMPLE_RATE,
-            nAvgBytesPerSec: MIC_SAMPLE_RATE * 4,
-            nBlockAlign: 4,
-            wBitsPerSample: 32,
-            cbSize: 0,
-        };
         // Pedimos 48 kHz mono e o Windows converte do formato do microfone.
+        let format = float_format(1, MIC_SAMPLE_RATE);
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK
                 | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
                 | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-            200_000, // 20 ms
+            buffer_duration(20),
             0,
             &format,
             None,
@@ -182,5 +175,26 @@ mod tests {
         let got = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("amostras");
         assert!(got > 0);
         drop(mic);
+    }
+
+    #[test]
+    #[ignore = "precisa de microfone"]
+    fn microfone_que_sumiu_cai_no_padrao_do_windows() {
+        let (tx, rx) = mpsc::channel();
+        let mic = MicCapture::start(Some("{id-que-nao-existe}".into()), move |s| {
+            let _ = tx.send(s.len());
+        })
+        .expect("abrir o microfone padrão");
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok());
+        assert!(format!("{mic:?}").contains("MicCapture"));
+    }
+
+    #[test]
+    #[ignore = "precisa de microfone"]
+    fn abre_cada_microfone_da_lista() {
+        for device in crate::list_devices(Flow::Input) {
+            let mic = MicCapture::start(Some(device.id.clone()), |_| {});
+            assert!(mic.is_ok(), "{}: {mic:?}", device.name);
+        }
     }
 }

@@ -242,10 +242,19 @@ export async function listenToFriendsEvents() {
   // Entrou, saiu ou renomeou a sala, ou começou a transmitir: os amigos ficam sabendo.
   const offRoom = useRoomStore.subscribe((s, prev) => {
     if (s.code !== prev.code) useFriendsStore.setState({ joinRequests: [] });
+    // Entrou numa sala ou começou a assistir alguém: sai da página de amigos para mostrar a sala
+    // ou o vídeo (antes o vídeo ficava escondido atrás dela).
+    const enteredRoom = s.code !== null && s.code !== prev.code;
+    const startedWatching = (s.watching && !prev.watching) || (s.pendingWatch && !prev.pendingWatch);
+    if ((enteredRoom || startedWatching) && useFriendsStore.getState().open) {
+      useFriendsStore.setState({ open: false });
+    }
     if (s.code !== prev.code || s.roomName !== prev.roomName) sendStatus();
   });
   const offStream = useStreamStore.subscribe((s, prev) => {
     if ((s.status === "live") !== (prev.status === "live")) sendStatus();
+    // Começou a transmitir: mostra a própria transmissão.
+    if (s.status === "live" && prev.status !== "live") useFriendsStore.setState({ open: false });
   });
   const offAccount = useAccountStore.subscribe((s, prev) => {
     if (s.profile !== prev.profile) sendProfileAndStatus();

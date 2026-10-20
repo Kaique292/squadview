@@ -116,12 +116,14 @@ export class Room extends DurableObject<Env> {
     return this.state.requestJoin(from, randomPeerId());
   }
 
-  /** Se a mensagem é um `join` com sessão, confere a sessão e devolve o id do Discord. */
+  /** Se a mensagem é um `join` com sessão (ou um `verify`), confere a sessão e devolve o id do Discord. */
   private async verifiedJoin(message: string | ArrayBuffer): Promise<string | null> {
     if (typeof message !== "string" || !this.env.SESSION_SECRET || !message.includes('"session"')) return null;
     try {
       const data = JSON.parse(message) as { type?: unknown; session?: unknown };
-      return data.type === "join" ? await verifySession(this.env.SESSION_SECRET, data.session) : null;
+      return data.type === "join" || data.type === "verify"
+        ? await verifySession(this.env.SESSION_SECRET, data.session)
+        : null;
     } catch {
       return null;
     }

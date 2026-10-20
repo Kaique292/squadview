@@ -20,6 +20,7 @@ windows.workspace = true
 [dev-dependencies]
 sv-core.workspace = true
 sv-encode.workspace = true
+sv-gpu = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

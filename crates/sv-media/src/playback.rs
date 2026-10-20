@@ -13,13 +13,14 @@ use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
     AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator, MMDeviceEnumerator,
-    WAVEFORMATEX, eConsole, eRender,
+    eConsole, eRender,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 use crate::devices::{Flow, open_device};
 use crate::opus::{CHANNELS, SAMPLE_RATE};
+use crate::wasapi::{buffer_duration, float_format};
 
 /// Maior atraso aceito na fila de reprodução.
 pub const MAX_BUFFERED_MS: usize = 120;
@@ -32,6 +33,28 @@ pub const MAX_VOLUME: f32 = 2.0;
 struct Queue {
     samples: VecDeque<f32>,
     volume: f32,
+}
+
+impl Queue {
+    fn new() -> Self {
+        Self {
+            samples: VecDeque::new(),
+            volume: 1.0,
+        }
+    }
+
+    fn push(&mut self, samples: &[f32]) {
+        push_bounded(&mut self.samples, samples, MAX_BUFFERED);
+    }
+
+    fn buffered_ms(&self) -> usize {
+        self.samples.len() * 1000 / (SAMPLE_RATE as usize * CHANNELS)
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        // Curva perceptiva: 200% soa bem mais alto, como no Discord.
+        self.volume = crate::level::volume_gain(volume);
+    }
 }
 
 /// Saída de áudio em andamento. Para ao ser descartada.
@@ -50,10 +73,7 @@ impl AudioPlayer {
 
     /// Toca na saída `device` (ou na padrão, se `None` ou se ela sumiu).
     pub fn start_on(device: Option<String>) -> windows::core::Result<Self> {
-        let queue = Arc::new(Mutex::new(Queue {
-            samples: VecDeque::new(),
-            volume: 1.0,
-        }));
+        let queue = Arc::new(Mutex::new(Queue::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel();
         let (q, s) = (queue.clone(), stop.clone());
@@ -88,20 +108,18 @@ impl AudioPlayer {
 
     /// Enfileira amostras intercaladas a 48 kHz estéreo.
     pub fn push(&self, samples: &[f32]) {
-        let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        push_bounded(&mut q.samples, samples, MAX_BUFFERED);
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).push(samples);
     }
 
     /// Quanto áudio está na fila esperando a placa, em ms (quem mistura usa para saber a hora
     /// de mandar mais).
     pub fn buffered_ms(&self) -> usize {
-        let q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        q.samples.len() * 1000 / (SAMPLE_RATE as usize * CHANNELS)
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).buffered_ms()
     }
 
     /// Volume de 0 (mudo) a 2 (200%, como no Discord).
     pub fn set_volume(&self, volume: f32) {
-        self.queue.lock().unwrap_or_else(|e| e.into_inner()).volume = volume.clamp(0.0, MAX_VOLUME);
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).set_volume(volume);
     }
 }
 
@@ -123,12 +141,17 @@ pub(crate) fn push_bounded(queue: &mut VecDeque<f32>, samples: &[f32], max: usiz
     }
 }
 
+/// Quantos quadros cabem no buffer da placa agora (o resto ainda está esperando tocar).
+fn writable_frames(buffer_frames: u32, padding: u32) -> u32 {
+    buffer_frames.saturating_sub(padding)
+}
+
 /// Preenche `out` com o que tem na fila (aplicando o volume) e completa com silêncio.
 fn fill(queue: &mut Queue, out: &mut [f32]) {
     let n = out.len().min(queue.samples.len());
     for (dst, src) in out.iter_mut().zip(queue.samples.drain(..n)) {
         // Acima de 100% o som pode passar do limite: corta em vez de distorcer na placa.
-        *dst = (src * queue.volume).clamp(-1.0, 1.0);
+        *dst = crate::level::soft_clip(src * queue.volume);
     }
     out[n..].fill(0.0);
 }
@@ -155,7 +178,7 @@ impl Output {
                 let Ok(padding) = self.client.GetCurrentPadding() else {
                     break;
                 };
-                let frames = self.buffer_frames.saturating_sub(padding);
+                let frames = writable_frames(self.buffer_frames, padding);
                 if frames == 0 {
                     continue;
                 }
@@ -191,22 +214,13 @@ fn open(device: Option<&str>) -> windows::core::Result<Output> {
             }
         };
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
-        let block_align = CHANNELS as u16 * 4;
-        let format = WAVEFORMATEX {
-            wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
-            nChannels: CHANNELS as u16,
-            nSamplesPerSec: SAMPLE_RATE,
-            nAvgBytesPerSec: SAMPLE_RATE * u32::from(block_align),
-            nBlockAlign: block_align,
-            wBitsPerSample: 32,
-            cbSize: 0,
-        };
+        let format = float_format(CHANNELS as u16, SAMPLE_RATE);
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK
                 | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
                 | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-            300_000, // 30 ms
+            buffer_duration(30),
             0,
             &format,
             None,
@@ -248,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn volume_acima_de_100_corta_no_limite() {
+    fn volume_acima_de_100_e_limitado_sem_corte_seco() {
         let mut q = Queue {
             samples: VecDeque::from(vec![0.3, -0.8]),
             volume: 2.0,
@@ -256,7 +270,61 @@ mod tests {
         let mut out = [0.0; 2];
         fill(&mut q, &mut out);
         assert!((out[0] - 0.6).abs() < 1e-6);
-        assert_eq!(out[1], -1.0);
+        // -1,6 passa pelo limitador: fica perto de -1, sem passar.
+        assert!(out[1] >= -1.0 && out[1] < -0.99, "{}", out[1]);
+    }
+
+    #[test]
+    fn fila_mede_o_atraso_e_limita_o_volume() {
+        let mut q = Queue::new();
+        assert_eq!(q.volume, 1.0);
+        // 20 ms de estéreo a 48 kHz.
+        q.push(&[0.0; 960 * 2]);
+        assert_eq!(q.buffered_ms(), 20);
+        // Muito mais que o limite: fica no máximo MAX_BUFFERED_MS.
+        q.push(&vec![0.0; SAMPLE_RATE as usize * CHANNELS]);
+        assert_eq!(q.buffered_ms(), MAX_BUFFERED_MS);
+        // Acima de 200% fica em 200%, que pela curva perceptiva é ×4.
+        q.set_volume(5.0);
+        assert_eq!(q.volume, MAX_VOLUME * MAX_VOLUME);
+        q.set_volume(-1.0);
+        assert_eq!(q.volume, 0.0);
+    }
+
+    #[test]
+    fn excesso_impar_nao_desalinha_esquerda_e_direita() {
+        let mut q = VecDeque::new();
+        // 5 amostras num limite de 4: corta 2 (um par L/R inteiro), não 1.
+        push_bounded(&mut q, &[1.0, 2.0, 3.0, 4.0, 5.0], 4);
+        assert_eq!(q.iter().copied().collect::<Vec<_>>(), vec![3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn so_escreve_o_que_cabe_no_buffer_da_placa() {
+        assert_eq!(writable_frames(1440, 480), 960);
+        assert_eq!(writable_frames(1440, 1440), 0);
+        assert_eq!(writable_frames(1440, 2000), 0, "padding maior que o buffer não estoura");
+    }
+
+    #[test]
+    #[ignore = "precisa de saída de áudio"]
+    fn mede_o_atraso_e_esvazia_tocando() {
+        let player = AudioPlayer::start_on(Some("{saida-que-nao-existe}".into())).expect("cai na saída padrão");
+        player.set_volume(0.0);
+        player.push(&[0.0; 960 * 2 * 5]);
+        assert!(player.buffered_ms() >= 50);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(player.buffered_ms() < 50, "a placa não consumiu a fila");
+        assert!(format!("{player:?}").contains("AudioPlayer"));
+    }
+
+    #[test]
+    #[ignore = "precisa de saída de áudio"]
+    fn toca_em_cada_saida_da_lista() {
+        for device in crate::list_devices(Flow::Output) {
+            let player = AudioPlayer::start_on(Some(device.id.clone()));
+            assert!(player.is_ok(), "{}: {player:?}", device.name);
+        }
     }
 
     #[test]

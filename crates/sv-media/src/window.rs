@@ -106,15 +106,13 @@ pub struct WindowControl {
 impl WindowControl {
     /// Move e redimensiona a área do vídeo. Tamanho zero esconde.
     pub fn set_bounds(&self, b: Bounds) {
-        let visible = b.width > 0 && b.height > 0;
-        let show = if visible { SWP_SHOWWINDOW } else { SWP_HIDEWINDOW };
+        let show = show_flag(b.width > 0 && b.height > 0);
         self.position(b.x, b.y, b.width as i32, b.height as i32, show);
     }
 
     /// Esconde (ex.: um modal abriu por cima) ou mostra de novo, na última posição.
     pub fn set_visible(&self, visible: bool) {
-        let show = if visible { SWP_SHOWWINDOW } else { SWP_HIDEWINDOW };
-        self.position(0, 0, 0, 0, show | SWP_NOMOVE | SWP_NOSIZE);
+        self.position(0, 0, 0, 0, show_flag(visible) | SWP_NOMOVE | SWP_NOSIZE);
     }
 
     /// Recebe os eventos de tela cheia (substitui o callback anterior).
@@ -309,21 +307,15 @@ fn window_thread(target: WindowTarget, video: Size, shared: Arc<Shared>, ready: 
 
         let (title, style, x, y, width, height, parent): (HSTRING, WINDOW_STYLE, i32, i32, i32, i32, Option<HWND>) =
             match &target {
-                WindowTarget::Standalone { title } => {
-                    // Tamanho inicial: 960 px de largura com a proporção do vídeo.
-                    let h = (960 * video.height)
-                        .checked_div(video.width)
-                        .map_or(540, |h| h.max(240)) as i32;
-                    (
-                        title.into(),
-                        WS_OVERLAPPEDWINDOW,
-                        CW_USEDEFAULT,
-                        CW_USEDEFAULT,
-                        960,
-                        h,
-                        None,
-                    )
-                }
+                WindowTarget::Standalone { title } => (
+                    title.into(),
+                    WS_OVERLAPPEDWINDOW,
+                    CW_USEDEFAULT,
+                    CW_USEDEFAULT,
+                    STANDALONE_WIDTH,
+                    standalone_height(video),
+                    None,
+                ),
                 // Filha da janela do app, sem borda e escondida até a interface dizer onde ficar.
                 WindowTarget::Embedded { parent } => (
                     HSTRING::new(),
@@ -371,54 +363,94 @@ fn window_thread(target: WindowTarget, video: Size, shared: Arc<Shared>, ready: 
     shared.closed.store(true, Ordering::Relaxed);
 }
 
+/// Largura inicial da janela solta.
+const STANDALONE_WIDTH: i32 = 960;
+
+/// Altura inicial da janela solta: a proporção do vídeo em [`STANDALONE_WIDTH`] px de largura,
+/// com no mínimo 240 px (540 se o vídeo não tiver tamanho).
+fn standalone_height(video: Size) -> i32 {
+    (STANDALONE_WIDTH as u32 * video.height)
+        .checked_div(video.width)
+        .map_or(540, |h| h.max(240)) as i32
+}
+
+/// Mostrar ou esconder junto com a mudança de posição.
+fn show_flag(visible: bool) -> SET_WINDOW_POS_FLAGS {
+    if visible { SWP_SHOWWINDOW } else { SWP_HIDEWINDOW }
+}
+
+/// O que a janela faz com cada mensagem do Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    /// Guarda o tamanho novo da área interna (o renderer redimensiona a swapchain).
+    StoreSize,
+    /// Não apaga o fundo: o vídeo cobre tudo (evita piscar).
+    SkipErase,
+    /// Pega o foco do teclado (clique no vídeo embutido) para F11 e Esc funcionarem.
+    Focus,
+    ToggleFullscreen,
+    ExitFullscreen,
+    Close,
+    Destroyed,
+    /// O padrão do Windows.
+    Default,
+}
+
+fn action(msg: u32, key: usize, embedded: bool) -> Action {
+    match msg {
+        WM_SIZE => Action::StoreSize,
+        WM_ERASEBKGND => Action::SkipErase,
+        WM_LBUTTONDOWN if embedded => Action::Focus,
+        WM_KEYDOWN if key == VK_F11.0 as usize => Action::ToggleFullscreen,
+        WM_KEYDOWN if key == VK_ESCAPE.0 as usize && embedded => Action::ExitFullscreen,
+        WM_LBUTTONDBLCLK => Action::ToggleFullscreen,
+        WM_CLOSE => Action::Close,
+        WM_DESTROY => Action::Destroyed,
+        _ => Action::Default,
+    }
+}
+
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // SAFETY: GWLP_USERDATA guarda o ponteiro de um Arc<Shared> que vive enquanto a janela existe.
     unsafe {
         let shared = (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Shared).as_ref();
         let embedded = shared.is_some_and(|s| s.embedded.load(Ordering::Relaxed));
-        match msg {
-            WM_SIZE => {
+        match action(msg, wparam.0, embedded) {
+            Action::StoreSize => {
                 if let Some(shared) = shared {
                     store_client_size(hwnd, shared);
                 }
                 LRESULT(0)
             }
-            WM_ERASEBKGND => LRESULT(1),
-            // Clique no vídeo embutido: pega o foco do teclado para F11 e Esc funcionarem.
-            WM_LBUTTONDOWN if embedded => {
+            Action::SkipErase => LRESULT(1),
+            Action::Focus => {
                 let _ = SetFocus(Some(hwnd));
                 LRESULT(0)
             }
-            WM_KEYDOWN if wparam.0 == VK_F11.0 as usize => {
+            Action::ToggleFullscreen => {
                 if let Some(shared) = shared {
                     toggle_fullscreen(hwnd, shared);
                 }
                 LRESULT(0)
             }
-            WM_KEYDOWN if wparam.0 == VK_ESCAPE.0 as usize && embedded => {
+            Action::ExitFullscreen => {
                 if let Some(shared) = shared {
                     shared.emit(WindowEvent::ExitFullscreen);
                 }
                 LRESULT(0)
             }
-            WM_LBUTTONDBLCLK => {
-                if let Some(shared) = shared {
-                    toggle_fullscreen(hwnd, shared);
-                }
-                LRESULT(0)
-            }
-            WM_CLOSE => {
+            Action::Close => {
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
-            WM_DESTROY => {
+            Action::Destroyed => {
                 if let Some(shared) = shared {
                     shared.closed.store(true, Ordering::Relaxed);
                 }
                 PostQuitMessage(0);
                 LRESULT(0)
             }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            Action::Default => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
 }
@@ -483,5 +515,237 @@ unsafe fn toggle_fullscreen(hwnd: HWND, shared: &Shared) {
                 SWP_FRAMECHANGED | SWP_NOOWNERZORDER,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+
+    use super::*;
+
+    /// Espera até 3 s a condição ficar verdadeira (a janela vive noutra thread).
+    fn eventually(cond: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        cond()
+    }
+
+    fn post(window: &VideoWindow, msg: u32, wparam: usize) {
+        // SAFETY: mensagem para uma janela viva, tratada na thread dela.
+        unsafe {
+            PostMessageW(Some(HWND(window.hwnd as *mut _)), msg, WPARAM(wparam), LPARAM(0)).unwrap();
+        }
+    }
+
+    fn style(window: &VideoWindow) -> u32 {
+        // SAFETY: leitura de atributo de uma janela viva.
+        unsafe { GetWindowLongPtrW(HWND(window.hwnd as *mut _), GWL_STYLE) as u32 }
+    }
+
+    fn visible(window: &VideoWindow) -> bool {
+        // SAFETY: consulta a uma janela viva.
+        unsafe { IsWindowVisible(HWND(window.hwnd as *mut _)).as_bool() }
+    }
+
+    fn solta(titulo: &str) -> VideoWindow {
+        VideoWindow::open(WindowTarget::Standalone { title: titulo.into() }, Size::new(1280, 720))
+            .expect("abrir a janela solta")
+    }
+
+    #[test]
+    fn altura_inicial_segue_a_proporcao_do_video() {
+        assert_eq!(standalone_height(Size::new(1920, 1080)), 540);
+        assert_eq!(standalone_height(Size::new(1080, 1920)), 1706);
+        assert_eq!(standalone_height(Size::new(4000, 100)), 240, "no mínimo 240 px");
+        assert_eq!(standalone_height(Size::new(0, 0)), 540, "vídeo sem tamanho");
+    }
+
+    #[test]
+    fn tamanho_zero_esconde_a_area_do_video() {
+        assert_eq!(show_flag(true), SWP_SHOWWINDOW);
+        assert_eq!(show_flag(false), SWP_HIDEWINDOW);
+    }
+
+    #[test]
+    fn teclas_e_cliques_viram_acoes() {
+        let f11 = VK_F11.0 as usize;
+        let esc = VK_ESCAPE.0 as usize;
+        let letra_a = 0x41;
+        assert_eq!(action(WM_SIZE, 0, false), Action::StoreSize);
+        assert_eq!(action(WM_ERASEBKGND, 0, true), Action::SkipErase);
+        assert_eq!(action(WM_LBUTTONDOWN, 0, true), Action::Focus);
+        assert_eq!(
+            action(WM_LBUTTONDOWN, 0, false),
+            Action::Default,
+            "solta: clique normal"
+        );
+        assert_eq!(action(WM_KEYDOWN, f11, false), Action::ToggleFullscreen);
+        assert_eq!(action(WM_KEYDOWN, f11, true), Action::ToggleFullscreen);
+        assert_eq!(action(WM_KEYDOWN, esc, true), Action::ExitFullscreen);
+        assert_eq!(
+            action(WM_KEYDOWN, esc, false),
+            Action::Default,
+            "solta: Esc não faz nada"
+        );
+        assert_eq!(action(WM_KEYDOWN, letra_a, true), Action::Default);
+        assert_eq!(action(WM_LBUTTONDBLCLK, 0, false), Action::ToggleFullscreen);
+        assert_eq!(action(WM_CLOSE, 0, false), Action::Close);
+        assert_eq!(action(WM_DESTROY, 0, false), Action::Destroyed);
+        assert_eq!(action(0x0200, 0, false), Action::Default);
+    }
+
+    #[test]
+    fn janela_solta_abre_com_tamanho_e_fecha_ao_descartar() {
+        let window = solta("SquadView (teste)");
+        assert!(!window.is_closed());
+        assert!(visible(&window));
+        assert!(eventually(|| window.shared.width.load(Ordering::Relaxed) > 0));
+        assert!(format!("{window:?}").contains("closed"));
+        let start = Instant::now();
+        drop(window);
+        assert!(start.elapsed() < Duration::from_secs(2), "fechar a janela travou");
+    }
+
+    #[test]
+    fn janela_fechada_pelo_usuario_ignora_comandos() {
+        let window = solta("SquadView (fechar)");
+        let control = window.control();
+        post(&window, WM_CLOSE, 0);
+        assert!(eventually(|| window.is_closed()));
+        // Depois de fechada, mover ou esconder não faz nada (e não quebra).
+        control.set_bounds(Bounds {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        });
+        control.set_visible(true);
+        assert!(format!("{control:?}").contains("WindowControl"));
+    }
+
+    #[test]
+    fn janela_solta_alterna_tela_cheia_com_f11_e_dois_cliques() {
+        let window = solta("SquadView (tela cheia)");
+        assert_ne!(style(&window) & WS_OVERLAPPEDWINDOW.0, 0);
+
+        post(&window, WM_KEYDOWN, VK_F11.0 as usize);
+        assert!(
+            eventually(|| style(&window) & WS_POPUP.0 != 0),
+            "não entrou em tela cheia"
+        );
+        assert!(window.shared.restore.lock().unwrap().is_some());
+
+        post(&window, WM_LBUTTONDBLCLK, 0);
+        assert!(
+            eventually(|| style(&window) & WS_POPUP.0 == 0),
+            "não voltou para a janela"
+        );
+        assert!(window.shared.restore.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn video_embutido_segue_a_posicao_da_interface_e_avisa_a_tela_cheia() {
+        let app = solta("SquadView (app)");
+        let video = VideoWindow::open(WindowTarget::Embedded { parent: app.hwnd }, Size::new(1920, 1080))
+            .expect("abrir o vídeo embutido");
+        assert!(!visible(&video), "embutido começa escondido");
+
+        let control = video.control();
+        control.set_bounds(Bounds {
+            x: 10,
+            y: 20,
+            width: 320,
+            height: 180,
+        });
+        assert!(eventually(
+            || video.shared.width.load(Ordering::Relaxed) == 320 && video.shared.height.load(Ordering::Relaxed) == 180
+        ));
+        assert!(eventually(|| visible(&video)));
+
+        control.set_visible(false);
+        assert!(eventually(|| !visible(&video)));
+        control.set_visible(true);
+        assert!(eventually(|| visible(&video)));
+        control.set_bounds(Bounds::default());
+        assert!(eventually(|| !visible(&video)), "tamanho zero esconde");
+
+        let (tx, rx) = mpsc::channel();
+        control.on_event(move |e| {
+            let _ = tx.send(e);
+        });
+        let recv = || rx.recv_timeout(Duration::from_secs(3)).expect("evento");
+        post(&video, WM_LBUTTONDOWN, 0);
+        post(&video, WM_KEYDOWN, VK_F11.0 as usize);
+        assert_eq!(recv(), WindowEvent::ToggleFullscreen);
+        post(&video, WM_KEYDOWN, VK_ESCAPE.0 as usize);
+        assert_eq!(recv(), WindowEvent::ExitFullscreen);
+        post(&video, WM_LBUTTONDBLCLK, 0);
+        assert_eq!(recv(), WindowEvent::ToggleFullscreen);
+        // Embutida: quem decide o layout é a interface, a janela não muda de estilo.
+        assert_eq!(style(&video) & WS_POPUP.0, 0);
+
+        drop(video);
+        drop(app);
+    }
+
+    fn nv12_frame(gpu: &Gpu, size: Size) -> GpuFrame {
+        use sv_gpu::testing::texture;
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
+        GpuFrame {
+            texture: texture(gpu, size, DXGI_FORMAT_NV12, None).unwrap(),
+            slice: 0,
+            size,
+            timestamp_us: 0,
+        }
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]
+    fn renderer_desenha_frames_e_acompanha_o_tamanho_da_janela() {
+        let gpu = Gpu::new().unwrap();
+        let window = solta("SquadView (render)");
+        let mut renderer = window.renderer(&gpu).expect("swapchain");
+        assert!(format!("{renderer:?}").contains("Renderer"));
+        let frame = nv12_frame(&gpu, Size::new(1280, 720));
+        assert!(eventually(|| window.shared.width.load(Ordering::Relaxed) > 0));
+        for _ in 0..3 {
+            renderer.present(&frame).expect("present");
+        }
+        let first = renderer.size;
+        assert_eq!(first.width, window.shared.width.load(Ordering::Relaxed));
+
+        // A janela cresceu (tela cheia): a swapchain acompanha no próximo frame.
+        post(&window, WM_KEYDOWN, VK_F11.0 as usize);
+        assert!(eventually(|| window.shared.width.load(Ordering::Relaxed) != first.width));
+        renderer.present(&frame).expect("present depois de redimensionar");
+        assert_ne!(renderer.size, first);
+
+        // Vídeo de outro tamanho (o streamer mudou a resolução).
+        renderer
+            .present(&nv12_frame(&gpu, Size::new(640, 360)))
+            .expect("present com vídeo menor");
+
+        post(&window, WM_CLOSE, 0);
+        assert!(eventually(|| window.is_closed()));
+        renderer.present(&frame).expect("janela fechada: não faz nada");
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo"]
+    fn renderer_nao_desenha_com_a_area_escondida() {
+        let gpu = Gpu::new().unwrap();
+        let app = solta("SquadView (app render)");
+        let video = VideoWindow::open(WindowTarget::Embedded { parent: app.hwnd }, Size::new(64, 64)).unwrap();
+        let mut renderer = video.renderer(&gpu).unwrap();
+        renderer.present(&nv12_frame(&gpu, Size::new(64, 64))).unwrap();
+        assert_eq!(renderer.size, Size::new(1, 1), "escondida (0×0): nada muda");
     }
 }

@@ -25,6 +25,8 @@ export default defineConfig({
       exclude: ["src/main.tsx", "src/dev/**", "src/**/*.test.{ts,tsx}", "src/test-setup.ts"],
       reporter: ["text", "json-summary"],
       reportsDirectory: "../../build/coverage-desktop",
+      // Piso da cobertura (o que já temos, arredondado para baixo): a esteira falha se cair.
+      thresholds: { lines: 99, statements: 97, functions: 95, branches: 94 },
     },
   },
 });

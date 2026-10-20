@@ -4,7 +4,7 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// Evento para a interface com o código do convite.
 pub const INVITE_EVENT: &str = "invite";
@@ -20,7 +20,7 @@ pub fn take_pending_invite(state: tauri::State<'_, PendingInvite>) -> Option<Str
 }
 
 /// Trata as URLs recebidas pelo sistema (ao abrir o app ou com ele já aberto).
-pub fn handle_urls<'a>(app: &AppHandle, urls: impl IntoIterator<Item = &'a str>) {
+pub fn handle_urls<'a, R: Runtime>(app: &AppHandle<R>, urls: impl IntoIterator<Item = &'a str>) {
     let Some(code) = urls.into_iter().find_map(parse_invite) else {
         return;
     };
@@ -42,7 +42,23 @@ fn parse_invite(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_invite;
+    use super::*;
+    use crate::test_support::test_app;
+
+    #[test]
+    fn link_de_convite_guarda_o_codigo_e_avisa_a_interface() {
+        let t = test_app();
+        let events = t.events(INVITE_EVENT);
+        handle_urls(t.handle(), ["https://outra.coisa", "squadview://join/f5b-6s9"]);
+        events.wait("convite", |v| v == "F5B6S9");
+        let pending = t.app.state::<PendingInvite>();
+        assert_eq!(take_pending_invite(pending).as_deref(), Some("F5B6S9"));
+        // Pegou uma vez: não fica repetindo.
+        assert_eq!(take_pending_invite(t.app.state::<PendingInvite>()), None);
+        // Sem convite nas URLs: nada muda.
+        handle_urls(t.handle(), ["squadview://outra"]);
+        assert_eq!(take_pending_invite(t.app.state::<PendingInvite>()), None);
+    }
 
     #[test]
     fn le_o_codigo_do_link() {

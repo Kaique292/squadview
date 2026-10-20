@@ -94,7 +94,9 @@ describe("entrar na sala", () => {
     expect(beto.last()).toEqual({
       type: "welcome",
       you: idOf(beto),
-      members: [{ id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false, discord: null }],
+      members: [
+        { id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false, discord: null, verified: false },
+      ],
       room: null,
     });
   });
@@ -104,7 +106,15 @@ describe("entrar na sala", () => {
     const beto = join("Beto");
     expect(ana.last()).toEqual({
       type: "member-joined",
-      member: { id: idOf(beto), name: "Beto", live: false, muted: false, deafened: false, discord: null },
+      member: {
+        id: idOf(beto),
+        name: "Beto",
+        live: false,
+        muted: false,
+        deafened: false,
+        discord: null,
+        verified: false,
+      },
     });
     expect(ana.sent.filter((m) => m.type === "member-joined")).toHaveLength(1);
     expect(beto.sent.filter((m) => m.type === "member-joined")).toHaveLength(0);
@@ -178,11 +188,19 @@ describe("nome da sala e apelido", () => {
     send(beto, { type: "rename", name: "Betão" });
     expect(ana.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
+      member: {
+        id: idOf(beto),
+        name: "Betão",
+        live: false,
+        muted: false,
+        deafened: false,
+        discord: null,
+        verified: false,
+      },
     });
     expect(join("Caio").last()).toMatchObject({
       members: expect.arrayContaining([
-        { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
+        { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null, verified: false },
       ]),
     });
   });
@@ -250,7 +268,7 @@ describe("status ao vivo", () => {
     send(ana, { type: "status", live: true });
     expect(beto.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false, discord: null },
+      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false, discord: null, verified: false },
     });
 
     const caio = join("Caio");
@@ -263,10 +281,18 @@ describe("estado de voz", () => {
   it("avisa os outros quando alguém silencia o microfone ou ensurdece", () => {
     const ana = join("Ana");
     const beto = join("Beto");
-    send(beto, { type: "status", live: false, muted: true, deafened: false, discord: null });
+    send(beto, { type: "status", live: false, muted: true, deafened: false, discord: null, verified: false });
     expect(ana.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(beto), name: "Beto", live: false, muted: true, deafened: false, discord: null },
+      member: {
+        id: idOf(beto),
+        name: "Beto",
+        live: false,
+        muted: true,
+        deafened: false,
+        discord: null,
+        verified: false,
+      },
     });
     send(beto, { type: "status", live: true, muted: true, deafened: true });
     expect(ana.last()).toMatchObject({ member: { live: true, muted: true, deafened: true } });
@@ -396,6 +422,25 @@ describe("amigos na sala (ADR 0011)", () => {
     const caio = join("Caio");
     send(ana, { type: "rename", name: "Ana", discord: { id: BETO, avatar: null } });
     expect(caio.last()).toMatchObject({ member: { discord: { id: ANA } } });
+  });
+
+  it("quem entra com o Discord já na sala é conferido sem sair e entrar", () => {
+    joinVerified("Ana", ANA);
+    const beto = join("Beto");
+    const ana = conns[0];
+    expect(ana.last()).toMatchObject({ type: "member-joined", member: { name: "Beto", verified: false } });
+    // Beto entrou com o Discord: manda a sessão e vira conferido para todos, e entra nos recentes.
+    room.message(wrap(beto), JSON.stringify({ type: "verify", session: "x" }), BETO);
+    expect(ana.last()).toMatchObject({
+      type: "member-updated",
+      member: { name: "Beto", verified: true, discord: { id: BETO } },
+    });
+    expect(met).toEqual([[BETO, ANA]]);
+    // Sessão que não confere, ou de outra conta depois de conferido: ignora.
+    const before = ana.sent.length;
+    room.message(wrap(beto), JSON.stringify({ type: "verify", session: "x" }), null);
+    room.message(wrap(beto), JSON.stringify({ type: "verify", session: "x" }), ANA);
+    expect(ana.sent.length).toBe(before);
   });
 
   it("conferidos na mesma sala viram recentes um do outro", () => {
