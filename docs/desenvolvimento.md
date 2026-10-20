@@ -54,6 +54,14 @@ O instalador e a atualização funcionam como os do Discord: sem assistente. Doi
 - A atualização automática usa `installMode: "quiet"` (em `tauri.conf.json`): o instalador roda com `/UPDATE /R` e o app reabre sozinho.
 - Ao atualizar o tauri-cli, compare `installer.nsi` com o template novo e reaplique as duas mudanças.
 
+## Testes e cobertura
+
+- `yarn test` roda tudo com cobertura. O `yarn test:rs` sobe sozinho o Worker de sinalização local (`scripts/with-worker.mjs`, com um segredo de sessões só de teste), então os testes de integração da sala, da voz em malha e dos amigos (`crates/*/tests/*_live.rs`, `room_scenarios.rs` e os testes do app em `src-tauri`) rodam de verdade, ponta a ponta. Rodando `cargo test` sem o script, esses testes são pulados.
+- Os testes do app Tauri montam o app com o `tauri::test` (MockRuntime), com uma pasta de dados própria que é apagada no fim (`src-tauri/src/test_support.rs`): nunca mexem na sessão, no perfil nem nos registros do SquadView instalado.
+- **Travas:** a esteira falha se a cobertura cair. Rust: `--fail-under-lines` no `test:rs`. Interface e Worker: `thresholds` no `vitest.config.ts` de cada um. Quando a cobertura subir, suba a trava junto.
+- **Hardware:** a esteira (GitHub Actions) não tem placa de vídeo, microfone nem saída de áudio, e o WARP (GPU de software) não oferece a API de vídeo do D3D11. Por isso captura, conversão, encode, decode, janela de vídeo e áudio real ficam em testes `#[ignore = "precisa de ..."]`. Rode-os no PC de desenvolvimento antes de cada versão com `yarn test:rs:hw` (cobertura em `build/coverage-rust-hw.json`). Toca um bipe e um tom baixo nos testes de áudio.
+- **Instalador:** antes de cada versão, a esteira instala o app de verdade, abre duas vezes e "atualiza" (`scripts/smoke-installer.ps1`). Não rode esse script no seu PC de uso: ele instala por cima e fecha o SquadView aberto.
+
 ## Estrutura
 
 ```

@@ -19,7 +19,8 @@
     "lint:js": "yarn workspaces foreach -A --exclude squadview run lint",
     "lint:rs": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "yarn test:rs && yarn test:js",
-    "test:rs": "node -e \"require('fs').mkdirSync('build', { recursive: true })\" && cargo llvm-cov --workspace --json --summary-only --output-path build/coverage-rust.json",
+    "test:rs": "node -e \"require('fs').mkdirSync('build', { recursive: true })\" && node scripts/with-worker.mjs cargo llvm-cov --workspace --fail-under-lines 72 --json --summary-only --output-path build/coverage-rust.json",
+    "test:rs:hw": "node scripts/with-worker.mjs cargo llvm-cov --workspace --json --summary-only --output-path build/coverage-rust-hw.json -- --include-ignored",
     "test:js": "yarn workspaces foreach -A --exclude squadview run test",
     "coverage:badge": "node scripts/coverage-badge.mjs"
   },

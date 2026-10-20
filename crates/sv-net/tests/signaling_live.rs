@@ -1,5 +1,5 @@
-//! Contra o Worker de sinalização rodando de verdade (local: `yarn workspace @squadview/signaling dev`).
-//! Rode com: `SQUADVIEW_SIGNALING_URL=ws://127.0.0.1:8787 cargo test -p sv-net --test signaling_live -- --ignored`
+//! Contra o Worker de sinalização rodando de verdade. Roda pelo `yarn test:rs`, que sobe o Worker
+//! local (`scripts/with-worker.mjs`) e define `SQUADVIEW_SIGNALING_URL`; sem ela, é pulado.
 
 use std::time::Duration;
 
@@ -7,6 +7,15 @@ use sv_net::protocol::Signal;
 use sv_net::signaling::new_room_code;
 use sv_net::{RoomClient, RoomEvent};
 use tokio::sync::mpsc::UnboundedReceiver;
+
+/// Endereço do Worker local. `None`: teste pulado (rode pelo `yarn test:rs`).
+fn worker() -> Option<String> {
+    let url = std::env::var("SQUADVIEW_SIGNALING_URL").ok();
+    if url.is_none() {
+        eprintln!("pulado: rode pelo `yarn test:rs` (sobe o Worker local)");
+    }
+    url
+}
 
 async fn next(rx: &mut UnboundedReceiver<RoomEvent>) -> RoomEvent {
     tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -16,9 +25,8 @@ async fn next(rx: &mut UnboundedReceiver<RoomEvent>) -> RoomEvent {
 }
 
 #[tokio::test]
-#[ignore = "precisa do Worker de sinalização rodando (SQUADVIEW_SIGNALING_URL)"]
 async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
-    let url = std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into());
+    let Some(url) = worker() else { return };
     let code = new_room_code();
 
     let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, Some("Galera"))
