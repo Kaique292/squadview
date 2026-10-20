@@ -161,6 +161,17 @@ describe("chat de voz", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_set_profile", { name: "Kaique", discord: null }));
   });
 
+  it("mostra o topo e os controles só com o mouse no canal, como no Discord", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const canal = screen.getByRole("region", { name: "Canal de voz" });
+    expect(canal).not.toHaveAttribute("data-chrome");
+    fireEvent.mouseEnter(canal);
+    expect(canal).toHaveAttribute("data-chrome");
+    fireEvent.mouseLeave(canal);
+    expect(canal).not.toHaveAttribute("data-chrome");
+  });
+
   it("organiza a grade como o Discord", () => {
     expect([1, 2, 3, 4, 5, 6, 7, 8].map(gridColumns)).toEqual([1, 2, 2, 2, 3, 3, 4, 4]);
   });

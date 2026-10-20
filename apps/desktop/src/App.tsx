@@ -50,7 +50,12 @@ export function App() {
       >
         <main
           className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
-            fullscreen ? "bg-surface-2 p-0" : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
+            fullscreen
+              ? "bg-surface-2 p-0"
+              : code && !watching && !live
+                ? // O canal de voz ocupa a área toda, com fundo preto, como no Discord.
+                  "bg-black p-0"
+                : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
           }`}
         >
           {watching ? <WatchView member={watching} /> : live ? <StreamView /> : code ? <VoiceRoom /> : <Empty />}

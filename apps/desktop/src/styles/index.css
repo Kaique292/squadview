@@ -139,6 +139,8 @@ html,
 body,
 #root {
   height: 100%;
+  /* É um app, não uma página: nada de barra de rolagem na janela (cada área rola sozinha). */
+  overflow: hidden;
 }
 
 /*

@@ -7,6 +7,7 @@ import { StreamDialog } from "../stream/StreamDialog";
 import { Avatar, avatarColor } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
+import { useState } from "react";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { useVoiceStore } from "./voice-store";
 
@@ -27,7 +28,15 @@ export function VoiceRoom() {
   const speaking = useVoiceStore((s) => s.speaking);
   const myPrefs = useVoiceStore((s) => s.prefs);
   const profile = useAccountStore((s) => s.profile);
+  // O nome no topo e os controles embaixo só aparecem com o mouse na área (ou o foco do teclado),
+  // como no Discord. O evento do React conta os menus abertos (em portal) como dentro da área.
+  const [pointerIn, setPointerIn] = useState(false);
+  const [focusIn, setFocusIn] = useState(false);
   if (!code) return null;
+  const chrome = pointerIn || focusIn;
+  const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
+    chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
+  }`;
   const columns = gridColumns(members.length);
 
   async function invite() {
@@ -40,13 +49,28 @@ export function VoiceRoom() {
   }
 
   return (
-    <section aria-label="Canal de voz" className="flex h-full w-full flex-col">
-      <header className="flex h-10 shrink-0 items-center gap-2 px-1 text-left font-semibold">
+    <section
+      aria-label="Canal de voz"
+      data-chrome={chrome || undefined}
+      onMouseEnter={() => setPointerIn(true)}
+      onMouseLeave={() => setPointerIn(false)}
+      onFocus={() => setFocusIn(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
+      }}
+      className="relative flex h-full w-full flex-col overflow-hidden bg-black"
+    >
+      {/* Topo: nome da sala sobre uma sombra que some para baixo. */}
+      <header
+        className={`absolute inset-x-0 top-0 z-10 flex h-16 items-start gap-2 bg-gradient-to-b from-black/80 to-transparent px-4 pt-3 text-left font-semibold ${chromeClass} ${
+          chrome ? "" : "-translate-y-2"
+        }`}
+      >
         <Volume2 size={20} className="text-text-muted" />
         <span className="truncate">{roomTitle(code, roomName)}</span>
       </header>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden py-3">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 py-14">
         <ul
           aria-label="Quem está na voz"
           className="flex w-full flex-wrap content-center justify-center gap-3"
@@ -78,7 +102,13 @@ export function VoiceRoom() {
         </ul>
       </div>
 
-      <nav aria-label="Controles da voz" className="flex shrink-0 items-center justify-center gap-2 pb-1">
+      {/* Embaixo: os controles sobre uma sombra que sobe. */}
+      <nav
+        aria-label="Controles da voz"
+        className={`absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
+          chrome ? "" : "translate-y-2"
+        }`}
+      >
         <MicButton large />
         <DeafenButton large />
         <StreamDialog
