@@ -5,7 +5,6 @@ import {
   Info,
   Maximize2,
   Minimize2,
-  Radio,
   Square,
   TriangleAlert,
 } from "lucide-react";
@@ -56,7 +55,7 @@ export function StreamView() {
 
       <div className="flex items-center gap-2 rounded-card bg-surface-1 px-3 py-2">
         <span className="flex items-center gap-1 rounded bg-live px-2 py-0.5 text-xs font-bold text-white">
-          <Radio size={12} /> AO VIVO
+          Ao vivo
         </span>
         <span className="text-sm font-medium">{code ? `Transmitindo na sala ${code}` : "Prévia local"}</span>
         {stats && (

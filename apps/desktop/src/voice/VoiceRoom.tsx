@@ -7,7 +7,6 @@ import {
   MicOff,
   MonitorUp,
   PhoneOff,
-  Radio,
   UserPlus,
   Volume2,
 } from "lucide-react";
@@ -36,7 +35,7 @@ type TileVariant = "grid" | "focus" | "strip";
 
 /**
  * A sala como um canal de voz do Discord: um quadro por pessoa (borda verde quando fala, mudo e
- * surdo no nome, "AO VIVO" para assistir) e a barra de controles embaixo. Clicar num quadro põe a
+ * surdo no nome, "Ao vivo" para assistir) e a barra de controles embaixo. Clicar num quadro põe a
  * pessoa em foco (grande no centro, os outros numa faixa embaixo); clicar nele de novo volta à grade.
  */
 export function VoiceRoom() {
@@ -183,11 +182,12 @@ export function VoiceRoom() {
         </div>
       )}
 
-      {/* Embaixo: os controles sobre uma sombra que sobe. */}
+      {/* Embaixo: os controles sobre uma sombra que sobe. A sombra não pega o mouse (cobria a
+          setinha da faixa de participantes): só os botões, e só quando aparecem. */}
       <nav
         aria-label="Controles da voz"
-        className={`absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
-          chrome ? "" : "translate-y-2"
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
+          chrome ? "[&>*]:pointer-events-auto" : "translate-y-2"
         }`}
       >
         <MicButton large />
@@ -289,7 +289,7 @@ function Tile({
             strip ? "px-1 py-px text-[10px]" : "px-1.5 py-0.5 text-[11px]"
           }`}
         >
-          <Radio size={strip ? 10 : 11} /> AO VIVO
+          Ao vivo
         </span>
       )}
       {member.live && !isMe && !strip && (

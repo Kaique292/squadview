@@ -332,7 +332,7 @@ function MemberRow(props: {
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && (
           <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
-            <Radio size={10} /> AO VIVO
+            Ao vivo
           </span>
         )}
         {canWatch && !props.watching && (

@@ -22,7 +22,7 @@ export function StreamIllustration() {
         fill="#fff"
         fontFamily="Segoe UI, sans-serif"
       >
-        AO VIVO
+        Ao vivo
       </text>
 
       {/* sofá */}
