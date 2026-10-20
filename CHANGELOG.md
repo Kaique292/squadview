@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.1](https://github.com/Kaique292/squadview/compare/v0.3.0...v0.3.1) (2026-10-20)
+
+
+### 🐛 Correções
+
+* **app:** não cai quando a atualização abre o app duas vezes ([d2047ff](https://github.com/Kaique292/squadview/commit/d2047ff3b79117510296f25932d677047cc246c0))
+* **ci:** teste de fumaça espera só o instalador, não o app que ele abre ([fb3d932](https://github.com/Kaique292/squadview/commit/fb3d932ef9e2f0bdf8785777954848a0ed43f8fe))
+
+
+### 📦 Build
+
+* **deps:** bump sha2 from 0.10.9 to 0.11.1 ([#6](https://github.com/Kaique292/squadview/issues/6)) ([2eed7da](https://github.com/Kaique292/squadview/commit/2eed7da2722177704c993513c5bf251a7b316065))
+
 ## [0.3.0](https://github.com/Kaique292/squadview/compare/v0.2.0...v0.3.0) (2026-10-20)
 
 
