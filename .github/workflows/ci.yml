@@ -194,6 +194,8 @@ jobs:
       # Instala, abre duas vezes e "atualiza" com o app de verdade; falha se o app cair.
       - name: Teste de fumaça do instalador
         shell: pwsh
+        # Leva uns 2 minutos; se travar, falha em vez de prender a esteira por horas.
+        timeout-minutes: 10
         run: ./scripts/smoke-installer.ps1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

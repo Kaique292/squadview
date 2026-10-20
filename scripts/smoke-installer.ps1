@@ -22,6 +22,14 @@ $crashLog = Join-Path $logs "crash.log"
 # Quanto tempo o app precisa ficar de pé depois de cada abertura.
 $settle = 15
 
+# Roda o instalador e espera só ele terminar. (O `Start-Process -Wait` espera também os processos
+# que ele abre — e o instalador abre o SquadView, que fica aberto: a espera nunca acabaria.)
+function Invoke-Installer([string[]]$Arguments) {
+  $process = Start-Process $Installer -ArgumentList $Arguments -PassThru
+  if (-not $process.WaitForExit(180000)) { throw "O instalador não terminou em 3 minutos." }
+  if ($process.ExitCode -ne 0) { throw "O instalador saiu com código $($process.ExitCode)." }
+}
+
 function Stop-SquadView {
   Get-Process squadview -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Seconds 2
@@ -58,7 +66,7 @@ Stop-SquadView
 Remove-Item $crashLog -ErrorAction SilentlyContinue
 
 # 1. Primeira instalação: dois cliques, sem assistente. O instalador abre o app sozinho.
-Start-Process $Installer -ArgumentList "/S" -Wait
+Invoke-Installer @("/S")
 $app = Find-App
 Assert-Alive "instalação silenciosa abre o app"
 
@@ -77,7 +85,7 @@ Assert-Alive "duas aberturas quase juntas"
 # 4. Atualização como o updater faz: o app fecha, o instalador roda com /UPDATE /R (e reabre o
 #    app), e o app antigo ainda pede para reiniciar logo depois.
 Stop-SquadView
-Start-Process $Installer -ArgumentList "/S", "/UPDATE", "/R" -Wait
+Invoke-Installer @("/S", "/UPDATE", "/R")
 Start-Process $app
 Assert-Alive "atualização reabre o app"
 

@@ -71,6 +71,8 @@ jobs:
       # publicado: sem o latest.json, ninguém recebe a atualização quebrada.
       - name: Teste de fumaça do instalador
         shell: pwsh
+        # Leva uns 2 minutos; se travar, falha em vez de prender a esteira por horas.
+        timeout-minutes: 10
         run: ./scripts/smoke-installer.ps1
 
       - name: Gerar latest.json (atualização automática)
