@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0](https://github.com/Kaique292/squadview/compare/v0.2.0...v0.3.0) (2026-10-20)
+
+
+### ✨ Novidades
+
+* **app:** instala e atualiza em silêncio, como o Discord ([ad25622](https://github.com/Kaique292/squadview/commit/ad25622d5d2d950852cdbeb5c3af7c92afb95cd1))
+* **app:** mostra a foto do Discord de quem está na sala ([af3567a](https://github.com/Kaique292/squadview/commit/af3567a4be22c4911081baf0f6f839b273af7218))
+* **app:** página de amigos, presença e pedidos para entrar na sala ([f525593](https://github.com/Kaique292/squadview/commit/f525593d2fd55bc95cb5fbd7eb4ce835cec2b9b3))
+* **net:** cliente do registro de amigos e sessão ao entrar na sala ([66763b5](https://github.com/Kaique292/squadview/commit/66763b5f96017682640e115720f2c3656657814a))
+* **net:** liga a voz entre todos da sala ([ebc5f5d](https://github.com/Kaique292/squadview/commit/ebc5f5d355ef56c3cc8be57b748ac75beda8660a))
+* **signal:** amigos, presença e pedido para entrar na sala ([e4f3268](https://github.com/Kaique292/squadview/commit/e4f32684530bb1f766d53a03246a5104f84a7d50))
+* **signal:** avisa a sala quando alguém silencia o microfone ou ensurdece ([dd531a4](https://github.com/Kaique292/squadview/commit/dd531a46445e39bd996b676fab886a757d426065))
+* **signal:** leva a conta do Discord de cada membro da sala ([0375b09](https://github.com/Kaique292/squadview/commit/0375b09c128c4b1c0725851e9b81691609b84ddc))
+* **ui:** canal de voz com fundo preto e controles que aparecem com o mouse ([2754a64](https://github.com/Kaique292/squadview/commit/2754a641eb8f8e78fd085de64069e506e9248fc3))
+* **ui:** chat de voz na sala com a grade e os controles do Discord ([5879f2d](https://github.com/Kaique292/squadview/commit/5879f2d2105245d9dfe6f13203ba0e9f1745c228))
+* **ui:** configurações em seções como as do Discord e listas suspensas próprias ([35335de](https://github.com/Kaique292/squadview/commit/35335de87aab2c209ca8123209c6fd325247c471))
+
+
+### 🐛 Correções
+
+* **app:** garante que a janela aparece e registra erros fatais na abertura ([e06a102](https://github.com/Kaique292/squadview/commit/e06a1024a469fde23e0bcc74577f664d2b162403))
+* **ui:** configurações abrem sem o contorno de foco no primeiro botão ([33f500b](https://github.com/Kaique292/squadview/commit/33f500bdf1d650d9288be59c30faecfe47e038e9))
+* **ui:** diminui os botões da barra da voz para o tamanho do Discord ([b2264cd](https://github.com/Kaique292/squadview/commit/b2264cdac08c0c762e489662d1fec9e43fd05eba))
+* **ui:** seta do botão de voz fica vermelha junto com ele ([a85fcb3](https://github.com/Kaique292/squadview/commit/a85fcb379ce1646e47069c4bd5d84a6aeb1a082d))
+* **ui:** volume de entrada e de saída na largura toda do menu ([b508be3](https://github.com/Kaique292/squadview/commit/b508be3588a1202f4914374bfccb2071470d8ccb))
+
+
+### 📝 Documentação
+
+* README e site com as telas e os recursos da 0.3.0 ([8e1f3fb](https://github.com/Kaique292/squadview/commit/8e1f3fbc5f2e942b8e7f43bad31757ae9f0c3743))
+
 ## [0.2.0](https://github.com/Kaique292/squadview/compare/v0.1.0...v0.2.0) (2026-10-19)
 
 
