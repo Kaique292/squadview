@@ -529,7 +529,9 @@ impl Inner {
 fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping) -> String {
     match (error, nat) {
         (sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric) => {
-            "não deu para conectar direto: a sua internet troca de porta a cada conexão (NAT simétrico,              comum em CGNAT de operadora e em 4G). Tente por outra rede, como o roteador de casa ou o              celular. A ponte por outro membro da sala chega numa próxima versão."
+            "não deu para conectar direto: a sua internet troca de porta a cada conexão (NAT simétrico, \
+             comum em CGNAT de operadora e em 4G). Tente por outra rede, como o roteador de casa ou o \
+             celular. A ponte por outro membro da sala chega numa próxima versão."
                 .into()
         }
         _ => error.to_string(),
@@ -687,5 +689,107 @@ impl StreamTap for BroadcastTap {
                 .broadcaster
                 .send_audio(packet.seq, packet.timestamp_us, packet.peak, &packet.data);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nat_simetrico_explica_a_causa_sem_espacos_sobrando() {
+        let msg = connect_failure(&sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric);
+        assert!(msg.contains("NAT simétrico, comum em CGNAT"), "{msg}");
+        assert!(msg.contains("roteador de casa ou o celular"), "{msg}");
+        assert!(!msg.contains("  "), "espaços duplicados na mensagem: {msg:?}");
+    }
+
+    #[test]
+    fn outras_falhas_de_conexao_usam_a_mensagem_da_rede() {
+        let unreachable = sv_net::ConnectError::Unreachable;
+        for nat in [sv_net::NatMapping::Unknown, sv_net::NatMapping::EndpointIndependent] {
+            assert_eq!(connect_failure(&unreachable, nat), unreachable.to_string());
+        }
+        let other = sv_net::ConnectError::Other("certificado".into());
+        assert_eq!(
+            connect_failure(&other, sv_net::NatMapping::Symmetric),
+            "erro na conexão: certificado"
+        );
+    }
+
+    #[test]
+    fn entrar_so_com_o_nome_nao_leva_discord_nem_sessao() {
+        let me = JoinAs::named("Ana");
+        assert_eq!(me.name, "Ana");
+        assert!(me.discord.is_none() && me.session.is_none());
+    }
+
+    #[test]
+    fn atualizacoes_da_sala_aparecem_legiveis_no_registro() {
+        let member = Member {
+            id: "a1".into(),
+            name: "Ana".into(),
+            live: true,
+            muted: false,
+            deafened: false,
+            discord: None,
+        };
+        let cases: Vec<(RoomUpdate, &str)> = vec![
+            (RoomUpdate::Members(vec![member.clone()]), "Members(["),
+            (
+                RoomUpdate::RoomName(Some("Galera".into())),
+                "RoomName(Some(\"Galera\"))",
+            ),
+            (RoomUpdate::Voice(VoiceEvent::InputLevel(0.5)), "Voice(InputLevel(0.5))"),
+            (RoomUpdate::VoicePeers(vec!["b2".into()]), "VoicePeers([\"b2\"])"),
+            (
+                RoomUpdate::VoiceFailed {
+                    member_id: "b2".into(),
+                    reason: "x".into(),
+                },
+                "VoiceFailed { member_id: \"b2\", reason: \"x\" }",
+            ),
+            (
+                RoomUpdate::WatchFailed {
+                    member_id: "b2".into(),
+                    reason: "y".into(),
+                },
+                "WatchFailed { member_id: \"b2\", reason: \"y\" }",
+            ),
+            (
+                RoomUpdate::JoinRequest {
+                    id: "r1".into(),
+                    from: JoinRequester {
+                        id: "d1".into(),
+                        name: "Caio".into(),
+                        avatar: None,
+                    },
+                },
+                "JoinRequest { id: \"r1\", from: JoinRequester {",
+            ),
+            (RoomUpdate::JoinRequestClosed("r1".into()), "JoinRequestClosed(\"r1\")"),
+            (RoomUpdate::Error("cheia".into()), "Error(\"cheia\")"),
+            (RoomUpdate::Reconnecting, "Reconnecting"),
+            (RoomUpdate::Reconnected, "Reconnected"),
+            (RoomUpdate::Disconnected, "Disconnected"),
+        ];
+        for (update, expected) in cases {
+            let text = format!("{update:?}");
+            assert!(text.starts_with(expected), "{text} não começa com {expected}");
+        }
+    }
+
+    #[test]
+    fn codigo_de_sala_invalido_nao_entra() {
+        let err = Room::join("ws://127.0.0.1:1", "abc", JoinAs::named("Ana"), None, None, |_| {}).unwrap_err();
+        assert_eq!(err, "Código de sala inválido.");
+    }
+
+    #[test]
+    fn servico_de_salas_fora_do_ar_avisa_ao_entrar() {
+        // Porta 1 no próprio PC: ninguém escuta, a conexão é recusada na hora.
+        let code = sv_net::signaling::new_room_code();
+        let err = Room::join("ws://127.0.0.1:1", &code, JoinAs::named("Ana"), None, None, |_| {}).unwrap_err();
+        assert!(err.starts_with("não deu para alcançar o serviço de salas"), "{err}");
     }
 }

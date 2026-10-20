@@ -141,13 +141,33 @@ mod tests {
         assert!(sum_capped(std::iter::empty()).is_sign_positive());
     }
 
+    /// Os contadores existem em qualquer Windows (inclusive na esteira); os de GPU podem faltar
+    /// numa máquina sem placa de vídeo, e aí são lidos como 0.
     #[test]
-    #[ignore = "precisa dos contadores de desempenho do Windows"]
-    fn le_o_uso_do_sistema() {
+    fn le_o_uso_do_sistema_dentro_de_0_a_100() {
         let mut m = SystemMonitor::new().expect("contadores");
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let load = m.sample();
-        eprintln!("{load:?}");
-        assert!((0.0..=100.0).contains(&load.cpu));
+        assert!(format!("{m:?}").starts_with("SystemMonitor"));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        for _ in 0..2 {
+            let load = m.sample();
+            for v in [load.cpu, load.gpu_3d, load.gpu_encode, load.gpu_decode] {
+                assert!((0.0..=100.0).contains(&v), "{load:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn leitura_vai_para_a_interface_em_camel_case() {
+        let json = serde_json::to_value(SystemLoad {
+            gpu_3d: 50.0,
+            gpu_encode: 10.0,
+            gpu_decode: 0.0,
+            cpu: 25.0,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "gpu3d": 50.0, "gpuEncode": 10.0, "gpuDecode": 0.0, "cpu": 25.0 })
+        );
     }
 }

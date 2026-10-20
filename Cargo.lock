@@ -4050,6 +4050,7 @@ dependencies = [
  "jpeg-encoder",
  "quinn",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -4185,11 +4186,13 @@ dependencies = [
 name = "sv-net"
 version = "0.3.0"
 dependencies = [
+ "base64 0.23.1",
  "bytes",
  "futures-util",
  "postcard",
  "quinn",
  "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

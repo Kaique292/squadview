@@ -118,6 +118,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn entrada_e_microfone_e_saida_e_reproducao() {
+        assert_eq!(Flow::Input.data_flow(), eCapture);
+        assert_eq!(Flow::Output.data_flow(), eRender);
+    }
+
+    #[test]
+    fn listar_nunca_falha_mesmo_sem_dispositivos() {
+        // Na esteira não há placa de som: a lista vem vazia, sem erro nem pânico.
+        for flow in [Flow::Input, Flow::Output] {
+            let devices = list_devices(flow);
+            assert!(devices.iter().filter(|d| d.is_default).count() <= 1);
+            assert!(devices.iter().all(|d| !d.id.is_empty() && !d.name.is_empty()));
+        }
+    }
+
+    #[test]
+    #[ignore = "precisa de microfone"]
+    fn id_desconhecido_abre_o_padrao_e_id_conhecido_abre_ele_mesmo() {
+        let _ = init_com();
+        let mics = list_devices(Flow::Input);
+        let first = mics.first().expect("pelo menos um microfone");
+        // SAFETY: COM iniciado acima nesta thread.
+        unsafe {
+            let device = open_device(Flow::Input, Some(&first.id)).unwrap();
+            assert_eq!(device_id(&device).as_deref(), Some(first.id.as_str()));
+            let fallback = open_device(Flow::Input, Some("{nao-existe}")).unwrap();
+            assert!(device_id(&fallback).is_some());
+            assert!(friendly_name(&fallback).is_some());
+            assert!(open_device(Flow::Output, None).is_ok());
+        }
+    }
+
+    fn init_com() -> windows::core::HRESULT {
+        // SAFETY: inicialização do COM na thread do teste.
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+    }
+
+    #[test]
     #[ignore = "depende dos dispositivos de áudio do PC"]
     fn lista_microfones_e_saidas_com_um_padrao() {
         for flow in [Flow::Input, Flow::Output] {

@@ -3,12 +3,16 @@
 //! Um único [`Gpu`] (device D3D11) é usado pela captura, pela conversão de formato e pelo
 //! encoder/decoder do Media Foundation. Assim a imagem nunca sai da GPU.
 
+mod cache;
 pub mod clock;
 mod convert;
 mod device;
 mod geometry;
 pub mod mf;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
+pub use cache::BoundedCache;
 pub use convert::Converter;
 pub use device::Gpu;
 pub use geometry::{Rect, Size, fit_inside, scaled_to_fit};

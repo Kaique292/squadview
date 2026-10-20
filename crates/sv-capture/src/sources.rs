@@ -81,22 +81,37 @@ fn list_monitors() -> Vec<Source> {
     unsafe {
         let _ = EnumDisplayMonitors(None, None, Some(monitor_proc), LPARAM(&mut monitors as *mut _ as isize));
     }
+    monitor_sources(
+        monitors
+            .into_iter()
+            .map(|(h, primary)| (h.0 as isize, primary))
+            .collect(),
+    )
+}
+
+/// Monitores (handle, é o principal?) na ordem do Windows → fontes, com o principal primeiro.
+pub(crate) fn monitor_sources(mut monitors: Vec<(isize, bool)>) -> Vec<Source> {
     monitors.sort_by_key(|&(_, primary)| !primary);
     monitors
         .into_iter()
         .enumerate()
         .map(|(i, (handle, primary))| Source {
-            id: CaptureSource::Monitor(handle.0 as isize),
-            name: if primary {
-                format!("Monitor {} (principal)", i + 1)
-            } else {
-                format!("Monitor {}", i + 1)
-            },
+            id: CaptureSource::Monitor(handle),
+            name: monitor_name(i, primary),
             process_id: None,
             process_name: None,
             process_path: None,
         })
         .collect()
+}
+
+/// "Monitor 1 (principal)", "Monitor 2"… (`index` começa em 0).
+fn monitor_name(index: usize, primary: bool) -> String {
+    if primary {
+        format!("Monitor {} (principal)", index + 1)
+    } else {
+        format!("Monitor {}", index + 1)
+    }
 }
 
 unsafe extern "system" fn monitor_proc(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
@@ -119,20 +134,42 @@ fn list_windows() -> Vec<Source> {
     }
     // SAFETY: chamada simples sem argumentos.
     let own = unsafe { GetCurrentProcessId() };
+    window_sources(
+        windows
+            .into_iter()
+            .map(|(hwnd, info)| (hwnd.0 as isize, info))
+            .collect(),
+        own,
+        process_path,
+    )
+}
+
+/// Janelas (handle, dados) em ordem de empilhamento → as fontes que aparecem na lista, com o
+/// executável de cada uma (`path_of` descobre o caminho pelo id do processo).
+pub(crate) fn window_sources(
+    windows: Vec<(isize, WindowInfo)>,
+    own_process_id: u32,
+    path_of: impl Fn(u32) -> Option<String>,
+) -> Vec<Source> {
     windows
         .into_iter()
-        .filter(|(_, info)| is_capturable(info, own))
+        .filter(|(_, info)| is_capturable(info, own_process_id))
         .map(|(hwnd, info)| {
-            let path = process_path(info.process_id);
+            let path = path_of(info.process_id);
             Source {
-                id: CaptureSource::Window(hwnd.0 as isize),
+                id: CaptureSource::Window(hwnd),
                 name: info.title,
                 process_id: Some(info.process_id),
-                process_name: path.as_deref().and_then(|p| p.rsplit('\\').next()).map(str::to_owned),
+                process_name: path.as_deref().and_then(exe_name).map(str::to_owned),
                 process_path: path,
             }
         })
         .collect()
+}
+
+/// Nome do executável no fim do caminho (`C:\Jogos\cs2.exe` → `cs2.exe`).
+fn exe_name(path: &str) -> Option<&str> {
+    path.rsplit('\\').next()
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, data: LPARAM) -> BOOL {
@@ -364,6 +401,110 @@ mod tests {
     fn monitor_esta_sempre_vivo_e_janela_inexistente_nao() {
         assert!(is_alive(CaptureSource::Monitor(0)));
         assert!(!is_alive(CaptureSource::Window(0x7fff_fff0)));
+    }
+
+    #[test]
+    fn monitor_principal_vem_primeiro_e_com_nome() {
+        let sources = monitor_sources(vec![(10, false), (20, true), (30, false)]);
+        let ids: Vec<_> = sources.iter().map(|s| s.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                CaptureSource::Monitor(20),
+                CaptureSource::Monitor(10),
+                CaptureSource::Monitor(30)
+            ]
+        );
+        assert_eq!(sources[0].name, "Monitor 1 (principal)");
+        assert_eq!(sources[2].name, "Monitor 3");
+        assert!(
+            sources
+                .iter()
+                .all(|s| s.process_id.is_none() && s.process_path.is_none())
+        );
+        assert!(monitor_sources(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn janelas_viram_fontes_com_o_executavel() {
+        let mut escondida = janela("Escondida");
+        escondida.visible = false;
+        let path = |pid: u32| (pid == 100).then(|| r"D:\Steam\cs2\cs2.exe".to_string());
+        let sources = window_sources(
+            vec![
+                (1, janela("Counter-Strike 2")),
+                (2, escondida),
+                (3, janela("Program Manager")),
+            ],
+            1,
+            path,
+        );
+        assert_eq!(sources.len(), 1);
+        let cs = &sources[0];
+        assert_eq!(cs.id, CaptureSource::Window(1));
+        assert_eq!(cs.name, "Counter-Strike 2");
+        assert_eq!(cs.process_id, Some(100));
+        assert_eq!(cs.process_name.as_deref(), Some("cs2.exe"));
+        assert_eq!(cs.process_path.as_deref(), Some(r"D:\Steam\cs2\cs2.exe"));
+
+        // Processo sem permissão de consulta (ex.: rodando como administrador): sem caminho.
+        let sem = window_sources(vec![(1, janela("Jogo"))], 1, |_| None);
+        assert_eq!((sem[0].process_name.clone(), sem[0].process_path.clone()), (None, None));
+    }
+
+    #[test]
+    fn nome_do_executavel_e_o_fim_do_caminho() {
+        assert_eq!(
+            exe_name(r"C:\Riot Games\League of Legends\LeagueClientUx.exe"),
+            Some("LeagueClientUx.exe")
+        );
+        assert_eq!(exe_name("solto.exe"), Some("solto.exe"));
+    }
+
+    #[test]
+    fn caminho_do_proprio_processo() {
+        // SAFETY: chamada simples sem argumentos.
+        let own = unsafe { GetCurrentProcessId() };
+        let path = process_path(own).expect("o próprio processo sempre pode ser consultado");
+        assert!(path.to_lowercase().ends_with(".exe"), "{path}");
+        assert!(process_path(0).is_none(), "processo ocioso do sistema não tem caminho");
+    }
+
+    #[test]
+    fn listar_fontes_nunca_falha() {
+        // Na esteira pode não haver monitor nem janelas: a lista só precisa ser coerente.
+        let sources = list_sources();
+        let first_window = sources
+            .iter()
+            .position(|s| matches!(s.id, CaptureSource::Window(_)))
+            .unwrap_or(sources.len());
+        assert!(
+            sources[first_window..]
+                .iter()
+                .all(|s| matches!(s.id, CaptureSource::Window(_)) && s.process_id.is_some()),
+            "monitores antes das janelas"
+        );
+        // A janela de uma fonte que sumiu: a busca roda sem quebrar.
+        let gone = Source {
+            id: CaptureSource::Window(1),
+            name: "Sumiu".into(),
+            process_id: Some(1),
+            process_name: Some("nao-existe-squadview.exe".into()),
+            process_path: Some(r"C:\nao\existe\squadview\nao-existe-squadview.exe".into()),
+        };
+        assert_eq!(find_replacement(&gone), None);
+    }
+
+    #[test]
+    fn janela_viva_visivel_e_escondida() {
+        let window = crate::test_window::TestWindow::open("SquadView (fonte)", 320, 240);
+        let id = CaptureSource::Window(window.hwnd);
+        assert!(is_alive(id));
+        window.hide();
+        assert!(!is_alive(id), "janela escondida (jogo trocou de janela) não está viva");
+        let hwnd = window.hwnd;
+        drop(window);
+        assert!(!is_alive(CaptureSource::Window(hwnd)), "janela fechada");
     }
 
     #[test]

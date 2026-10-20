@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sv_net::friends::{FriendAction, FriendsClient, FriendsConnectError, FriendsEvent};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 /// Mensagem do registro (JSON), repassada à interface.
 pub const FRIENDS_EVENT: &str = "friends-event";
@@ -50,11 +50,14 @@ fn lock(state: &Friends) -> std::sync::MutexGuard<'_, Running> {
 
 /// Endereço HTTP do Worker (o da sinalização, trocando `ws` por `http`).
 fn http_base() -> String {
-    let url = crate::room::signaling_url();
+    http_base_of(&crate::room::signaling_url())
+}
+
+fn http_base_of(url: &str) -> String {
     match url.split_once("://") {
         Some(("wss", rest)) => format!("https://{rest}"),
         Some(("ws", rest)) => format!("http://{rest}"),
-        _ => url,
+        _ => url.to_owned(),
     }
 }
 
@@ -79,18 +82,18 @@ pub async fn exchange(http: &reqwest::Client, access_token: &str) -> Option<Stri
     Some(reply.session)
 }
 
-fn session_path(app: &AppHandle) -> Option<PathBuf> {
+fn session_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     Some(app.path().app_data_dir().ok()?.join("session.json"))
 }
 
 /// Sessão salva, se houver.
-pub fn session(app: &AppHandle) -> Option<String> {
+pub fn session<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let data = std::fs::read(session_path(app)?).ok()?;
     serde_json::from_slice::<SavedSession>(&data).ok().map(|s| s.session)
 }
 
 /// Guarda a sessão (ou apaga, com `None`).
-pub fn save_session(app: &AppHandle, session: Option<&str>) {
+pub fn save_session<R: Runtime>(app: &AppHandle<R>, session: Option<&str>) {
     let Some(path) = session_path(app) else { return };
     match session {
         Some(s) => {
@@ -107,13 +110,13 @@ pub fn save_session(app: &AppHandle, session: Option<&str>) {
     }
 }
 
-fn set_status(app: &AppHandle, status: Status) {
+fn set_status<R: Runtime>(app: &AppHandle<R>, status: Status) {
     lock(&app.state::<Friends>()).status = status;
     let _ = app.emit(FRIENDS_STATUS_EVENT, status);
 }
 
 /// Conecta ao registro (ou reconecta, depois de um login). Sem sessão, fica "signed-out".
-pub fn start(app: &AppHandle) {
+pub fn start<R: Runtime>(app: &AppHandle<R>) {
     stop(app);
     if session(app).is_none() {
         set_status(app, Status::SignedOut);
@@ -125,7 +128,7 @@ pub fn start(app: &AppHandle) {
 }
 
 /// Desconecta (ao sair da conta).
-pub fn stop(app: &AppHandle) {
+pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     let (task, client) = {
         let state = app.state::<Friends>();
         let mut running = lock(&state);
@@ -138,7 +141,7 @@ pub fn stop(app: &AppHandle) {
     set_status(app, Status::SignedOut);
 }
 
-async fn run(app: AppHandle) {
+async fn run<R: Runtime>(app: AppHandle<R>) {
     let url = crate::room::signaling_url();
     let mut attempt = 0usize;
     loop {
@@ -198,12 +201,98 @@ pub fn friends_status(state: State<'_, Friends>) -> Status {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_support::{fresh_discord_id, session as signed, test_app, worker};
+
     #[test]
     fn status_vai_como_texto_para_a_interface() {
-        assert_eq!(
-            serde_json::to_string(&super::Status::SignedOut).unwrap(),
-            r#""signed-out""#
-        );
-        assert_eq!(serde_json::to_string(&super::Status::Online).unwrap(), r#""online""#);
+        assert_eq!(serde_json::to_string(&Status::SignedOut).unwrap(), r#""signed-out""#);
+        assert_eq!(serde_json::to_string(&Status::Online).unwrap(), r#""online""#);
+    }
+
+    #[test]
+    fn endereco_http_do_worker_vem_do_da_sinalizacao() {
+        assert_eq!(http_base_of("wss://sv.workers.dev"), "https://sv.workers.dev");
+        assert_eq!(http_base_of("ws://127.0.0.1:8787"), "http://127.0.0.1:8787");
+        assert_eq!(http_base_of("estranho"), "estranho");
+    }
+
+    #[test]
+    fn guarda_le_e_apaga_a_sessao() {
+        let t = test_app();
+        assert_eq!(session(t.handle()), None);
+        save_session(t.handle(), Some("abc.def"));
+        assert_eq!(session(t.handle()).as_deref(), Some("abc.def"));
+        save_session(t.handle(), None);
+        assert_eq!(session(t.handle()), None);
+    }
+
+    #[test]
+    fn sem_sessao_fica_fora_e_recusa_acoes() {
+        let t = test_app();
+        let status = t.events(FRIENDS_STATUS_EVENT);
+        start(t.handle());
+        status.wait("signed-out", |v| v == "signed-out");
+        assert_eq!(friends_status(t.app.state::<Friends>()), Status::SignedOut);
+        let err = friends_action(t.app.state::<Friends>(), FriendAction::FriendRequest { id: "1".into() }).unwrap_err();
+        assert!(err.contains("Sem conexão"), "{err}");
+    }
+
+    #[test]
+    fn com_sessao_valida_conecta_e_repassa_o_registro() {
+        let Some((_, secret)) = worker() else { return };
+        let t = test_app();
+        let status = t.events(FRIENDS_STATUS_EVENT);
+        let events = t.events(FRIENDS_EVENT);
+        save_session(t.handle(), Some(&signed(&secret, &fresh_discord_id())));
+        start(t.handle());
+        status.wait("online", |v| v == "online");
+        events.wait("estado", |v| v["type"] == "state");
+        friends_action(
+            t.app.state::<Friends>(),
+            FriendAction::Profile {
+                name: "Ana".into(),
+                avatar: None,
+            },
+        )
+        .unwrap();
+        events.wait("perfil novo", |v| v["type"] == "state" && v["me"]["name"] == "Ana");
+        // A sessão renovada pelo registro fica salva.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session(t.handle()).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(session(t.handle()).is_some());
+        // Sair da conta desconecta.
+        stop(t.handle());
+        assert_eq!(friends_status(t.app.state::<Friends>()), Status::SignedOut);
+    }
+
+    #[test]
+    fn sessao_recusada_e_apagada() {
+        if worker().is_none() {
+            return;
+        }
+        let t = test_app();
+        let status = t.events(FRIENDS_STATUS_EVENT);
+        save_session(t.handle(), Some("sessao.falsa"));
+        start(t.handle());
+        status.wait("signed-out", |v| v == "signed-out");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session(t.handle()).is_some() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(session(t.handle()), None, "a sessão recusada continuou salva");
+    }
+
+    #[test]
+    fn worker_recusa_token_do_discord_falso() {
+        if worker().is_none() {
+            return;
+        }
+        // Como no `run()` do app: o HTTPS usa o rustls com o provedor ring.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let http = reqwest::Client::new();
+        assert_eq!(tauri::async_runtime::block_on(exchange(&http, "token-falso")), None);
     }
 }

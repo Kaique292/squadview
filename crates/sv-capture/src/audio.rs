@@ -114,12 +114,13 @@ impl Stream {
                         break;
                     }
                     let len = count as usize * CHANNELS as usize;
-                    buffer.clear();
-                    if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
-                        buffer.resize(len, 0.0);
+                    let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null();
+                    let samples = if silent {
+                        None
                     } else {
-                        buffer.extend_from_slice(std::slice::from_raw_parts(data as *const f32, len));
-                    }
+                        Some(std::slice::from_raw_parts(data as *const f32, len))
+                    };
+                    copy_packet(&mut buffer, samples, len);
                     let _ = self.capture.ReleaseBuffer(count);
                     on_samples(&buffer);
                 }
@@ -143,17 +144,7 @@ fn open(pid: u32) -> windows::core::Result<Stream> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let client = activate(pid)?;
-
-        let block_align = CHANNELS * 4;
-        let format = WAVEFORMATEX {
-            wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
-            nChannels: CHANNELS,
-            nSamplesPerSec: SAMPLE_RATE,
-            nAvgBytesPerSec: SAMPLE_RATE * u32::from(block_align),
-            nBlockAlign: block_align,
-            wBitsPerSample: 32,
-            cbSize: 0,
-        };
+        let format = capture_format();
         // O loopback de processo não informa o formato do mixer: pedimos o nosso e o Windows converte.
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
@@ -176,15 +167,7 @@ fn open(pid: u32) -> windows::core::Result<Stream> {
 /// # Safety
 /// Chamar numa thread com o COM iniciado.
 unsafe fn activate(pid: u32) -> windows::core::Result<IAudioClient> {
-    let params = AUDIOCLIENT_ACTIVATION_PARAMS {
-        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
-            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
-                TargetProcessId: pid,
-                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-            },
-        },
-    };
+    let params = loopback_params(pid);
     let blob = BlobPropVariant::new(&params);
     let (tx, rx) = mpsc::channel();
     let handler: IActivateAudioInterfaceCompletionHandler = ActivationHandler { done: tx }.into();
@@ -205,6 +188,44 @@ unsafe fn activate(pid: u32) -> windows::core::Result<IAudioClient> {
     unsafe { operation.GetActivateResult(&mut result, &mut unknown)? };
     result.ok()?;
     unknown.ok_or_else(windows::core::Error::from_thread)?.cast()
+}
+
+/// Formato pedido ao loopback: 48 kHz, estéreo, f32 (o Windows converte do formato do mixer).
+fn capture_format() -> WAVEFORMATEX {
+    let block_align = CHANNELS * 4;
+    WAVEFORMATEX {
+        wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
+        nChannels: CHANNELS,
+        nSamplesPerSec: SAMPLE_RATE,
+        nAvgBytesPerSec: SAMPLE_RATE * u32::from(block_align),
+        nBlockAlign: block_align,
+        wBitsPerSample: 32,
+        cbSize: 0,
+    }
+}
+
+/// Parâmetros de ativação: o som do processo `pid` e dos filhos dele (jogos que abrem o
+/// executável de verdade a partir de um launcher).
+fn loopback_params(pid: u32) -> AUDIOCLIENT_ACTIVATION_PARAMS {
+    AUDIOCLIENT_ACTIVATION_PARAMS {
+        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                TargetProcessId: pid,
+                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+            },
+        },
+    }
+}
+
+/// Copia um pacote do WASAPI para `buffer` (reaproveitado: sem alocar depois que a capacidade
+/// assenta). `None` é um pacote marcado como silêncio: vira `len` zeros.
+fn copy_packet(buffer: &mut Vec<f32>, data: Option<&[f32]>, len: usize) {
+    buffer.clear();
+    match data {
+        Some(samples) => buffer.extend_from_slice(samples),
+        None => buffer.resize(len, 0.0),
+    }
 }
 
 /// O handler de ativação precisa ser "agile" (o Windows chama de outra thread).
@@ -258,6 +279,77 @@ mod tests {
     use std::process::Command;
 
     use super::*;
+
+    #[test]
+    fn formato_pedido_e_48_khz_estereo_float() {
+        // WAVEFORMATEX é packed: desmonta em variáveis antes de comparar.
+        let WAVEFORMATEX {
+            wFormatTag,
+            nChannels,
+            nSamplesPerSec,
+            nAvgBytesPerSec,
+            nBlockAlign,
+            wBitsPerSample,
+            cbSize,
+        } = capture_format();
+        assert_eq!(
+            (
+                wFormatTag,
+                nChannels,
+                nSamplesPerSec,
+                nAvgBytesPerSec,
+                nBlockAlign,
+                wBitsPerSample,
+                cbSize
+            ),
+            (3, 2, 48_000, 384_000, 8, 32, 0)
+        );
+    }
+
+    #[test]
+    fn ativacao_pede_o_processo_e_os_filhos_dele() {
+        let params = loopback_params(4242);
+        assert_eq!(params.ActivationType, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK);
+        // SAFETY: a união foi montada com ProcessLoopbackParams.
+        let loopback = unsafe { params.Anonymous.ProcessLoopbackParams };
+        assert_eq!(loopback.TargetProcessId, 4242);
+        assert_eq!(
+            loopback.ProcessLoopbackMode,
+            PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
+        );
+    }
+
+    #[test]
+    fn propvariant_blob_aponta_para_os_parametros() {
+        let params = loopback_params(7);
+        let blob = BlobPropVariant::new(&params);
+        assert_eq!(blob.vt, BlobPropVariant::VT_BLOB);
+        assert_eq!(blob.reserved, [0; 3]);
+        assert_eq!(blob.size as usize, std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>());
+        assert_eq!(blob.data, &params as *const _ as *const u8);
+        assert_eq!(blob.as_ptr() as *const u8, &blob as *const _ as *const u8);
+    }
+
+    #[test]
+    fn pacote_com_som_e_copiado_e_silencio_vira_zeros() {
+        let mut buffer = Vec::with_capacity(8);
+        copy_packet(&mut buffer, Some(&[0.1, 0.2]), 2);
+        assert_eq!(buffer, [0.1, 0.2]);
+        copy_packet(&mut buffer, None, 4);
+        assert_eq!(buffer, [0.0; 4]);
+    }
+
+    #[test]
+    #[ignore = "precisa do serviço de áudio do Windows"]
+    fn processo_inexistente_nao_trava() {
+        // O Windows aceita ou recusa o pid (depende da versão); o importante é responder logo.
+        let start = std::time::Instant::now();
+        let capture = AudioCapture::start(0x7fff_fff0, |_| {});
+        assert!(start.elapsed() < Duration::from_secs(6));
+        if let Ok(capture) = capture {
+            assert!(format!("{capture:?}").contains("AudioCapture"));
+        }
+    }
 
     #[test]
     #[ignore = "precisa de saída de áudio; toca um bipe pelo PowerShell"]

@@ -6,6 +6,8 @@
 
 pub mod audio;
 pub mod sources;
+#[cfg(test)]
+mod test_window;
 pub mod throttle;
 pub mod thumbnail;
 pub mod video;

@@ -98,6 +98,11 @@ jobs:
           name: cobertura-rust
           path: build/coverage-rust.json
 
+      # Trava: mostra a cobertura por crate e falha se o total cair abaixo do mínimo. Medida sem
+      # placa de vídeo nem de som (os testes de hardware rodam no PC com `yarn test:rs:hw`).
+      - name: Cobertura mínima do Rust
+        run: node scripts/coverage-check.mjs 68
+
   typescript:
     name: Interface e sinalização (lint e testes)
     runs-on: ubuntu-latest

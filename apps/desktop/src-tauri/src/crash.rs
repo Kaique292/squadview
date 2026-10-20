@@ -13,8 +13,13 @@ fn logs_dir() -> Option<PathBuf> {
 
 /// Acrescenta uma linha com a hora, a versão e a mensagem ao `crash.log`.
 fn record(message: &str) {
-    let Some(dir) = logs_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
+    if let Some(dir) = logs_dir() {
+        record_in(&dir, message);
+    }
+}
+
+fn record_in(dir: &std::path::Path, message: &str) {
+    let _ = std::fs::create_dir_all(dir);
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -74,4 +79,28 @@ pub fn fatal(message: &str) -> ! {
         "{message}\n\nSe continuar, reinstale o SquadView. O detalhe ficou em %LOCALAPPDATA%\\io.github.kaique292.squadview\\logs\\crash.log."
     ));
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn crash_log_acumula_linhas_com_versao() {
+        let dir = std::env::temp_dir().join(format!("sv-crash-{}", std::process::id()));
+        super::record_in(&dir, "primeiro");
+        super::record_in(&dir, "segundo");
+        let log = std::fs::read_to_string(dir.join("crash.log")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let lines: Vec<_> = log.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(&format!("SquadView {}: primeiro", env!("CARGO_PKG_VERSION"))));
+        assert!(lines[1].ends_with("segundo"));
+    }
+
+    #[test]
+    fn pasta_dos_registros_e_a_do_app() {
+        let dir = super::logs_dir().expect("LOCALAPPDATA no Windows");
+        assert!(
+            dir.ends_with("io.github.kaique292.squadview\\logs") || dir.ends_with("io.github.kaique292.squadview/logs")
+        );
+    }
 }

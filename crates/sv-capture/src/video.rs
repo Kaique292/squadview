@@ -93,17 +93,15 @@ unsafe impl Send for AgileDevice {}
 impl<F: FnMut(&GpuFrame)> FrameState<F> {
     fn handle(&mut self, pool: &Direct3D11CaptureFramePool) -> Result<()> {
         let frame = pool.TryGetNextFrame()?;
-        let content = frame.ContentSize()?;
-
-        // A janela mudou de tamanho: recria o pool e descarta este frame (ele tem o tamanho antigo).
-        if content.Width != self.pool_size.Width || content.Height != self.pool_size.Height {
-            self.pool_size = content;
-            pool.Recreate(&self.device.0, PIXEL_FORMAT, POOL_BUFFERS, content)?;
-            return frame.Close();
-        }
-        if content.Width <= 0 || content.Height <= 0 {
-            return frame.Close();
-        }
+        let size = match frame_action(frame.ContentSize()?, self.pool_size) {
+            FrameAction::Recreate(content) => {
+                self.pool_size = content;
+                pool.Recreate(&self.device.0, PIXEL_FORMAT, POOL_BUFFERS, content)?;
+                return frame.Close();
+            }
+            FrameAction::Skip => return frame.Close(),
+            FrameAction::Deliver(size) => size,
+        };
 
         let access: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
         // SAFETY: a superfície do frame é uma textura D3D11 válida enquanto o frame não é fechado.
@@ -115,10 +113,32 @@ impl<F: FnMut(&GpuFrame)> FrameState<F> {
         (self.on_frame)(&GpuFrame {
             texture,
             slice: 0,
-            size: Size::new(content.Width as u32, content.Height as u32),
+            size,
             timestamp_us,
         });
         frame.Close()
+    }
+}
+
+/// O que fazer com um frame que chegou do WGC.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FrameAction {
+    /// A janela mudou de tamanho: recria o pool com o tamanho novo e descarta este frame
+    /// (a textura dele tem o tamanho antigo).
+    Recreate(SizeInt32),
+    /// Janela minimizada (tamanho zero): nada para mostrar.
+    Skip,
+    /// Entrega o frame com este tamanho.
+    Deliver(Size),
+}
+
+fn frame_action(content: SizeInt32, pool: SizeInt32) -> FrameAction {
+    if content.Width != pool.Width || content.Height != pool.Height {
+        FrameAction::Recreate(content)
+    } else if content.Width <= 0 || content.Height <= 0 {
+        FrameAction::Skip
+    } else {
+        FrameAction::Deliver(Size::new(content.Width as u32, content.Height as u32))
     }
 }
 
@@ -147,6 +167,80 @@ mod tests {
 
     use super::*;
     use crate::list_sources;
+    use crate::test_window::TestWindow;
+
+    fn size(w: i32, h: i32) -> SizeInt32 {
+        SizeInt32 { Width: w, Height: h }
+    }
+
+    #[test]
+    fn frame_do_tamanho_do_pool_e_entregue() {
+        assert_eq!(
+            frame_action(size(1920, 1080), size(1920, 1080)),
+            FrameAction::Deliver(Size::new(1920, 1080))
+        );
+    }
+
+    #[test]
+    fn janela_redimensionada_recria_o_pool_e_descarta_o_frame() {
+        assert_eq!(
+            frame_action(size(1280, 720), size(1920, 1080)),
+            FrameAction::Recreate(size(1280, 720))
+        );
+        // Mudou só a altura.
+        assert_eq!(
+            frame_action(size(1920, 800), size(1920, 1080)),
+            FrameAction::Recreate(size(1920, 800))
+        );
+    }
+
+    #[test]
+    fn janela_minimizada_nao_entrega_nada() {
+        assert_eq!(frame_action(size(0, 0), size(0, 0)), FrameAction::Skip);
+        assert_eq!(
+            frame_action(size(0, 0), size(800, 600)),
+            FrameAction::Recreate(size(0, 0))
+        );
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]
+    fn captura_janela_e_acompanha_o_redimensionamento() {
+        let gpu = Gpu::new().unwrap();
+        let window = TestWindow::open("SquadView (captura)", 400, 300);
+        std::thread::sleep(Duration::from_millis(200));
+        let (tx, rx) = mpsc::channel();
+        let capture = VideoCapture::start(&gpu, CaptureSource::Window(window.hwnd), move |frame| {
+            let _ = tx.send(frame.size);
+        })
+        .expect("capturar a janela");
+        assert!(format!("{capture:?}").contains("VideoCapture"));
+        let first = rx.recv_timeout(Duration::from_secs(3)).expect("nenhum frame da janela");
+        assert!(first.width > 0 && first.height > 0);
+
+        window.resize(640, 480);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut resized = None;
+        while std::time::Instant::now() < deadline {
+            if let Ok(s) = rx.recv_timeout(Duration::from_millis(100))
+                && s.width > first.width
+            {
+                resized = Some(s);
+                break;
+            }
+        }
+        let resized = resized.expect("nenhum frame com o tamanho novo");
+        assert!(resized.height > first.height);
+        drop(capture);
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo"]
+    fn janela_inexistente_nao_pode_ser_capturada() {
+        let gpu = Gpu::new().unwrap();
+        let result = VideoCapture::start(&gpu, CaptureSource::Window(0x7fff_fff0), |_| {});
+        assert!(result.is_err());
+    }
 
     #[test]
     #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]

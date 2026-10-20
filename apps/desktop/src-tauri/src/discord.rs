@@ -11,7 +11,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -56,7 +56,7 @@ enum Callback {
 
 /// Faz o login e devolve o perfil (já salvo).
 #[tauri::command]
-pub async fn discord_login(app: AppHandle) -> Result<DiscordProfile, String> {
+pub async fn discord_login<R: Runtime>(app: AppHandle<R>) -> Result<DiscordProfile, String> {
     let verifier = random_token(32)?;
     let state = random_token(16)?;
 
@@ -116,25 +116,25 @@ pub async fn discord_login(app: AppHandle) -> Result<DiscordProfile, String> {
 
 /// Perfil salvo do último login, se houver.
 #[tauri::command]
-pub fn discord_profile(app: AppHandle) -> Option<DiscordProfile> {
+pub fn discord_profile<R: Runtime>(app: AppHandle<R>) -> Option<DiscordProfile> {
     let data = std::fs::read(profile_path(&app).ok()?).ok()?;
     serde_json::from_slice(&data).ok()
 }
 
 /// Esquece o perfil.
 #[tauri::command]
-pub fn discord_logout(app: AppHandle) -> Result<(), String> {
+pub fn discord_logout<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     crate::friends::stop(&app);
     crate::friends::save_session(&app, None);
     save(&app, None)
 }
 
-fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn profile_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("discord.json"))
 }
 
-fn save(app: &AppHandle, profile: Option<&DiscordProfile>) -> Result<(), String> {
+fn save<R: Runtime>(app: &AppHandle<R>, profile: Option<&DiscordProfile>) -> Result<(), String> {
     let path = profile_path(app)?;
     match profile {
         Some(p) => {
@@ -247,6 +247,88 @@ fn random_token(bytes: usize) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_app;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Manda um pedido HTTP cru para o servidor local e devolve a resposta.
+    async fn get(addr: std::net::SocketAddr, line: &str) -> String {
+        let mut socket = tokio::net::TcpStream::connect(addr).await.unwrap();
+        socket
+            .write_all(
+                format!(
+                    "{line}
+Host: 127.0.0.1
+
+"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        socket.read_to_string(&mut reply).await.unwrap();
+        reply
+    }
+
+    #[test]
+    fn servidor_local_espera_o_retorno_certo_do_discord() {
+        tauri::async_runtime::block_on(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let browser = tokio::spawn(async move {
+                // Outros caminhos e um `state` que não é o nosso são ignorados.
+                let other = get(addr, "GET /favicon.ico HTTP/1.1").await;
+                let forged = get(addr, "GET /callback?code=x&state=outro HTTP/1.1").await;
+                let ok = get(addr, "GET /callback?code=abc&state=meu HTTP/1.1").await;
+                (other, forged, ok)
+            });
+            let code = wait_for_code(&listener, "meu").await.unwrap();
+            assert_eq!(code, "abc");
+            let (other, forged, ok) = browser.await.unwrap();
+            assert!(other.starts_with("HTTP/1.1 404"), "{other}");
+            assert!(
+                forged.starts_with("HTTP/1.1 400") && forged.contains("não veio do SquadView"),
+                "{forged}"
+            );
+            assert!(
+                ok.starts_with("HTTP/1.1 200") && ok.contains("Pode voltar para o SquadView"),
+                "{ok}"
+            );
+        });
+    }
+
+    #[test]
+    fn servidor_local_avisa_quando_a_pessoa_cancela() {
+        tauri::async_runtime::block_on(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let browser = tokio::spawn(async move { get(addr, "GET /callback?error=access_denied HTTP/1.1").await });
+            let err = wait_for_code(&listener, "meu").await.unwrap_err();
+            assert!(err.contains("cancelou"), "{err}");
+            assert!(browser.await.unwrap().contains("Login cancelado"));
+        });
+    }
+
+    #[test]
+    fn guarda_le_e_esquece_o_perfil() {
+        let t = test_app();
+        assert_eq!(discord_profile(t.handle().clone()), None);
+        let profile = DiscordProfile {
+            id: "123456789012345678".into(),
+            username: "kaique".into(),
+            global_name: Some("K.A".into()),
+            avatar: None,
+        };
+        save(t.handle(), Some(&profile)).unwrap();
+        assert_eq!(discord_profile(t.handle().clone()), Some(profile));
+        crate::friends::save_session(t.handle(), Some("abc.def"));
+        // Sair esquece o perfil e a sessão dos amigos.
+        discord_logout(t.handle().clone()).unwrap();
+        assert_eq!(discord_profile(t.handle().clone()), None);
+        assert_eq!(crate::friends::session(t.handle()), None);
+        // Sair de novo (sem perfil) não é erro.
+        discord_logout(t.handle().clone()).unwrap();
+    }
 
     #[test]
     fn desafio_pkce_e_sha256_em_base64_para_url() {
