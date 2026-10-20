@@ -1,5 +1,6 @@
 //! Cenários da malha em enxame (ADR 0012): `cargo run -p sv-mesh --release --example simular`.
 
+use sv_core::QualityLayer;
 use sv_mesh::plan::Config;
 use sv_mesh::sim::{REPORT_HEADER, run};
 
@@ -10,6 +11,14 @@ fn main() {
             "Malha em enxame: 4 faixas + 1 de paridade, com repassador na nuvem de reserva (proposta)",
             Config {
                 relay_kbps: 1_000_000,
+                ..Config::default()
+            },
+        ),
+        (
+            "1440p60 escolhido por quem transmite (fibra de 150 Mbps), com repassador na nuvem",
+            Config {
+                relay_kbps: 1_000_000,
+                top_layer: QualityLayer::Ultra,
                 ..Config::default()
             },
         ),

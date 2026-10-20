@@ -22,7 +22,7 @@ O torrent puro (cada um pede os pedaços que faltam a vizinhos) espalha bem o es
 - Quem transmite manda no máximo **2 cópias** (20 Mbps em 1080p60 com a paridade), divididas entre as árvores, não importa o tamanho da sala.
 - Quem tem mais upload entra primeiro e fica perto da raiz, então as árvores ficam rasas.
 - Quem está jogando doa no máximo 1,5 Mbps. Quem está atrás de CGNAT ou não tem upload para uma faixa só recebe.
-- **Camadas:** a sala desce para 720p30 só quem não couber em 1080p60 (falta de download ou de upload na sala), em vez de travar.
+- **Camadas (simulcast):** a de cima é a que quem transmite escolheu (até 1440p60), e abaixo vêm 1080p60 e 720p30. Quem não couber numa camada (falta de download ou de upload na sala) desce um degrau por vez, em vez de travar. Cada camada é um encode a mais no NVENC/AMF; em placas fracas o app gera só a escolhida e 720p.
 - **Torrent como conserto, não como entrega:** pacote perdido é pedido de novo ao pai ou a um vizinho da mesma árvore (NACK). O vídeo chega empurrado, com latência de call.
 - **Repassador na nuvem como último recurso.** É um repassador MoQ ou TURN de terceiros (por exemplo, o da Cloudflare): recebe uma cópia e só serve faixas a quem não alcança ninguém com vaga. Pode ser por CGNAT ou por falta de upload na sala. É opcional e pago por uso, e nas salas grandes ele não é usado.
 - **Transporte:** QUIC, que já usamos. A semântica segue o Media over QUIC (MoQ, IETF): faixas como _tracks_, quadros como _objects_ e prioridade por camada. Assim um repassador MoQ de terceiros encaixa sem mudar o protocolo.
@@ -47,6 +47,17 @@ Em cada cenário, 5% das pessoas saem de uma vez. O atraso é só o de rede, de 
 | 100     | 100%  | 0%        | 55 ms      | 3      | 20 Mbps        | 8,7 Mbps    | 116 Mbps | 0%                 |
 | 1.000   | 100%  | 0%        | 57 ms      | 3      | 20 Mbps        | 10 Mbps     | 0        | 0%                 |
 | 5.000   | 100%  | 0%        | 58 ms      | 4      | 20 Mbps        | 10 Mbps     | 0        | 0,4%               |
+
+**Com 1440p60 escolhido.** Quem transmite tem fibra de 150 Mbps; o resto é igual:
+
+| Membros | 1440p | Sem vídeo | Atraso p95 | Saltos | Quem transmite | Cada um doa | Nuvem    | Congela ao sair 5% |
+| ------- | ----- | --------- | ---------- | ------ | -------------- | ----------- | -------- | ------------------ |
+| 8       | 100%  | 0%        | 44 ms      | 2      | 40 Mbps        | 4,5 Mbps    | 104 Mbps | 0%                 |
+| 100     | 100%  | 0%        | 52 ms      | 3      | 40 Mbps        | 16,2 Mbps   | 360 Mbps | 0%                 |
+| 1.000   | 100%  | 0%        | 60 ms      | 4      | 40 Mbps        | 20 Mbps     | 0        | 0%                 |
+| 5.000   | 100%  | 0%        | 62 ms      | 4      | 40 Mbps        | 20 Mbps     | 0        | 1,7%               |
+
+Em 1440p, quem transmite precisa de uns 55 Mbps de upload livre, e cada um que assiste doa em média 20 Mbps. Com a mistura de internet simulada, a sala dá conta sem descer ninguém; com muita gente de upload fraco, uma parte desceria para 1080p.
 
 Comparações, com os mesmos cenários:
 

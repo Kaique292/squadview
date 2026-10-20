@@ -23,6 +23,8 @@ pub enum QualityLayer {
     Low,
     /// 1080p60, a qualidade padrão.
     High,
+    /// 1440p60, para quem transmite escolher a qualidade máxima (ADR 0012).
+    Ultra,
 }
 
 impl QualityLayer {
@@ -31,6 +33,7 @@ impl QualityLayer {
         match self {
             Self::Low => 2_500,
             Self::High => 8_000,
+            Self::Ultra => 16_000,
         }
     }
 }
@@ -115,6 +118,10 @@ impl From<QualityLayer> for StreamQuality {
             },
             QualityLayer::High => Self {
                 resolution: Resolution::P1080,
+                fps: 60,
+            },
+            QualityLayer::Ultra => Self {
+                resolution: Resolution::P1440,
                 fps: 60,
             },
         }
@@ -236,5 +243,10 @@ mod tests {
     #[test]
     fn camada_alta_pede_mais_banda_que_a_baixa() {
         assert!(QualityLayer::High.target_kbps() > QualityLayer::Low.target_kbps());
+        assert!(QualityLayer::Ultra.target_kbps() > QualityLayer::High.target_kbps());
+        // A ordem das camadas vai da mais leve para a mais pesada.
+        assert!(QualityLayer::Low < QualityLayer::High && QualityLayer::High < QualityLayer::Ultra);
+        assert_eq!(StreamQuality::from(QualityLayer::Ultra).resolution, Resolution::P1440);
+        assert_eq!(serde_json::to_string(&QualityLayer::Ultra).unwrap(), "\"ultra\"");
     }
 }

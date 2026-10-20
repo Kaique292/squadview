@@ -63,6 +63,9 @@ pub struct Config {
     /// Repassador na nuvem (TURN ou MoQ), só para quem não alcança ninguém direto (CGNAT).
     /// Upload dele em kbit/s; 0 = sem repassador.
     pub relay_kbps: u32,
+    /// Camada de cima: a qualidade que quem transmite escolheu (1440p60, 1080p60...). As de
+    /// baixo existem para quem não aguenta a de cima.
+    pub top_layer: QualityLayer,
 }
 
 impl Default for Config {
@@ -75,6 +78,7 @@ impl Default for Config {
             source_copies: 2,
             hop_ms: 2,
             relay_kbps: 0,
+            top_layer: QualityLayer::High,
         }
     }
 }
@@ -92,6 +96,18 @@ impl Config {
     /// O que um membro baixa ao receber todas as faixas da camada.
     pub fn download_needed(&self, layer: QualityLayer) -> u32 {
         self.stripe_kbps(layer) * u32::from(self.total_stripes())
+    }
+
+    /// Camadas em uso, da mais pesada (a escolhida) para a mais leve.
+    pub fn layers(&self) -> impl Iterator<Item = QualityLayer> + '_ {
+        [QualityLayer::Ultra, QualityLayer::High, QualityLayer::Low]
+            .into_iter()
+            .filter(|l| *l <= self.top_layer)
+    }
+
+    /// A camada abaixo de `layer` (`None` abaixo da mais leve).
+    pub fn below(&self, layer: QualityLayer) -> Option<QualityLayer> {
+        self.layers().find(|l| *l < layer)
     }
 }
 
@@ -152,26 +168,23 @@ pub fn plan(source: &Member, members: &[Member], rtt: &dyn Fn(PeerId, PeerId) ->
     let mut wanted: HashMap<PeerId, Option<QualityLayer>> = members
         .iter()
         .map(|m| {
-            let layer = if m.download_kbps >= cfg.download_needed(QualityLayer::High) {
-                QualityLayer::High
-            } else {
-                QualityLayer::Low
-            };
+            // A mais pesada que o download aguenta (a mais leve, se nenhuma couber).
+            let layer = cfg
+                .layers()
+                .find(|l| m.download_kbps >= cfg.download_needed(*l))
+                .unwrap_or(QualityLayer::Low);
             (m.id, Some(layer))
         })
         .collect();
-    for _ in 0..6 {
+    for _ in 0..8 {
         let attempt = place(source, members, rtt, cfg, &wanted);
         let mut changed = false;
         for m in members {
             let got = attempt.layer.get(&m.id).copied().flatten();
             let want = wanted[&m.id];
             if got != want {
-                // Não coube na alta: tenta a baixa. Não coube na baixa: fica sem vídeo.
-                let next = match want {
-                    Some(QualityLayer::High) => Some(QualityLayer::Low),
-                    _ => None,
-                };
+                // Não coube nesta camada: desce um degrau. Não coube na mais leve: fica sem vídeo.
+                let next = want.and_then(|l| cfg.below(l));
                 if next != want {
                     wanted.insert(m.id, next);
                     changed = true;
@@ -202,8 +215,8 @@ fn place(
     let total = cfg.total_stripes();
     let mut plan = Plan::default();
     let mut left: HashMap<PeerId, u32> = members.iter().map(|m| (m.id, budget(m, cfg))).collect();
-    let source_budget = ((source.upload_kbps as f32 * cfg.headroom) as u32)
-        .min(cfg.download_needed(QualityLayer::High) * cfg.source_copies);
+    let source_budget =
+        ((source.upload_kbps as f32 * cfg.headroom) as u32).min(cfg.download_needed(cfg.top_layer) * cfg.source_copies);
     let nat: HashMap<PeerId, Nat> = members
         .iter()
         .map(|m| (m.id, m.nat))
@@ -437,6 +450,31 @@ mod tests {
             in_game: true,
             ..member(0, 50_000, Nat::Cone)
         }
+    }
+
+    #[test]
+    fn em_1440p_quem_nao_aguenta_desce_um_degrau_por_vez() {
+        let cfg = Config {
+            top_layer: QualityLayer::Ultra,
+            source_copies: 4,
+            ..Config::default()
+        };
+        assert_eq!(cfg.below(QualityLayer::Ultra), Some(QualityLayer::High));
+        assert_eq!(cfg.below(QualityLayer::Low), None);
+        let mut members: Vec<_> = (1..=3).map(|i| member(i, 100_000, Nat::Cone)).collect();
+        // Download de fibra de entrada: não aguenta 1440p, recebe 1080p.
+        members[2].download_kbps = 15_000;
+        let source = Member {
+            upload_kbps: 200_000,
+            ..source()
+        };
+        let plan = plan(&source, &members, &flat, &cfg);
+        assert_eq!(plan.layer[&PeerId(1)], Some(QualityLayer::Ultra));
+        assert_eq!(plan.layer[&PeerId(2)], Some(QualityLayer::Ultra));
+        assert_eq!(plan.layer[&PeerId(3)], Some(QualityLayer::High));
+        // Com 1080p escolhido, ninguém recebe 1440p.
+        let plan = super::plan(&source, &members, &flat, &Config::default());
+        assert!(plan.layer.values().all(|l| *l != Some(QualityLayer::Ultra)));
     }
 
     #[test]

@@ -104,7 +104,16 @@ pub fn population(n: usize, rng: &mut Rng) -> Vec<Person> {
         .collect()
 }
 
-/// Quem transmite: está jogando, com fibra comum, em São Paulo.
+/// Quem transmite: está jogando, em São Paulo, com fibra comum (ou boa, para 1440p).
+pub fn streamer_for(top: QualityLayer) -> Person {
+    let mut person = streamer();
+    if top == QualityLayer::Ultra {
+        person.member.upload_kbps = 150_000;
+    }
+    person
+}
+
+/// Quem transmite em 1080p: está jogando, com fibra comum, em São Paulo.
 pub fn streamer() -> Person {
     Person {
         member: Member {
@@ -123,7 +132,8 @@ pub fn streamer() -> Person {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Report {
     pub members: usize,
-    /// Fração que recebe 1080p60, 720p30 e nada.
+    /// Fração que recebe 1440p60, 1080p60, 720p30 e nada.
+    pub ultra: f64,
     pub high: f64,
     pub low: f64,
     pub none: f64,
@@ -149,8 +159,9 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{:>7} | {:>5.1}% {:>5.1}% {:>5.1}% | {:>4} {:>4} {:>4} ms | {:>6} | {:>19.1} | {:>12.2} | {:>6.1} | {:>6.1}% {:>4.1}%",
+            "{:>7} | {:>5.1}% {:>5.1}% {:>5.1}% {:>5.1}% | {:>4} {:>4} {:>4} ms | {:>6} | {:>19.1} | {:>12.2} | {:>6.1} | {:>6.1}% {:>4.1}%",
             self.members,
+            self.ultra * 100.0,
             self.high * 100.0,
             self.low * 100.0,
             self.none * 100.0,
@@ -168,7 +179,7 @@ impl fmt::Display for Report {
 }
 
 /// Cabeçalho da tabela do [`Report`].
-pub const REPORT_HEADER: &str = "membros |  1080p   720p   nada |  p50  p95  máx    | saltos | Mbps quem transmite | Mbps cada um | nuvem  | congela cobre";
+pub const REPORT_HEADER: &str = "membros |  1440p  1080p   720p   nada |  p50  p95  máx    | saltos | Mbps quem transmite | Mbps cada um | nuvem  | congela cobre";
 
 /// RTT entre duas pessoas: a rota entre as cidades mais a última milha de cada lado.
 pub fn rtt(a: &Person, b: &Person) -> u32 {
@@ -179,7 +190,7 @@ pub fn rtt(a: &Person, b: &Person) -> u32 {
 pub fn run(n: usize, cfg: &Config, churn: f64, seed: u64) -> Report {
     let mut rng = Rng::new(seed);
     let people = population(n, &mut rng);
-    let source = streamer();
+    let source = streamer_for(cfg.top_layer);
     // O repassador na nuvem fica num datacenter em São Paulo, com rede aberta.
     let relay = Person {
         member: Member {
@@ -226,6 +237,7 @@ fn summarize(plan: &Plan, cfg: &Config, source: &Member, members: &[Member], chu
     let staying = (members.len() - gone.len()).max(1) as f64;
     Report {
         members: members.len(),
+        ultra: count(Some(QualityLayer::Ultra)),
         high: count(Some(QualityLayer::High)),
         low: count(Some(QualityLayer::Low)),
         none: count(None),
@@ -294,6 +306,18 @@ mod tests {
         assert!(r.high >= 0.75, "{r}");
         assert_eq!(r.none, 0.0, "{r}");
         assert!(r.latency_p95 <= 60, "{r}");
+    }
+
+    #[test]
+    fn em_1440p_a_sala_grande_divide_entre_1440p_e_1080p_sem_deixar_ninguem_sem_video() {
+        let cfg = Config {
+            top_layer: QualityLayer::Ultra,
+            ..proposed()
+        };
+        let r = run(1_000, &cfg, 0.0, 5);
+        assert!(r.ultra > 0.0, "{r}");
+        assert!(r.none <= 0.02, "{r}");
+        assert!(r.latency_p95 <= 250, "{r}");
     }
 
     #[test]
