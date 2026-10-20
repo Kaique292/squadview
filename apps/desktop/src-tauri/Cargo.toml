@@ -50,6 +50,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 [dev-dependencies]
 # App de mentira (MockRuntime) para testar a abertura sem janela de verdade.
 tauri = { version = "2.12.4", features = ["test"] }
+# Sessões assinadas como as do Worker, nos testes dos amigos.
+ring = "0.17"
 
 [lints]
 workspace = true

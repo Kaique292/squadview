@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sv_session::{SessionLog, SystemMonitor};
-use tauri::{App, AppHandle, Emitter, Manager};
+use tauri::{App, AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
 /// Evento com o uso de GPU e CPU, a cada segundo.
@@ -134,7 +134,7 @@ fn load_enabled(settings: Option<&Path>) -> bool {
 }
 
 /// Abre o registro (se ligado) e começa a medir o sistema. Falhas aqui nunca impedem o app de abrir.
-pub fn setup(app: &App) {
+pub fn setup<R: Runtime>(app: &App<R>) {
     let base = app.path().app_local_data_dir().ok();
     let dir = base.as_ref().map(|d| d.join("logs"));
     let settings = base.as_ref().map(|d| d.join("diagnostics.json"));
@@ -148,13 +148,13 @@ pub fn setup(app: &App) {
 
 /// Caminho do registro desta sessão, para a interface mostrar.
 #[tauri::command]
-pub fn session_log_path(app: AppHandle) -> Option<String> {
+pub fn session_log_path<R: Runtime>(app: AppHandle<R>) -> Option<String> {
     app.state::<Diagnostics>().path()
 }
 
 /// Se o registro está ligado e quantos arquivos existem.
 #[tauri::command]
-pub fn diagnostics_status(app: AppHandle) -> DiagnosticsStatus {
+pub fn diagnostics_status<R: Runtime>(app: AppHandle<R>) -> DiagnosticsStatus {
     let diagnostics = app.state::<Diagnostics>();
     DiagnosticsStatus {
         enabled: diagnostics.enabled(),
@@ -164,7 +164,7 @@ pub fn diagnostics_status(app: AppHandle) -> DiagnosticsStatus {
 
 /// Liga ou desliga o registro e guarda a escolha.
 #[tauri::command]
-pub fn set_diagnostics_enabled(app: AppHandle, enabled: bool) -> Result<DiagnosticsStatus, String> {
+pub fn set_diagnostics_enabled<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Result<DiagnosticsStatus, String> {
     let diagnostics = app.state::<Diagnostics>();
     if let Some(path) = diagnostics.settings() {
         if let Some(dir) = path.parent() {
@@ -180,7 +180,7 @@ pub fn set_diagnostics_enabled(app: AppHandle, enabled: bool) -> Result<Diagnost
 /// Copia os registros mais recentes para a área de transferência, como arquivos: é só colar
 /// (Ctrl+V) numa conversa do Discord. Devolve quantos foram copiados.
 #[tauri::command]
-pub fn copy_diagnostics(app: AppHandle) -> Result<usize, String> {
+pub fn copy_diagnostics<R: Runtime>(app: AppHandle<R>) -> Result<usize, String> {
     let files = app.state::<Diagnostics>().recent();
     if files.is_empty() {
         return Err("Ainda não há registros. Ligue o registro e use o app um pouco.".into());
@@ -191,7 +191,7 @@ pub fn copy_diagnostics(app: AppHandle) -> Result<usize, String> {
 
 /// Abre a pasta dos registros no Explorer, com o mais recente selecionado.
 #[tauri::command]
-pub fn reveal_diagnostics(app: AppHandle) -> Result<(), String> {
+pub fn reveal_diagnostics<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let latest = app.state::<Diagnostics>().recent().into_iter().next();
     let Some(latest) = latest else {
         return Err("Ainda não há registros.".into());
@@ -259,7 +259,7 @@ mod clipboard {
     }
 }
 
-fn sample_system(app: AppHandle) {
+fn sample_system<R: Runtime>(app: AppHandle<R>) {
     std::thread::Builder::new()
         .name("sv-system-monitor".into())
         .spawn(move || {
@@ -301,6 +301,74 @@ fn windows_build(ver: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_support::test_app;
+
+    #[test]
+    fn antes_do_setup_nao_ha_registro_e_nada_quebra() {
+        let t = test_app();
+        assert_eq!(session_log_path(t.handle().clone()), None);
+        let status = diagnostics_status(t.handle().clone());
+        assert!(!status.enabled);
+        assert_eq!(status.files, 0);
+        assert!(
+            copy_diagnostics(t.handle().clone())
+                .unwrap_err()
+                .contains("Ainda não há registros")
+        );
+        assert!(reveal_diagnostics(t.handle().clone()).is_err());
+        // Sem pastas configuradas, ligar só muda o estado em memória (sem arquivo).
+        assert!(!set_diagnostics_enabled(t.handle().clone(), true).unwrap().enabled);
+    }
+
+    #[test]
+    fn liga_desliga_e_guarda_a_escolha() {
+        let t = test_app();
+        setup(&t.app);
+        // Sem preferência salva, vem ligado e já há um registro desta sessão.
+        let status = diagnostics_status(t.handle().clone());
+        assert!(status.enabled);
+        assert_eq!(status.files, 1);
+        let path = session_log_path(t.handle().clone()).expect("registro aberto");
+        t.app
+            .state::<Diagnostics>()
+            .write("teste", &serde_json::json!({ "ok": true }));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"app\""), "{content}");
+        assert!(content.contains("\"teste\""), "{content}");
+
+        let off = set_diagnostics_enabled(t.handle().clone(), false).unwrap();
+        assert!(!off.enabled);
+        assert_eq!(session_log_path(t.handle().clone()), None);
+        let settings = t.app.path().app_local_data_dir().unwrap().join("diagnostics.json");
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), r#"{"enabled":false}"#);
+        assert!(!load_enabled(Some(&settings)));
+
+        // Ligar de novo abre outro registro; desligado não escreve nada.
+        assert!(set_diagnostics_enabled(t.handle().clone(), true).unwrap().enabled);
+        assert!(session_log_path(t.handle().clone()).is_some());
+        // Ligar quando já está ligado não abre outro.
+        let before = session_log_path(t.handle().clone());
+        assert!(set_diagnostics_enabled(t.handle().clone(), true).unwrap().enabled);
+        assert_eq!(session_log_path(t.handle().clone()), before);
+    }
+
+    #[test]
+    fn setup_com_registro_desligado_nao_abre_arquivo() {
+        let t = test_app();
+        let base = t.app.path().app_local_data_dir().unwrap();
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("diagnostics.json"), r#"{"enabled":false}"#).unwrap();
+        setup(&t.app);
+        assert!(!diagnostics_status(t.handle().clone()).enabled);
+        assert_eq!(session_log_path(t.handle().clone()), None);
+    }
+
+    #[test]
+    fn versao_do_windows_sai_do_ver() {
+        assert!(os_version().starts_with("Windows 10.0."), "{}", os_version());
+    }
+
     #[test]
     fn le_o_build_do_windows_em_qualquer_idioma() {
         assert_eq!(
