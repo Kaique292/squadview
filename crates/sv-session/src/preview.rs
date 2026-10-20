@@ -193,6 +193,13 @@ impl LocalPreview {
         s.apply();
     }
 
+    /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
+    pub fn set_video_holes(&self, holes: Vec<Bounds>) {
+        let mut s = lock(&self.state.surface);
+        s.holes = holes;
+        s.apply();
+    }
+
     /// Recebe os pedidos de tela cheia feitos dentro do vídeo (dois cliques, F11, Esc).
     pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
         lock(&self.state.surface).set_on_event(Arc::new(cb));

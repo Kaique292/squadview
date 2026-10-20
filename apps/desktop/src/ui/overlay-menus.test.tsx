@@ -4,7 +4,7 @@ import { MemberMenu } from "../room/MemberMenu";
 import { listenToRoomEvents, type Member, useRoomStore } from "../room/room-store";
 import { MicButton } from "../voice/VoiceButtons";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
-import { holdOverlay, openOverlays, useOverlayMenu } from "./overlay";
+import { holdOverlay, measureHoles, openOverlays, useOverlayMenu, watchVideoHoles } from "./overlay";
 import { Select } from "./Select";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
@@ -43,37 +43,69 @@ afterEach(() => {
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
-/** O vídeo foi escondido e, depois de fechar, voltou. */
-async function expectHiddenThenShown(close: () => void) {
-  expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: true });
-  expect(openOverlays()).toBe(1);
+/**
+ * O menu abriu por cima do vídeo sem escondê-lo (a live continua): o vídeo ganhou um buraco onde
+ * o menu está e, depois de fechar, voltou inteiro.
+ */
+async function expectHoleThenWhole(close: () => void) {
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("set_video_holes", {
+      holes: [expect.objectContaining({ width: expect.any(Number) })],
+    }),
+  );
+  expect(invoke).not.toHaveBeenCalledWith("set_video_hidden", { hidden: true });
   close();
-  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("set_video_hidden", { hidden: false }));
-  expect(openOverlays()).toBe(0);
+  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("set_video_holes", { holes: [] }));
 }
+
+let stopHoles = () => {};
+beforeEach(() => {
+  // O jsdom não mede nada: todo elemento ocupa um retângulo de 200 × 100 em (10, 20).
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+    x: 10,
+    y: 20,
+    left: 10,
+    top: 20,
+    width: 200,
+    height: 100,
+    right: 210,
+    bottom: 120,
+    toJSON: () => ({}),
+  });
+  // Como quando há vídeo na tela (a área do vídeo liga a vigia).
+  stopHoles = watchVideoHoles();
+});
+afterEach(() => {
+  stopHoles();
+  vi.restoreAllMocks();
+});
 
 function pressEscape() {
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 }
 
 describe("menus por cima do vídeo", () => {
-  it("o gancho segura o vídeo escondido enquanto o menu está aberto e repassa a mudança", () => {
+  it("o gancho só repassa a mudança: abrir um menu não esconde mais o vídeo", () => {
     const changes: boolean[] = [];
     let toggle: (open: boolean) => void = () => {};
     function Probe() {
       toggle = useOverlayMenu((open) => changes.push(open));
       return null;
     }
-    const { unmount } = render(<Probe />);
+    render(<Probe />);
     act(() => toggle(true));
-    expect(openOverlays()).toBe(1);
     act(() => toggle(false));
     expect(openOverlays()).toBe(0);
-    act(() => toggle(true));
-    // Desmontar com o menu aberto também solta.
-    unmount();
-    expect(openOverlays()).toBe(0);
-    expect(changes).toEqual([true, false, true]);
+    expect(changes).toEqual([true, false]);
+  });
+
+  it("o buraco tem folga em volta e vem em pixels físicos", () => {
+    const root = document.createElement("div");
+    root.innerHTML = "<div data-video-hole></div>";
+    const dpr = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { value: 1.5, configurable: true });
+    expect(measureHoles(root)).toEqual([{ x: 6, y: 21, width: 318, height: 168 }]);
+    Object.defineProperty(window, "devicePixelRatio", { value: dpr, configurable: true });
   });
 
   it("soltar duas vezes não conta em dobro, e erro do Rust não quebra nada", async () => {
@@ -86,7 +118,7 @@ describe("menus por cima do vídeo", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
   });
 
-  it("o menu do botão direito num membro esconde o vídeo e devolve ao fechar", async () => {
+  it("o menu do botão direito num membro abre por cima da live, sem escondê-la", async () => {
     render(
       <MemberMenu member={ANA} isMe={false}>
         <div>Ana</div>
@@ -94,10 +126,10 @@ describe("menus por cima do vídeo", () => {
     );
     fireEvent.contextMenu(screen.getByText("Ana"));
     await screen.findByRole("menu", { name: "Opções de Ana" });
-    await expectHiddenThenShown(pressEscape);
+    await expectHoleThenWhole(pressEscape);
   });
 
-  it("a setinha do microfone esconde o vídeo enquanto o menu está aberto", async () => {
+  it("a setinha do microfone abre o menu por cima da live", async () => {
     render(<MicButton />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Opções de entrada" }), { button: 0, ctrlKey: false });
     const menu = await screen.findByRole("menu");
@@ -105,10 +137,10 @@ describe("menus por cima do vídeo", () => {
     // As setas no volume mexem nele, não fecham nem navegam o menu.
     fireEvent.keyDown(screen.getByRole("slider", { name: "Volume de entrada" }), { key: "ArrowRight" });
     expect(menu).toBeInTheDocument();
-    await expectHiddenThenShown(pressEscape);
+    await expectHoleThenWhole(pressEscape);
   });
 
-  it("a lista suspensa esconde o vídeo enquanto está aberta", async () => {
+  it("a lista suspensa abre por cima da live", async () => {
     const onChange = vi.fn();
     render(
       <Select
@@ -123,11 +155,11 @@ describe("menus por cima do vídeo", () => {
     );
     fireEvent.click(screen.getByRole("combobox", { name: "Qualidade" }));
     const option = await screen.findByRole("option", { name: "720p" });
-    await expectHiddenThenShown(() => fireEvent.click(option));
+    await expectHoleThenWhole(() => fireEvent.click(option));
     expect(onChange).toHaveBeenCalledWith("b");
   });
 
-  it("o menu do nome da sala esconde o vídeo enquanto está aberto", async () => {
+  it("o menu do nome da sala abre por cima da live", async () => {
     await listenToRoomEvents();
     render(<App />);
     act(() => handlers.get("room-members")!({ payload: [ME, ANA] }));
@@ -135,6 +167,6 @@ describe("menus por cima do vídeo", () => {
     const header = screen.getAllByRole("button", { name: "Galera" }).find((b) => b.getAttribute("aria-haspopup"));
     fireEvent.pointerDown(header!, { button: 0, ctrlKey: false });
     await screen.findByRole("menuitem", { name: "Convidar pessoas" });
-    await expectHiddenThenShown(pressEscape);
+    await expectHoleThenWhole(pressEscape);
   });
 });

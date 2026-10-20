@@ -151,6 +151,13 @@ impl RemoteView {
         s.apply();
     }
 
+    /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
+    pub fn set_video_holes(&self, holes: Vec<Bounds>) {
+        let mut s = lock(&self.state.surface);
+        s.holes = holes;
+        s.apply();
+    }
+
     pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
         lock(&self.state.surface).set_on_event(Arc::new(cb));
     }

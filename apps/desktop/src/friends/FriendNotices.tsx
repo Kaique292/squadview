@@ -60,6 +60,8 @@ function Notice(props: {
     <div
       role="alertdialog"
       aria-label={props.title}
+      // O vídeo nativo abre um buraco aqui: o cartão aparece por cima da live.
+      data-video-hole
       className="pointer-events-auto animate-menu-in rounded-lg border border-white/[0.06] bg-surface-float p-3 text-left shadow-2xl shadow-black/50"
     >
       <div className="flex items-center gap-3">

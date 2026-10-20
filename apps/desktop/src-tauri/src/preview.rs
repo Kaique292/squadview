@@ -289,6 +289,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) -> Layout {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .layout
+        .clone()
 }
 
 /// Começamos ou paramos de assistir um amigo: a área do vídeo passa a ser dele (a nossa prévia
@@ -314,18 +315,21 @@ pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, Stri
 }
 
 /// Onde a interface quer o vídeo (pixels físicos) e se ele está escondido por um modal.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct Layout {
     pub bounds: Bounds,
     pub hidden: bool,
+    /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali.
+    pub holes: Vec<Bounds>,
     /// Estamos assistindo um amigo: a área é dele, a prévia fica fora da tela.
     pub watching: bool,
 }
 
 impl Layout {
-    fn apply(self, preview: &LocalPreview) {
+    fn apply(&self, preview: &LocalPreview) {
         preview.set_video_bounds(if self.watching { Bounds::default() } else { self.bounds });
         preview.set_video_hidden(self.hidden);
+        preview.set_video_holes(self.holes.clone());
     }
 }
 
@@ -341,12 +345,12 @@ pub fn set_video_bounds<R: Runtime>(
 ) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.bounds = Bounds { x, y, width, height };
-    let layout = running.layout;
+    let layout = running.layout.clone();
     if let Some(p) = running.preview.as_ref() {
         layout.apply(p);
     }
     drop(running);
-    crate::room::apply_layout(&app, layout.bounds, layout.hidden);
+    crate::room::apply_layout(&app, &layout);
 }
 
 /// Um modal da interface abriu (o vídeo nativo ficaria por cima dele) ou fechou.
@@ -354,12 +358,43 @@ pub fn set_video_bounds<R: Runtime>(
 pub fn set_video_hidden<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewState>, hidden: bool) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.hidden = hidden;
-    let layout = running.layout;
+    let layout = running.layout.clone();
     if let Some(p) = running.preview.as_ref() {
         layout.apply(p);
     }
     drop(running);
-    crate::room::apply_layout(&app, layout.bounds, layout.hidden);
+    crate::room::apply_layout(&app, &layout);
+}
+
+/// Um retângulo da interface (pixels físicos, relativos à janela).
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct Hole {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+/// Menus, dicas e avisos abertos por cima da área do vídeo: o vídeo abre um buraco em cada um, em
+/// vez de sumir inteiro (a live continua aparecendo em volta).
+#[tauri::command]
+pub fn set_video_holes<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewState>, holes: Vec<Hole>) {
+    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    running.layout.holes = holes
+        .into_iter()
+        .map(|h| Bounds {
+            x: h.x,
+            y: h.y,
+            width: h.width,
+            height: h.height,
+        })
+        .collect();
+    let layout = running.layout.clone();
+    if let Some(p) = running.preview.as_ref() {
+        layout.apply(p);
+    }
+    drop(running);
+    crate::room::apply_layout(&app, &layout);
 }
 
 /// Liga ou desliga a tela cheia da janela do app (o stream ocupa tudo).
