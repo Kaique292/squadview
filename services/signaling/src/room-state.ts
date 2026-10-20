@@ -1,5 +1,6 @@
 import {
   byteLength,
+  type ClientMessage,
   type ErrorCode,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
@@ -76,7 +77,7 @@ export class RoomState {
     const me = attachment.member;
     if (msg.type === "join") {
       if (me !== null) return this.fail(conn, "invalid-message", CLOSE.invalid);
-      return this.join(conn, attachment, msg.name, msg.protocol, msg.room);
+      return this.join(conn, attachment, msg);
     }
     if (me === null) {
       conn.send({ type: "error", code: "not-joined" });
@@ -100,7 +101,8 @@ export class RoomState {
         return;
       }
       case "rename": {
-        const member = { ...me, name: msg.name };
+        // Trocar o apelido ou vincular/desvincular o Discord (`discord` ausente: continua a mesma conta).
+        const member = { ...me, name: msg.name, discord: msg.discord === undefined ? me.discord : msg.discord };
         conn.setAttachment({ ...attachment, member });
         this.broadcast({ type: "member-updated", member }, conn);
         return;
@@ -131,7 +133,8 @@ export class RoomState {
     this.broadcast({ type: "member-left", id: me.id }, conn);
   }
 
-  private join(conn: Connection, attachment: Attachment, name: string, protocol: number, room: string | null): void {
+  private join(conn: Connection, attachment: Attachment, msg: Extract<ClientMessage, { type: "join" }>): void {
+    const { name, protocol, room, discord } = msg;
     if (protocol !== PROTOCOL_VERSION) return this.fail(conn, "version-mismatch", CLOSE.versionMismatch);
     const others = this.joined().filter(([c]) => c.key !== conn.key);
     if (others.length >= MAX_MEMBERS) return this.fail(conn, "room-full", CLOSE.roomFull);
@@ -143,7 +146,7 @@ export class RoomState {
     // Quem cria a sala (entra nela vazia) escolhe o nome; quem chega depois recebe o nome atual.
     const current = others.map(([c]) => c.getAttachment()?.room).find((r) => r) ?? null;
     const roomName = others.length === 0 ? room : current;
-    const member: Member = { id, name, live: false, muted: false, deafened: false };
+    const member: Member = { id, name, live: false, muted: false, deafened: false, discord };
     conn.setAttachment({ ...attachment, member, room: roomName });
     conn.send({ type: "welcome", you: id, members: others.map(([, m]) => m), room: roomName });
     this.broadcast({ type: "member-joined", member }, conn);

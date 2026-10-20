@@ -19,18 +19,53 @@ describe("nome de exibição", () => {
 });
 
 describe("mensagens do cliente", () => {
+  it("lê a conta do Discord no join e no rename", () => {
+    const discord = { id: "123456789012345678", avatar: "a_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+    expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, discord }))).toMatchObject({
+      discord,
+    });
+    // Sem foto: avatar nulo (foto padrão do Discord).
+    expect(
+      parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, discord: { id: discord.id } })),
+    ).toMatchObject({ discord: { id: discord.id, avatar: null } });
+    expect(parseClientMessage(JSON.stringify({ type: "rename", name: "Ana", discord }))).toEqual({
+      type: "rename",
+      name: "Ana",
+      discord,
+    });
+    expect(parseClientMessage(JSON.stringify({ type: "rename", name: "Ana", discord: null }))).toEqual({
+      type: "rename",
+      name: "Ana",
+      discord: null,
+    });
+  });
+
+  it("recusa conta do Discord fora do formato (nada de URL)", () => {
+    for (const discord of [
+      { id: "abc", avatar: null },
+      { id: "123456789012345678", avatar: "https://exemplo.com/foto.png" },
+      { id: "123456789012345678", avatar: "../../x" },
+      "123456789012345678",
+    ]) {
+      expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, discord }))).toBeNull();
+      expect(parseClientMessage(JSON.stringify({ type: "rename", name: "Ana", discord }))).toBeNull();
+    }
+  });
+
   it("lê join, status, signal e leave válidos", () => {
     expect(parseClientMessage('{"type":"join","name":" Ana ","protocol":1}')).toEqual({
       type: "join",
       name: "Ana",
       protocol: 1,
       room: null,
+      discord: null,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
       name: "Ana",
       protocol: 1,
       room: "Galera do LoL",
+      discord: null,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });

@@ -94,7 +94,7 @@ describe("entrar na sala", () => {
     expect(beto.last()).toEqual({
       type: "welcome",
       you: idOf(beto),
-      members: [{ id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false }],
+      members: [{ id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false, discord: null }],
       room: null,
     });
   });
@@ -104,7 +104,7 @@ describe("entrar na sala", () => {
     const beto = join("Beto");
     expect(ana.last()).toEqual({
       type: "member-joined",
-      member: { id: idOf(beto), name: "Beto", live: false, muted: false, deafened: false },
+      member: { id: idOf(beto), name: "Beto", live: false, muted: false, deafened: false, discord: null },
     });
     expect(ana.sent.filter((m) => m.type === "member-joined")).toHaveLength(1);
     expect(beto.sent.filter((m) => m.type === "member-joined")).toHaveLength(0);
@@ -178,11 +178,32 @@ describe("nome da sala e apelido", () => {
     send(beto, { type: "rename", name: "Betão" });
     expect(ana.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false },
+      member: { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
     });
     expect(join("Caio").last()).toMatchObject({
-      members: expect.arrayContaining([{ id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false }]),
+      members: expect.arrayContaining([
+        { id: idOf(beto), name: "Betão", live: false, muted: false, deafened: false, discord: null },
+      ]),
     });
+  });
+
+  it("mostra a conta do Discord de quem entra e de quem vincula depois", () => {
+    const discord = { id: "123456789012345678", avatar: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+    const ana = connect();
+    send(ana, { type: "join", name: "Ana", protocol: 1, discord });
+    const beto = join("Beto");
+    expect(beto.last()).toMatchObject({ members: [{ name: "Ana", discord }] });
+
+    // Beto vincula o Discord já na sala: Ana fica sabendo.
+    const dele = { id: "876543210987654321", avatar: null };
+    send(beto, { type: "rename", name: "Betão", discord: dele });
+    expect(ana.last()).toMatchObject({ type: "member-updated", member: { name: "Betão", discord: dele } });
+    // Só o apelido: a conta continua.
+    send(beto, { type: "rename", name: "Beto" });
+    expect(ana.last()).toMatchObject({ member: { name: "Beto", discord: dele } });
+    // Desvinculou.
+    send(beto, { type: "rename", name: "Beto", discord: null });
+    expect(ana.last()).toMatchObject({ member: { discord: null } });
   });
 
   it("a sala esvaziada esquece o nome", () => {
@@ -229,7 +250,7 @@ describe("status ao vivo", () => {
     send(ana, { type: "status", live: true });
     expect(beto.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false },
+      member: { id: idOf(ana), name: "Ana", live: true, muted: false, deafened: false, discord: null },
     });
 
     const caio = join("Caio");
@@ -242,10 +263,10 @@ describe("estado de voz", () => {
   it("avisa os outros quando alguém silencia o microfone ou ensurdece", () => {
     const ana = join("Ana");
     const beto = join("Beto");
-    send(beto, { type: "status", live: false, muted: true, deafened: false });
+    send(beto, { type: "status", live: false, muted: true, deafened: false, discord: null });
     expect(ana.last()).toEqual({
       type: "member-updated",
-      member: { id: idOf(beto), name: "Beto", live: false, muted: true, deafened: false },
+      member: { id: idOf(beto), name: "Beto", live: false, muted: true, deafened: false, discord: null },
     });
     send(beto, { type: "status", live: true, muted: true, deafened: true });
     expect(ana.last()).toMatchObject({ member: { live: true, muted: true, deafened: true } });

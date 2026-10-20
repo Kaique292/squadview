@@ -15,6 +15,16 @@ export const RATE_LIMIT_WINDOW_MS = 10_000;
 
 export type PeerId = string;
 
+/**
+ * Conta do Discord de um membro, só para mostrar a foto: o id e o hash da foto, nunca uma URL
+ * (o app monta o endereço do CDN do Discord; assim ninguém faz os outros abrirem links quaisquer).
+ * O servidor não confere se a conta é mesmo da pessoa, como já acontece com o nome.
+ */
+export interface DiscordUser {
+  id: string;
+  avatar: string | null;
+}
+
 export interface Member {
   id: PeerId;
   name: string;
@@ -23,12 +33,15 @@ export interface Member {
   muted: boolean;
   /** Ensurdecido: não ouve ninguém. */
   deafened: boolean;
+  /** Conta do Discord vinculada, ou `null`. */
+  discord: DiscordUser | null;
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string; protocol: number; room: string | null }
+  | { type: "join"; name: string; protocol: number; room: string | null; discord: DiscordUser | null }
   | { type: "room"; name: string }
-  | { type: "rename"; name: string }
+  /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
+  | { type: "rename"; name: string; discord?: DiscordUser | null }
   | { type: "status"; live: boolean; muted: boolean; deafened: boolean }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   | { type: "leave" };
@@ -61,6 +74,23 @@ export function cleanName(value: unknown): string | null {
 }
 
 export const PEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+/** Snowflake do Discord. */
+const DISCORD_ID_PATTERN = /^[0-9]{15,21}$/;
+/** Hash da foto do Discord (`a_` na frente quando é animada). */
+const DISCORD_AVATAR_PATTERN = /^(a_)?[0-9a-f]{32}$/;
+
+/**
+ * Lê o campo `discord`: `undefined` se veio ausente, `null` se veio nulo, a conta se for válida.
+ * Devolve `false` quando o campo existe mas não segue o formato.
+ */
+function parseDiscord(value: unknown): DiscordUser | null | undefined | false {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!isPlainObject(value) || typeof value.id !== "string" || !DISCORD_ID_PATTERN.test(value.id)) return false;
+  const avatar = value.avatar ?? null;
+  if (avatar !== null && (typeof avatar !== "string" || !DISCORD_AVATAR_PATTERN.test(avatar))) return false;
+  return { id: value.id, avatar };
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -86,12 +116,20 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // Nome da sala: opcional (apps da versão 0.1.0 não mandam); se vier, precisa ser válido.
       const room = data.room === undefined || data.room === null ? null : cleanName(data.room);
       if (room === null && data.room !== undefined && data.room !== null) return null;
-      return { type: "join", name, protocol: data.protocol, room };
+      // Conta do Discord: opcional (apps até a 0.2.0 não mandam).
+      const discord = parseDiscord(data.discord);
+      if (discord === false) return null;
+      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null };
     }
-    case "room":
+    case "room": {
+      const name = cleanName(data.name);
+      return name === null ? null : { type: "room", name };
+    }
     case "rename": {
       const name = cleanName(data.name);
-      return name === null ? null : { type: data.type, name };
+      const discord = parseDiscord(data.discord);
+      if (name === null || discord === false) return null;
+      return discord === undefined ? { type: "rename", name } : { type: "rename", name, discord };
     }
     case "status": {
       if (typeof data.live !== "boolean") return null;

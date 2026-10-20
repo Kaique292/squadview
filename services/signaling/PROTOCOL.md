@@ -25,7 +25,7 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
 | `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
-| `{"type":"rename","name":"K.A"}`                               | Troca o próprio apelido. Os outros recebem `member-updated`.                                                                                                                                                        |
+| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                         |
 | `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem).                                                                         |
 | `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
 | `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
@@ -45,6 +45,10 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 `peerId` são 16 caracteres hexadecimais aleatórios, gerados pelo servidor a cada `join`.
 
 O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename`, `room-updated` e os campos `muted`/`deafened` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
+
+### Conta do Discord
+
+`join` e `rename` aceitam o campo opcional `discord`: `{"id":"123456789012345678","avatar":"<hash>"}`. `id` é o id numérico da conta (15 a 21 dígitos) e `avatar` é o hash da foto (32 caracteres hexadecimais, com `a_` na frente se for animada) ou `null` para a foto padrão. Todo membro sai com `discord` (a conta, ou `null`). Só vai o id e o hash, nunca uma URL: o app monta o endereço do CDN do Discord, então ninguém consegue fazer os outros abrirem um link qualquer. O servidor não confere se a conta é mesmo de quem mandou (como o nome): serve para mostrar a foto, não como identidade. O campo entrou na 0.3.0, sem mudar a versão do protocolo: apps antigos não mandam e ignoram.
 
 ## Erros
 
