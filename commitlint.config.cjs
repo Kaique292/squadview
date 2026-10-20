@@ -13,8 +13,17 @@ const noCoAuthor = ({ raw }) => {
   return [!found, "o commit não pode ter trailer Co-authored-by (o projeto tem um único autor)"];
 };
 
+/**
+ * Commits que já estão no histórico da `dev` (que não aceita reescrita) com o título acima do
+ * limite. A regra continua valendo para todos os outros; não acrescente nada aqui sem motivo.
+ */
+const KNOWN_LONG_HEADERS = new Set([
+  "fix: voz no volume do Discord, grade em foco, atualizar como no Discord e amigos conferidos na sala (#17)",
+]);
+
 module.exports = {
   extends: ["@commitlint/config-conventional"],
+  ignores: [(message) => KNOWN_LONG_HEADERS.has(message.split(/\r?\n/)[0].trim())],
   plugins: [{ rules: { "no-co-author": noCoAuthor } }],
   rules: {
     "no-co-author": [2, "always"],
