@@ -67,6 +67,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: yarn build:release
 
+      # Instala, abre duas vezes e "atualiza" com o app de verdade. Se o app cair, nada é
+      # publicado: sem o latest.json, ninguém recebe a atualização quebrada.
+      - name: Teste de fumaça do instalador
+        shell: pwsh
+        run: ./scripts/smoke-installer.ps1
+
       - name: Gerar latest.json (atualização automática)
         run: node scripts/updater-manifest.mjs ${{ env.TAG }}
 
