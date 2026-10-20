@@ -39,18 +39,19 @@
 
 ## ✨ O que ele faz
 
-**Já funciona (0.3)**
+**Já funciona**
 
 - **Qualidade de jogo.** Até 1440p ou a resolução da fonte, a 15, 30 ou 60 fps, tudo liberado. Encode por hardware na placa de vídeo (NVIDIA e AMD), e a imagem não sai da GPU, então o jogo quase não sente.
 - **Direto de PC para PC.** O vídeo não passa por servidor. As conexões são cifradas (QUIC com TLS 1.3).
-- **Só o áudio do jogo.** Transmitindo uma janela, vai só o som daquele app; o som da call fica de fora.
+- **Jogue do jeito que quiser.** Janela, sem bordas ou tela cheia: escolha o jogo uma vez e o app acompanha sozinho do cliente para a partida e de volta (LoL, Valorant e jogos com launcher). Nada é injetado no jogo, então é seguro com Vanguard, EAC e BattlEye.
+- **Só o áudio do jogo.** Transmitindo um jogo ou app, vai só o som dele, e o som acompanha quando o jogo troca de janela; o som da call fica de fora.
 - **Assista dentro do app**, como no Discord: o vídeo aparece na janela, com tela cheia, volume de até 200% e estatísticas (fps, bitrate, latência e ping).
-- **Chat de voz na sala.** A sala é um canal de voz: um quadro por pessoa, borda verde em quem fala, mudo e surdo, volume e silenciar por pessoa (só para você) e isolamento de voz contra ruído de teclado e ventilador. A voz também vai direto de PC para PC.
-- **Amigos.** Veja quem está online, numa sala ou transmitindo. Peça para entrar na sala de um amigo (qualquer pessoa da sala aceita), chame amigos para a sua e marque quem entra direto. Quem esteve numa sala com você aparece em Recentes, e de lá você manda o pedido.
+- **Chat de voz na sala.** A sala é um canal de voz como o do Discord: um quadro por pessoa, borda verde em quem fala, mudo e surdo, e clique num quadro para pôr a pessoa em foco. Volume e silenciar por pessoa (só para você), isolamento de voz contra teclado e ventilador e controle automático de ganho, para todo mundo chegar no mesmo volume. A voz também vai direto de PC para PC.
+- **Amigos.** Veja quem está online, numa sala ou transmitindo. Peça para entrar na sala de um amigo (qualquer pessoa da sala aceita), chame amigos para a sua e marque quem entra direto. Adicione direto pelo botão direito em quem está na sala com você, ou depois, em Recentes.
 - **Salas com nome e código.** Dê um nome à sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
 - **Integração com o Discord.** Entre com a sua conta: seu nome e sua foto aparecem para toda a sala. Mostre no seu perfil do Discord que está numa sala, transmitindo ou assistindo, com o botão "Entrar na sala" se quiser.
 - **Visual que você já conhece.** Interface na organização do Discord, com identidade própria, configurações por categoria e efeito de vidro ajustável.
-- **Instala e atualiza como o Discord.** Sem assistente: o instalador termina em segundos e já abre o app. Quando sai versão nova, um botão verde aparece na barra de título, e o app se atualiza sozinho, com pacotes assinados.
+- **Instala e atualiza como o Discord.** Sem assistente: o instalador termina em segundos e já abre o app. Quando sai versão nova, a setinha verde aparece na barra de título; um clique e o app se atualiza, com pacotes assinados. Se você estiver numa sala, ele volta sozinho para ela, e mostra as novidades da versão.
 - **Registro de desempenho só no seu PC.** Pode ser desligado; um botão copia os arquivos para você mandar a quem for ajudar.
 
 **Em breve**
@@ -62,7 +63,7 @@
 ## 📸 Telas
 
 <p align="center">
-  <img src="docs/images/tela-sala.png" alt="Sala do SquadView como canal de voz: um quadro por pessoa, um amigo ao vivo, um silenciado e os controles da voz embaixo" width="90%">
+  <img src="docs/images/tela-sala.png" alt="Sala do SquadView como canal de voz, com um amigo em foco no centro e os outros numa faixa embaixo, como no Discord" width="90%">
 </p>
 
 <p align="center">
@@ -72,7 +73,7 @@
 <p align="center">
   <img src="docs/images/tela-transmitir.png" alt="Modal Transmitir minha tela, com as janelas de jogos para escolher" width="45%">
   &nbsp;
-  <img src="docs/images/tela-config.png" alt="Configurações por categoria, como as do Discord: Voz e vídeo com microfone, saída, volumes e isolamento de voz" width="45%">
+  <img src="docs/images/tela-config.png" alt="Configurações por categoria, como as do Discord: Voz e vídeo com microfone, saída, volumes, isolamento de voz e controle automático de ganho" width="45%">
 </p>
 
 ## 🧠 Como funciona
@@ -121,6 +122,12 @@ Get-FileHash .\SquadView_x.y.z_x64-setup.exe
 <summary><b>Vai pesar no meu jogo?</b></summary>
 
 Muito pouco. A codificação é feita por um chip separado na placa de vídeo (NVENC), e a imagem não passa pelo processador. A meta do projeto é perder menos de 5% de FPS transmitindo em 1080p60, e cada versão é medida antes de sair.
+</details>
+
+<details>
+<summary><b>Jogo em tela cheia. Preciso mudar alguma coisa?</b></summary>
+
+Não. Janela, sem bordas ou tela cheia funcionam do mesmo jeito. Escolha o jogo (ou o cliente dele, como o do LoL) e o SquadView acompanha sozinho quando a partida abre em outra janela. Se o jogo entrar em tela cheia sem mandar imagem para a janela, o app passa a transmitir o monitor dele, e volta para a janela quando você sai da tela cheia.
 </details>
 
 <details>

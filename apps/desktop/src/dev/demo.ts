@@ -61,7 +61,7 @@ const THUMBS = [
 ];
 
 function click(label: string) {
-  const button = [...document.querySelectorAll("button")].find(
+  const button = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')].find(
     (b) => b.textContent?.trim() === label || b.getAttribute("aria-label") === label,
   );
   button?.click();
@@ -109,6 +109,8 @@ export function runDemo(scene: string) {
     document
       .querySelector('[aria-label="Canal de voz"]')
       ?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    // A sala com alguém em foco, como no Discord.
+    if (scene === "sala") click("Pôr Lobo em foco");
     if (scene === "transmitir") click("Transmitir minha tela");
     if (scene === "config") click("Configurações");
   }, 300);
