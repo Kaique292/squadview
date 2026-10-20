@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::json;
-use sv_session::{DiscordUser, Member, RemoteView, Room, RoomUpdate, WindowEvent};
+use sv_session::{DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, WindowEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::diagnostics::Diagnostics;
@@ -16,6 +16,10 @@ pub const MEMBERS_EVENT: &str = "room-members";
 pub const ROOM_CONNECTION_EVENT: &str = "room-connection";
 /// Nome da sala (texto, ou `null` sem nome) quando alguém renomeia.
 pub const ROOM_NAME_EVENT: &str = "room-name";
+/// Um amigo de alguém da sala quer entrar: `{id, from: {id, name, avatar}}`.
+pub const JOIN_REQUEST_EVENT: &str = "room-join-request";
+/// O pedido de entrada foi respondido por alguém ou venceu (o id).
+pub const JOIN_REQUEST_CLOSED_EVENT: &str = "room-join-request-closed";
 /// Erro ou queda da sala (texto para o usuário).
 pub const ROOM_ERROR_EVENT: &str = "room-error";
 /// Começamos a assistir alguém.
@@ -27,7 +31,7 @@ pub const WATCH_STATS_EVENT: &str = "watch-stats";
 
 /// Endereço do serviço de salas. Ordem: variável de ambiente (testes), o configurado no build
 /// da release e, por fim, o Worker local (`yarn workspace @squadview/signaling dev`).
-fn signaling_url() -> String {
+pub(crate) fn signaling_url() -> String {
     std::env::var("SQUADVIEW_SIGNALING_URL")
         .ok()
         .or_else(|| option_env!("SQUADVIEW_SIGNALING_URL").map(str::to_owned))
@@ -98,6 +102,8 @@ pub async fn room_join(
     let name = clean_name(&name).ok_or("Escolha um nome de 1 a 32 caracteres para a galera te reconhecer.")?;
     let room_name = room_name.as_deref().and_then(clean_name);
     let discord = discord.and_then(clean_discord);
+    // Com a sessão, a sala sabe quem somos de verdade (recentes e pedidos de entrada).
+    let session = crate::friends::session(&app);
     let url = signaling_url();
     let events_app = app.clone();
     let (join_code, join_url) = (code.clone(), url.clone());
@@ -106,8 +112,7 @@ pub async fn room_join(
         let joined = Room::join(
             &join_url,
             &join_code,
-            &name,
-            discord,
+            JoinAs { name, discord, session },
             room_name.as_deref(),
             settings,
             move |update| on_update(&events_app, update),
@@ -183,6 +188,18 @@ pub fn room_set_profile(state: State<'_, RoomState>, name: String, discord: Opti
     if let Some(room) = running.room.as_ref() {
         room.set_profile(&name, discord.and_then(clean_discord));
     }
+    Ok(())
+}
+
+/// Aceita ou recusa o pedido de entrada `id`.
+#[tauri::command]
+pub fn room_answer_join(state: State<'_, RoomState>, id: String, accept: bool) -> Result<(), String> {
+    let running = lock(&state);
+    running
+        .room
+        .as_ref()
+        .ok_or("Entre numa sala primeiro.")?
+        .answer_join(&id, accept);
     Ok(())
 }
 
@@ -306,6 +323,12 @@ fn on_update(app: &AppHandle, update: RoomUpdate) {
             app.state::<Diagnostics>()
                 .write("watch-failed", &json!({ "reason": reason }));
             let _ = app.emit(WATCH_ENDED_EVENT, WatchEnded { member_id, reason });
+        }
+        RoomUpdate::JoinRequest { id, from } => {
+            let _ = app.emit(JOIN_REQUEST_EVENT, json!({ "id": id, "from": from }));
+        }
+        RoomUpdate::JoinRequestClosed(id) => {
+            let _ = app.emit(JOIN_REQUEST_CLOSED_EVENT, id);
         }
         RoomUpdate::Error(message) => {
             let _ = app.emit(ROOM_ERROR_EVENT, message);

@@ -5,6 +5,7 @@ import "./styles/index.css";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
 import { useAccountStore } from "./account/account-store";
+import { listenToFriendsEvents, useFriendsStore } from "./friends/friends-store";
 import { listenToRoomEvents, useRoomStore } from "./room/room-store";
 import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
 import { SPLASH_EVENT, boot } from "./splash/boot";
@@ -32,6 +33,7 @@ if ("__TAURI_INTERNALS__" in window) {
           Promise.all([
             listenToStreamEvents(),
             listenToRoomEvents(),
+            listenToFriendsEvents(),
             listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name),
           ]),
       },
@@ -66,6 +68,7 @@ if (import.meta.env.DEV) {
       account: useAccountStore,
       update: useUpdateStore,
       voice: useVoiceStore,
+      friends: useFriendsStore,
     },
   });
 }

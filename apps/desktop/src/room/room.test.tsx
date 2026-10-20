@@ -70,7 +70,7 @@ describe("criar e entrar em sala", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     emit("room-members", [ME]);
-    expect(screen.getByRole("button", { name: /Sala B8RJ2Q/ })).toBeInTheDocument();
+    expect(sidebarButton(/Sala B8RJ2Q/)).toBeInTheDocument();
     expect(screen.getByText(/Mande o código da sala para a galera entrar/)).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Sucesso" })).toHaveTextContent("Você está na sala");
     expect(savedName()).toBe("Kaique");
@@ -321,14 +321,14 @@ describe("nome da sala e apelido", () => {
       ),
     );
     emit("room-members", [ME]);
-    expect(await screen.findByRole("button", { name: /Galera do LoL/ })).toBeInTheDocument();
+    await waitFor(() => expect(sidebarButton(/Galera do LoL/)).toBeInTheDocument());
   });
 
   it("renomeia a sala pelo menu e atualiza quando alguém renomeia", async () => {
     useRoomStore.setState({ roomName: "Sala 1" });
     render(<App />);
     emit("room-members", [ME, ANA]);
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Sala 1/ }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(sidebarButton(/Sala 1/)!, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: /Editar nome da sala/ }));
     const input = await screen.findByRole("textbox", { name: "Nome da sala" });
     fireEvent.change(input, { target: { value: "Squad" } });
@@ -336,7 +336,7 @@ describe("nome da sala e apelido", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_rename", { name: "Squad" }));
 
     emit("room-name", "Squad");
-    expect(await screen.findByRole("button", { name: /Squad/ })).toBeInTheDocument();
+    await waitFor(() => expect(sidebarButton(/Squad/)).toBeInTheDocument());
   });
 
   it("troca o apelido pelo botão direito no próprio nome", async () => {
@@ -401,3 +401,8 @@ describe("convite por link", () => {
     expect(useToastStore.getState().toasts[0].message).toBe("Você já está na sala B8RJ2Q.");
   });
 });
+
+/** Botão da lateral (o mesmo nome aparece no ícone da sala, na barra de salas). */
+function sidebarButton(name: RegExp) {
+  return screen.getAllByRole("button", { name }).find((b) => !b.closest('nav[aria-label="Salas"]'));
+}

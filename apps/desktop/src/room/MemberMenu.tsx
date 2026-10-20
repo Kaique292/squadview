@@ -1,6 +1,7 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Check, Eye, Pencil } from "lucide-react";
+import { Check, Eye, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
+import { useFriendsStore } from "../friends/friends-store";
 import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
 
 const DEFAULT_PEER = { volume: 100, muted: false };
@@ -39,6 +40,7 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
                     Assistir a transmissão
                   </Item>
                 )}
+                <AddFriend member={member} />
                 <PeerVoice member={member} />
               </>
             )}
@@ -57,6 +59,22 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
         />
       )}
     </>
+  );
+}
+
+/** "Adicionar amigo", para quem entrou com o Discord e ainda não é amigo nem tem pedido. */
+function AddFriend(props: { member: Member }) {
+  const id = props.member.discord?.id;
+  const status = useFriendsStore((s) => s.status);
+  const known = useFriendsStore(
+    (s) => !id || s.friends.some((f) => f.id === id) || s.outgoing.some((p) => p.id === id),
+  );
+  const act = useFriendsStore((s) => s.act);
+  if (!id || known || status !== "online") return null;
+  return (
+    <Item icon={<UserPlus size={16} />} onSelect={() => void act({ type: "friend-request", id })}>
+      Adicionar amigo
+    </Item>
   );
 }
 

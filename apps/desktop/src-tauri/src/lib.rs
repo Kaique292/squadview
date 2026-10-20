@@ -3,6 +3,7 @@
 mod crash;
 mod diagnostics;
 mod discord;
+mod friends;
 mod invite;
 mod presence;
 mod preview;
@@ -96,10 +97,13 @@ pub fn run() {
         .manage(std::sync::Arc::new(preview::TapSlot::default()))
         .manage(room::RoomState::default())
         .manage(invite::PendingInvite::default())
+        .manage(friends::Friends::default())
         .manage(presence::Presence::start())
         .setup(|app| {
             diagnostics::setup(app);
             setup_deep_links(app);
+            // Amigos e presença: conecta sozinho se já entrou com o Discord (ADR 0011).
+            friends::start(app.handle());
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(SPLASH_FAILSAFE);
@@ -118,6 +122,8 @@ pub fn run() {
             discord::discord_login,
             discord::discord_profile,
             discord::discord_logout,
+            friends::friends_action,
+            friends::friends_status,
             invite::take_pending_invite,
             presence::set_presence,
             preview::list_sources,
@@ -132,6 +138,7 @@ pub fn run() {
             room::room_rename,
             room::room_set_name,
             room::room_set_profile,
+            room::room_answer_join,
             room::room_watch,
             room::room_stop_watching,
             room::set_watch_listening,
