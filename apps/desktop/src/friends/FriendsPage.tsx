@@ -8,7 +8,7 @@ import { Avatar } from "../ui/Avatar";
 import { holdOverlay, useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
-import { type Friend, type Person, presenceText, useFriendsStore } from "./friends-store";
+import { type Friend, type Person, presenceText, useFriendsStore, useInMyRoom } from "./friends-store";
 
 type Tab = "online" | "todos" | "pendentes" | "recentes";
 
@@ -135,15 +135,23 @@ function Row(props: { person: Person; online?: boolean; detail: string; children
 }
 
 /** Botão redondo de ação, como os da lista do Discord. */
-function RoundAction(props: { label: string; onClick: () => void; danger?: boolean; children: ReactNode }) {
+function RoundAction(props: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   return (
     <Tooltip label={props.label} side="top">
       <button
         type="button"
         aria-label={props.label}
-        onClick={props.onClick}
+        // `aria-disabled` em vez de `disabled`: o tooltip continua aparecendo e explica o porquê.
+        aria-disabled={props.disabled || undefined}
+        onClick={() => !props.disabled && props.onClick()}
         className={`grid size-9 place-items-center rounded-full bg-surface-1 text-text-muted transition-colors ${
-          props.danger ? "hover:text-live" : "hover:text-text"
+          props.disabled ? "cursor-default opacity-40" : props.danger ? "hover:text-live" : "hover:text-text"
         }`}
       >
         {props.children}
@@ -180,6 +188,7 @@ function FriendList(props: { onlineOnly?: boolean }) {
 function FriendRow(props: { friend: Friend }) {
   const { friend } = props;
   const myRoom = useRoomStore((s) => s.code);
+  const together = useInMyRoom(friend.id);
   const joinFriend = useFriendsStore((s) => s.joinFriend);
   const act = useFriendsStore((s) => s.act);
   const waitingFor = useFriendsStore((s) => s.waitingFor);
@@ -187,18 +196,29 @@ function FriendRow(props: { friend: Friend }) {
   const onMenuOpenChange = useOverlayMenu();
   return (
     <Row person={friend} online={p.online} detail={presenceText(p)}>
-      {p.inRoom && (
-        <button
-          type="button"
-          onClick={() => void joinFriend(friend)}
-          disabled={waitingFor === friend.name}
-          className="rounded-md bg-online px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-online/85 disabled:opacity-60"
-        >
-          {waitingFor === friend.name ? "Pedido enviado" : "Entrar"}
-        </button>
+      {together ? (
+        // Já estamos juntos: nada para entrar nem para chamar.
+        <span className="rounded-md bg-surface-3 px-3 py-1.5 text-sm font-medium text-text-muted select-none">
+          Na sua sala
+        </span>
+      ) : (
+        p.inRoom && (
+          <button
+            type="button"
+            onClick={() => void joinFriend(friend)}
+            disabled={waitingFor === friend.name}
+            className="rounded-md bg-online px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-online/85 disabled:opacity-60"
+          >
+            {waitingFor === friend.name ? "Pedido enviado" : "Entrar"}
+          </button>
+        )
       )}
       {myRoom && p.online && (
-        <RoundAction label="Chamar para a sala" onClick={() => void act({ type: "invite", id: friend.id })}>
+        <RoundAction
+          label={together ? "Já está na sua sala" : "Chamar para a sala"}
+          disabled={together}
+          onClick={() => void act({ type: "invite", id: friend.id })}
+        >
           <UserPlus size={18} />
         </RoundAction>
       )}
