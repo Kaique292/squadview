@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/Kaique292/squadview/compare/v0.3.1...v0.4.0) (2026-10-20)
+
+
+### ✨ Novidades
+
+* **mesh:** malha em enxame para salas sem limite, com simulador ([#16](https://github.com/Kaique292/squadview/issues/16)) ([b738435](https://github.com/Kaique292/squadview/commit/b738435d0f4501ad86f6a212ae086f6ada8074c5))
+
+
+### 🐛 Correções
+
+* **capture:** segue o jogo do cliente para a partida, em qualquer modo de tela ([#18](https://github.com/Kaique292/squadview/issues/18)) ([69ad2df](https://github.com/Kaique292/squadview/commit/69ad2df4740adb9fdef44e43d63b67b24a226126))
+* certificados do rustls, amigos como início e atualizar na abertura ([#21](https://github.com/Kaique292/squadview/issues/21)) ([bbae696](https://github.com/Kaique292/squadview/commit/bbae69696d110ff58893a2c3f0a907d0f95d4eeb))
+* voz no volume do Discord, grade em foco, atualizar como no Discord e amigos conferidos na sala ([#17](https://github.com/Kaique292/squadview/issues/17)) ([4047c0a](https://github.com/Kaique292/squadview/commit/4047c0ab25d441a2a86c680f348df28d638921a6))
+
+
+### 📝 Documentação
+
+* README e site com a voz em foco, o ganho automático e a captura que segue o jogo ([#19](https://github.com/Kaique292/squadview/issues/19)) ([d3dcf1c](https://github.com/Kaique292/squadview/commit/d3dcf1c48e1555e64ad3b82dfce98ab5605af3f6))
+* README e site da versão 0.4 ([#22](https://github.com/Kaique292/squadview/issues/22)) ([0b01e37](https://github.com/Kaique292/squadview/commit/0b01e37916c702a3929edd8ccb996f04c85aef8d))
+
 ## [0.3.1](https://github.com/Kaique292/squadview/compare/v0.3.0...v0.3.1) (2026-10-20)
 
 
