@@ -127,21 +127,20 @@ unsafe extern "system" fn monitor_proc(monitor: HMONITOR, _: HDC, _: *mut RECT, 
 }
 
 fn list_windows() -> Vec<Source> {
-    let mut windows: Vec<(HWND, WindowInfo)> = Vec::new();
+    let windows = top_level_windows().into_iter().map(|h| (h, window_info(h))).collect();
+    // SAFETY: chamada simples sem argumentos.
+    let own = unsafe { GetCurrentProcessId() };
+    window_sources(windows, own, process_path)
+}
+
+/// Todas as janelas de primeiro nível, da frente para trás (ordem de empilhamento).
+pub(crate) fn top_level_windows() -> Vec<isize> {
+    let mut windows: Vec<isize> = Vec::new();
     // SAFETY: o callback só roda durante a chamada e recebe o ponteiro do Vec vivo acima.
     unsafe {
         let _ = EnumWindows(Some(window_proc), LPARAM(&mut windows as *mut _ as isize));
     }
-    // SAFETY: chamada simples sem argumentos.
-    let own = unsafe { GetCurrentProcessId() };
-    window_sources(
-        windows
-            .into_iter()
-            .map(|(hwnd, info)| (hwnd.0 as isize, info))
-            .collect(),
-        own,
-        process_path,
-    )
+    windows
 }
 
 /// Janelas (handle, dados) em ordem de empilhamento → as fontes que aparecem na lista, com o
@@ -168,34 +167,41 @@ pub(crate) fn window_sources(
 }
 
 /// Nome do executável no fim do caminho (`C:\Jogos\cs2.exe` → `cs2.exe`).
-fn exe_name(path: &str) -> Option<&str> {
+pub(crate) fn exe_name(path: &str) -> Option<&str> {
     path.rsplit('\\').next()
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, data: LPARAM) -> BOOL {
-    // SAFETY: `hwnd` vem do EnumWindows e `data` é o &mut Vec passado por list_windows.
+    // SAFETY: `data` é o &mut Vec passado por top_level_windows.
+    unsafe { (*(data.0 as *mut Vec<isize>)).push(hwnd.0 as isize) };
+    TRUE
+}
+
+/// Título, visibilidade, estilo e processo de uma janela. Para um handle que já não existe, vem
+/// tudo vazio (o Windows só devolve falha).
+pub(crate) fn window_info(handle: isize) -> WindowInfo {
+    let hwnd = HWND(handle as *mut _);
+    // SAFETY: consultas a um HWND que pode já não existir; o buffer tem o tamanho informado.
     unsafe {
         let len = GetWindowTextLengthW(hwnd);
-        let mut buf = vec![0u16; len as usize + 1];
+        let mut buf = vec![0u16; len.max(0) as usize + 1];
         let read = GetWindowTextW(hwnd, &mut buf);
-        let title = String::from_utf16_lossy(&buf[..read as usize]);
+        let title = String::from_utf16_lossy(&buf[..read.max(0) as usize]);
 
         let mut cloaked = 0u32;
         let _ = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
         let mut process_id = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
 
-        let info = WindowInfo {
+        WindowInfo {
             title,
             visible: IsWindowVisible(hwnd).as_bool(),
             tool_window: GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0,
             has_owner: GetWindow(hwnd, GW_OWNER).is_ok_and(|o| !o.is_invalid()),
             cloaked: cloaked != 0,
             process_id,
-        };
-        (*(data.0 as *mut Vec<(HWND, WindowInfo)>)).push((hwnd, info));
+        }
     }
-    TRUE
 }
 
 /// A fonte ainda está transmitível? Monitores sempre; janelas, enquanto existirem e estiverem visíveis
@@ -211,47 +217,8 @@ pub fn is_alive(source: CaptureSource) -> bool {
     }
 }
 
-/// Quando a janela transmitida some, procura a que tomou o lugar dela.
-pub fn find_replacement(previous: &Source) -> Option<Source> {
-    pick_replacement(&list_windows(), previous).cloned()
-}
-
-/// Escolhe a janela que substitui `previous`, em ordem de preferência:
-/// 1. outra janela do mesmo executável (ex.: o jogo recriou a janela ao mudar de modo);
-/// 2. uma janela de outro executável instalado na mesma pasta ou numa subpasta/pasta-mãe
-///    (ex.: o launcher `LeagueClientUx.exe` → o jogo `Game\League of Legends.exe`).
-///
-/// Entre as candidatas vale a da frente (a lista vem em ordem de empilhamento).
-pub(crate) fn pick_replacement<'a>(windows: &'a [Source], previous: &Source) -> Option<&'a Source> {
-    let others = || windows.iter().filter(move |w| w.id != previous.id);
-    let same_exe = |w: &&Source| matches!((&w.process_name, &previous.process_name), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
-    if let Some(w) = others().find(same_exe) {
-        return Some(w);
-    }
-    let previous_dir = previous.process_path.as_deref().and_then(parent_dir)?;
-    others().find(|w| {
-        let Some(dir) = w.process_path.as_deref().and_then(parent_dir) else {
-            return false;
-        };
-        same_install(&dir, &previous_dir)
-    })
-}
-
-/// Pasta do executável, em minúsculas e com `\\` no fim (para comparar prefixos com segurança).
-fn parent_dir(path: &str) -> Option<String> {
-    let (dir, _) = path.rsplit_once('\\')?;
-    Some(format!("{}\\", dir.to_lowercase()))
-}
-
-/// Uma pasta contém a outra, mas sem aceitar pastas genéricas como `C:\\` ou `Program Files`.
-fn same_install(a: &str, b: &str) -> bool {
-    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let depth = short.matches('\\').count();
-    let generic = short.ends_with("\\program files\\") || short.ends_with("\\program files (x86)\\");
-    depth >= 3 && !generic && long.starts_with(short)
-}
-
-fn process_path(pid: u32) -> Option<String> {
+/// Caminho completo do executável do processo, ou `None` se o Windows não deixar consultar.
+pub(crate) fn process_path(pid: u32) -> Option<String> {
     // SAFETY: o handle é fechado antes de sair; o buffer tem o tamanho informado.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -335,66 +302,6 @@ mod tests {
         assert_eq!(json, r#"{"kind":"window","handle":42}"#);
         let back: CaptureSource = serde_json::from_str(r#"{"kind":"monitor","handle":7}"#).unwrap();
         assert_eq!(back, CaptureSource::Monitor(7));
-    }
-
-    fn win(handle: isize, exe: &str, path: &str) -> Source {
-        Source {
-            id: CaptureSource::Window(handle),
-            name: exe.into(),
-            process_id: Some(1),
-            process_name: Some(exe.into()),
-            process_path: Some(path.into()),
-        }
-    }
-
-    const LOBBY: &str = r"C:\Riot Games\League of Legends\LeagueClientUx.exe";
-    const GAME: &str = r"C:\Riot Games\League of Legends\Game\League of Legends.exe";
-
-    #[test]
-    fn segue_a_janela_nova_do_mesmo_programa() {
-        let old = win(1, "cs2.exe", r"D:\Steam\steamapps\common\cs2\game\bin\win64\cs2.exe");
-        let windows = [
-            win(9, "Discord.exe", r"C:\Users\k\AppData\Local\Discord\Discord.exe"),
-            win(2, "CS2.EXE", r"D:\x\cs2.exe"),
-        ];
-        assert_eq!(
-            pick_replacement(&windows, &old).map(|w| w.id),
-            Some(CaptureSource::Window(2))
-        );
-    }
-
-    #[test]
-    fn segue_do_lobby_do_lol_para_a_partida_e_de_volta() {
-        let lobby = win(1, "LeagueClientUx.exe", LOBBY);
-        let game = win(2, "League of Legends.exe", GAME);
-        let unrelated = win(
-            3,
-            "chrome.exe",
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        );
-        assert_eq!(
-            pick_replacement(&[unrelated.clone(), game.clone()], &lobby).map(|w| w.id),
-            Some(game.id)
-        );
-        assert_eq!(
-            pick_replacement(&[unrelated, lobby.clone()], &game).map(|w| w.id),
-            Some(lobby.id)
-        );
-    }
-
-    #[test]
-    fn nao_confunde_programas_que_so_dividem_pasta_generica() {
-        let a = win(1, "a.exe", r"C:\Program Files\A\a.exe");
-        let b = win(2, "b.exe", r"C:\Program Files\B\b.exe");
-        let root = win(3, "c.exe", r"C:\c.exe");
-        assert_eq!(pick_replacement(&[b, root], &a), None);
-    }
-
-    #[test]
-    fn sem_caminho_e_sem_mesmo_exe_nao_acha_nada() {
-        let mut old = win(1, "x.exe", r"C:\Jogos\X\x.exe");
-        old.process_path = None;
-        assert_eq!(pick_replacement(&[win(2, "y.exe", r"C:\Jogos\X\y.exe")], &old), None);
     }
 
     #[test]
@@ -484,15 +391,6 @@ mod tests {
                 .all(|s| matches!(s.id, CaptureSource::Window(_)) && s.process_id.is_some()),
             "monitores antes das janelas"
         );
-        // A janela de uma fonte que sumiu: a busca roda sem quebrar.
-        let gone = Source {
-            id: CaptureSource::Window(1),
-            name: "Sumiu".into(),
-            process_id: Some(1),
-            process_name: Some("nao-existe-squadview.exe".into()),
-            process_path: Some(r"C:\nao\existe\squadview\nao-existe-squadview.exe".into()),
-        };
-        assert_eq!(find_replacement(&gone), None);
     }
 
     #[test]

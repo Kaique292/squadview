@@ -29,7 +29,7 @@ Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline func
 
 ## Fase 1 — Pipeline local
 
-- [x] `sv-capture`: captura de monitor e de janela via Windows.Graphics.Capture (segue o jogo quando ele troca de janela)
+- [x] `sv-capture`: captura de monitor e de janela via Windows.Graphics.Capture (segue o jogo do cliente para a partida e para o monitor em tela cheia, ver [captura.md](captura.md))
 - [x] `sv-capture`: áudio do processo do jogo via WASAPI process loopback (+ Opus, buffer de jitter e reprodução)
 - [x] `sv-encode`: encoder de hardware via Media Foundation (NVENC/AMF/QuickSync, H.264 baixa latência, keyframe sob demanda)
 - [x] `sv-media`: decode por GPU e exibição na janela

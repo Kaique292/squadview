@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::json;
-use sv_capture::{CaptureSource, Source};
+use sv_capture::{CaptureSource, FollowStatus, FollowStep, GameFollower, Observer, Source, SwitchReason};
 use sv_core::StreamQuality;
 use sv_encode::EncodedFrame;
 use sv_session::{AudioPacket, Bounds, LocalPreview, StreamInfo, StreamTap, WindowEvent, WindowTarget};
@@ -23,9 +23,7 @@ pub const NOTICE_EVENT: &str = "stream-notice";
 /// Pedido de tela cheia feito dentro do vídeo: `"toggle"` (dois cliques, F11) ou `"exit"` (Esc).
 pub const FULLSCREEN_EVENT: &str = "video-fullscreen";
 
-/// Sem estatística por esse tempo, com a janela viva, avisamos que não está chegando imagem.
-const STALL_AFTER_MS: u64 = 4_000;
-/// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar de janela.
+/// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar a captura.
 const CHANGED_NOTICE_FOR: Duration = Duration::from_secs(6);
 
 /// Agora, em ms do relógio do pipeline (o mesmo nas threads da prévia e do vigia).
@@ -373,8 +371,12 @@ pub fn set_fullscreen<R: Runtime>(app: AppHandle<R>, fullscreen: bool) -> Result
     window.set_fullscreen(fullscreen).map_err(|e| e.to_string())
 }
 
-/// Vigia a prévia: avisa quando ela é fechada, segue o jogo quando ele troca de janela
-/// (ex.: LoL saindo do lobby para a partida) e avisa quando a imagem para de chegar.
+/// Vigia a prévia: avisa quando ela é fechada, **segue o jogo** (cliente → partida → cliente,
+/// tela cheia → monitor do jogo e de volta) e avisa quando a imagem para de chegar.
+///
+/// A decisão é do [`GameFollower`] (lógica pura, testada em `sv-capture`); aqui só se observa as
+/// janelas e se troca a captura. Roda a cada 500 ms numa thread própria, nunca no caminho do frame,
+/// e não segura o lock da prévia enquanto consulta o Windows. Ver `docs/captura.md`.
 fn watch<R: Runtime>(
     app: AppHandle<R>,
     generation: u64,
@@ -384,46 +386,69 @@ fn watch<R: Runtime>(
     last_stats: Arc<AtomicU64>,
 ) {
     std::thread::spawn(move || {
-        let mut current = source;
+        // Só uma janela escolhida é seguida; um monitor escolhido fica como está.
+        let mut follower = source
+            .filter(|s| matches!(s.id, CaptureSource::Window(_)))
+            .map(GameFollower::new);
+        let mut observer = Observer::new();
         let mut audio_pid = audio_pid;
         let mut changed: Option<(Instant, Notice)> = None;
         let mut notice: Option<Notice> = None;
         loop {
             std::thread::sleep(Duration::from_millis(500));
-            let state = app.state::<PreviewState>();
-            let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
-            if running.generation != generation {
-                return; // Parada pela interface ou trocada por outra prévia.
-            }
-            if running.preview.as_ref().is_none_or(LocalPreview::is_closed) {
-                let closed = running.preview.take();
-                drop(running);
-                drop(closed);
-                crate::room::stream_changed(&app, None);
-                app.state::<Diagnostics>()
-                    .write("stream-end", &json!({ "reason": "janela da prévia fechada" }));
-                let _ = app.emit(ENDED_EVENT, ());
-                return;
+            {
+                let state = app.state::<PreviewState>();
+                let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                if running.generation != generation {
+                    return; // Parada pela interface ou trocada por outra prévia.
+                }
+                if running.preview.as_ref().is_none_or(LocalPreview::is_closed) {
+                    let closed = running.preview.take();
+                    drop(running);
+                    end_preview(&app, closed, "janela da prévia fechada");
+                    return;
+                }
             }
 
-            let Some(src) = current.clone() else { continue };
-            let next = if sv_capture::is_alive(src.id) {
-                let quiet_ms = now_ms().saturating_sub(last_stats.load(Ordering::Relaxed));
-                stall_notice(src.id, quiet_ms)
-            } else if let Some(replacement) = sv_capture::find_replacement(&src) {
-                drop(running);
-                let next_audio = audio_after_switch(audio_pid, &src, &replacement);
-                match switch(&app, generation, &src, &replacement, quality, next_audio, &last_stats) {
-                    Some(()) => {
-                        audio_pid = next_audio;
-                        changed = Some((Instant::now(), source_changed_notice(&replacement.name)));
-                        current = Some(replacement);
-                        None
+            let Some(follower) = follower.as_mut() else { continue };
+            let quiet_ms = now_ms().saturating_sub(last_stats.load(Ordering::Relaxed));
+            let observation = observer.observe(follower, quiet_ms);
+            let from = follower.game().clone();
+            let next = match follower.step(&observation) {
+                FollowStep::Stay(status) => status_notice(status, &follower.game().name),
+                FollowStep::Switch { capture, game, reason } => {
+                    let next_audio = audio_after_switch(audio_pid, &from, &game);
+                    let target = capture_target(capture, &game);
+                    match switch(
+                        &app,
+                        generation,
+                        &from,
+                        &target,
+                        reason,
+                        quality,
+                        next_audio,
+                        &last_stats,
+                    ) {
+                        Some(()) => {
+                            audio_pid = next_audio;
+                            changed = Some((Instant::now(), switch_notice(reason, &game.name)));
+                            None
+                        }
+                        None => return,
                     }
-                    None => return,
                 }
-            } else {
-                Some(source_lost_notice(&src.name))
+                FollowStep::Stop => {
+                    let state = app.state::<PreviewState>();
+                    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if running.generation != generation {
+                        return;
+                    }
+                    running.generation += 1;
+                    let stopped = running.preview.take();
+                    drop(running);
+                    end_preview(&app, stopped, "o jogo fechou enquanto o monitor dele era transmitido");
+                    return;
+                }
             };
             let next = prefer_recent_change(changed.as_ref(), next);
             if next != notice {
@@ -432,6 +457,28 @@ fn watch<R: Runtime>(
             }
         }
     });
+}
+
+/// Fecha a prévia (fora do lock) e avisa a sala e a interface de que a transmissão acabou.
+fn end_preview<R: Runtime>(app: &AppHandle<R>, preview: Option<LocalPreview>, reason: &str) {
+    drop(preview);
+    crate::room::stream_changed(app, None);
+    app.state::<Diagnostics>()
+        .write("stream-end", &json!({ "reason": reason }));
+    let _ = app.emit(ENDED_EVENT, ());
+}
+
+/// A fonte que vai ser capturada, com um nome para o registro: a janela do jogo ou o monitor dele.
+fn capture_target(capture: CaptureSource, game: &Source) -> Source {
+    let name = match capture {
+        CaptureSource::Window(_) => game.name.clone(),
+        CaptureSource::Monitor(_) => format!("monitor de “{}”", game.name),
+    };
+    Source {
+        id: capture,
+        name,
+        ..game.clone()
+    }
 }
 
 /// O áudio era do jogo: quando ele troca de janela, passa a ser do processo da janela nova.
@@ -443,14 +490,25 @@ fn audio_after_switch(audio_pid: Option<u32>, from: &Source, to: &Source) -> Opt
     }
 }
 
-/// "Sem imagem": só para janelas (tela parada também não gera quadros; jogos desenham sem parar).
-fn stall_notice(source: CaptureSource, quiet_ms: u64) -> Option<Notice> {
-    let stalled = matches!(source, CaptureSource::Window(_)) && quiet_ms > STALL_AFTER_MS;
-    stalled.then(|| Notice {
+/// Aviso para a situação da captura. Nunca pede para mudar o modo de tela do jogo: o app se vira
+/// com qualquer um (ver `docs/captura.md`).
+fn status_notice(status: FollowStatus, name: &str) -> Option<Notice> {
+    let message = match status {
+        FollowStatus::Ok => return None,
+        FollowStatus::Waiting => return Some(source_lost_notice(name)),
+        FollowStatus::Minimized => {
+            format!("“{name}” está minimizado. A imagem volta quando você abrir o jogo de novo.")
+        }
+        FollowStatus::Covered => {
+            format!("Outra janela está na frente de “{name}”. A imagem volta quando o jogo voltar para a frente.")
+        }
+        FollowStatus::Stalled => format!(
+            "Nenhuma imagem nova de “{name}” há alguns segundos. Se o jogo estiver carregando, ela volta sozinha."
+        ),
+    };
+    Some(Notice {
         kind: "no-frames",
-        message: "A imagem parou de chegar. Se o jogo estiver em tela cheia exclusiva, troque para \
-                  \"janela sem bordas\" nas opções de vídeo dele."
-            .into(),
+        message,
     })
 }
 
@@ -461,10 +519,16 @@ fn source_lost_notice(name: &str) -> Notice {
     }
 }
 
-fn source_changed_notice(name: &str) -> Notice {
+/// Aviso curto e informativo de que a captura mudou sozinha.
+fn switch_notice(reason: SwitchReason, name: &str) -> Notice {
+    let message = match reason {
+        SwitchReason::NewWindow => format!("Agora transmitindo “{name}”."),
+        SwitchReason::Fullscreen => "Jogo em tela cheia: transmitindo o monitor dele.".into(),
+        SwitchReason::BackToWindow => format!("Transmitindo a janela de “{name}” de novo."),
+    };
     Notice {
         kind: "source-changed",
-        message: format!("O jogo trocou de janela. Agora transmitindo “{name}”."),
+        message,
     }
 }
 
@@ -484,6 +548,7 @@ fn switch<R: Runtime>(
     generation: u64,
     from: &Source,
     to: &Source,
+    reason: SwitchReason,
     quality: StreamQuality,
     audio_pid: Option<u32>,
     last_stats: &Arc<AtomicU64>,
@@ -504,7 +569,7 @@ fn switch<R: Runtime>(
     }
     app.state::<Diagnostics>().write(
         "stream-source-changed",
-        &json!({ "from": from.name, "to": to.name, "ok": preview.is_ok() }),
+        &json!({ "from": from.name, "to": to.name, "reason": format!("{reason:?}"), "ok": preview.is_ok() }),
     );
     match preview {
         Ok(p) => {
@@ -579,14 +644,42 @@ mod tests {
 
     #[test]
     fn avisos_da_previa() {
-        let w = CaptureSource::Window(1);
-        assert_eq!(stall_notice(w, STALL_AFTER_MS), None);
-        assert_eq!(stall_notice(w, STALL_AFTER_MS + 1).unwrap().kind, "no-frames");
-        // Tela inteira parada não é "sem imagem".
-        assert_eq!(stall_notice(CaptureSource::Monitor(1), 60_000), None);
+        assert_eq!(status_notice(FollowStatus::Ok, "LoL"), None);
+        assert_eq!(
+            status_notice(FollowStatus::Waiting, "LoL"),
+            Some(source_lost_notice("LoL"))
+        );
         assert!(source_lost_notice("LoL").message.contains("“LoL” sumiu"));
-        let changed = source_changed_notice("LoL partida");
-        assert!(changed.message.contains("Agora transmitindo “LoL partida”"));
+        for status in [FollowStatus::Minimized, FollowStatus::Covered, FollowStatus::Stalled] {
+            let n = status_notice(status, "LoL").unwrap();
+            assert_eq!(n.kind, "no-frames");
+            assert!(n.message.contains("“LoL”"), "{}", n.message);
+            // O app se vira com qualquer modo de tela: nunca pede para o jogador mudar o jogo.
+            assert!(
+                !n.message.contains("sem bordas") && !n.message.contains("tela cheia"),
+                "{}",
+                n.message
+            );
+        }
+        assert!(
+            status_notice(FollowStatus::Minimized, "LoL")
+                .unwrap()
+                .message
+                .contains("minimizado")
+        );
+
+        let changed = switch_notice(SwitchReason::NewWindow, "LoL partida");
+        assert_eq!(changed.kind, "source-changed");
+        assert_eq!(changed.message, "Agora transmitindo “LoL partida”.");
+        assert_eq!(
+            switch_notice(SwitchReason::Fullscreen, "LoL").message,
+            "Jogo em tela cheia: transmitindo o monitor dele."
+        );
+        assert!(
+            switch_notice(SwitchReason::BackToWindow, "LoL")
+                .message
+                .contains("janela de “LoL”")
+        );
         // A troca recente ganha do "sem imagem"; depois de um tempo, não.
         let lost = Some(source_lost_notice("x"));
         let recent = (Instant::now(), changed.clone());
@@ -594,6 +687,22 @@ mod tests {
         let old = (Instant::now() - CHANGED_NOTICE_FOR - Duration::from_secs(1), changed);
         assert_eq!(prefer_recent_change(Some(&old), lost.clone()), lost);
         assert_eq!(prefer_recent_change(None, None), None);
+    }
+
+    #[test]
+    fn fonte_capturada_e_a_janela_ou_o_monitor_do_jogo() {
+        let game = window("Partida", Some(20));
+        let w = capture_target(CaptureSource::Window(7), &game);
+        assert_eq!(
+            (w.id, w.name.as_str(), w.process_id),
+            (CaptureSource::Window(7), "Partida", Some(20))
+        );
+        let m = capture_target(CaptureSource::Monitor(3), &game);
+        assert_eq!(m.id, CaptureSource::Monitor(3));
+        assert_eq!(m.name, "monitor de “Partida”");
+        assert_eq!(m.process_id, Some(20), "o áudio continua sendo o do jogo");
+        // Trocar para o monitor do mesmo jogo não muda o áudio.
+        assert_eq!(audio_after_switch(Some(20), &game, &m), Some(20));
     }
 
     #[test]
