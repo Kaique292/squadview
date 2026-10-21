@@ -9,7 +9,7 @@ export default defineConfig({
       exclude: ["src/**/*.test.ts", "src/index.ts"],
       reporter: ["text", "json-summary"],
       // Trava: a esteira falha se a cobertura cair (suba junto quando ela subir).
-      thresholds: { lines: 94, statements: 89, functions: 83, branches: 87 },
+      thresholds: { lines: 95, statements: 91, functions: 86, branches: 89 },
       reportsDirectory: "../../build/coverage-signaling",
     },
   },

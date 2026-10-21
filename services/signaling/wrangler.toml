@@ -20,6 +20,11 @@ class_name = "Room"
 name = "USERS"
 class_name = "User"
 
+# Servidores com salas fixas (ver docs/adr/0016-servidores-e-salas-fixas.md).
+[[durable_objects.bindings]]
+name = "SERVERS"
+class_name = "Server"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
@@ -27,3 +32,7 @@ new_sqlite_classes = ["Room"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["User"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Server"]
