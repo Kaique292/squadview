@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SquadView",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "identifier": "io.github.kaique292.squadview",
   "build": {
     "beforeDevCommand": "yarn dev",

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0](https://github.com/Kaique292/squadview/compare/v0.5.0...v0.6.0) (2026-10-21)
+
+
+### ✨ Novidades
+
+* **app:** limpa o cache do app inteiro ou de cada parte nas configurações ([#34](https://github.com/Kaique292/squadview/issues/34)) ([470f72a](https://github.com/Kaique292/squadview/commit/470f72aa2f300e67a29a7d989ace563396f636a1))
+* **net:** conversa privada direto entre dois amigos, com arquivos ([#40](https://github.com/Kaique292/squadview/issues/40)) ([17b4407](https://github.com/Kaique292/squadview/commit/17b440798a8a89bc9e64a6a041a783d21fa71e7f))
+* **signal:** repassa o sinal da conversa direta entre amigos ([#38](https://github.com/Kaique292/squadview/issues/38)) ([13c60c5](https://github.com/Kaique292/squadview/commit/13c60c58e812dadac6433ca8db6473c52265dcd6))
+* **ui:** agrupa os botões da barra da chamada como no Discord ([#31](https://github.com/Kaique292/squadview/issues/31)) ([cdcbb0f](https://github.com/Kaique292/squadview/commit/cdcbb0fc31cd486973610c835e27834d816df018))
+* **ui:** ajusta o ícone do servidor com recorte, posição e zoom ([#37](https://github.com/Kaique292/squadview/issues/37)) ([5ec83c3](https://github.com/Kaique292/squadview/commit/5ec83c33034a9e764431ff4a9e7db2cef47dc829))
+* **ui:** assiste a live em picture in picture ([#35](https://github.com/Kaique292/squadview/issues/35)) ([fee614f](https://github.com/Kaique292/squadview/commit/fee614f564f1f3b3d7aa72c415a34c8ab0489ace))
+* **ui:** conversas privadas na página de amigos, com anexos ([#41](https://github.com/Kaique292/squadview/issues/41)) ([4dc8419](https://github.com/Kaique292/squadview/commit/4dc8419cc94384adbe4ec8795653dc6761e23944))
+* **ui:** efeitos de fala com cor e prévia, vistos por toda a sala ([#33](https://github.com/Kaique292/squadview/issues/33)) ([349c4b3](https://github.com/Kaique292/squadview/commit/349c4b3119d67ca4def48afb61b1b0684b57856d))
+* **ui:** servidores com salas fixas, convites e papéis ([#36](https://github.com/Kaique292/squadview/issues/36)) ([002f0ae](https://github.com/Kaique292/squadview/commit/002f0ae8976e775cd7a175650218660cd108a8f0))
+
+
+### 🐛 Correções
+
+* **ui:** fechar a conversa não derruba mais a tela ([#43](https://github.com/Kaique292/squadview/issues/43)) ([f980bd6](https://github.com/Kaique292/squadview/commit/f980bd641a936364e1f4c07069050b4e961555a5))
+* **ui:** recolhe os subitens de Voz e vídeo e desliza a barra do subitem ([#30](https://github.com/Kaique292/squadview/issues/30)) ([7e411d7](https://github.com/Kaique292/squadview/commit/7e411d7b01fffed240912b219dd83d750903c68c))
+* **ui:** refaz a poeira ao parar de assistir no estilo do iOS ([#32](https://github.com/Kaique292/squadview/issues/32)) ([6e1149d](https://github.com/Kaique292/squadview/commit/6e1149d966ba2577299ce05b761a30abee1592b9))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o roadmap com o que já entrou até as conversas privadas ([#42](https://github.com/Kaique292/squadview/issues/42)) ([5b84332](https://github.com/Kaique292/squadview/commit/5b8433260cae8ecaab059c981b19c18be3ac2f60))
+* README e site da versão 0.5 ([596f827](https://github.com/Kaique292/squadview/commit/596f8273659e79e748ae41be1390187acaa81510))
+* README e site da versão 0.6 ([#44](https://github.com/Kaique292/squadview/issues/44)) ([ef80c70](https://github.com/Kaique292/squadview/commit/ef80c700b044035ca0c935ae8e7cfbf170433059))
+
+
+### 📦 Build
+
+* **ci:** release-please atualiza o Cargo.lock junto com os Cargo.toml ([70589b0](https://github.com/Kaique292/squadview/commit/70589b09f970cc5559011a5d891c18a4137e470b))
+
 ## [0.5.0](https://github.com/Kaique292/squadview/compare/v0.4.0...v0.5.0) (2026-10-21)
 
 
