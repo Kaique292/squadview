@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 const BINDING_REQUEST: u16 = 0x0001;
 const BINDING_RESPONSE: u16 = 0x0101;
-const MAGIC_COOKIE: u32 = 0x2112_A442;
+pub(crate) const MAGIC_COOKIE: u32 = 0x2112_A442;
 const ATTR_MAPPED_ADDRESS: u16 = 0x0001;
 const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 
@@ -52,7 +52,7 @@ pub fn parse_response(data: &[u8], txid: [u8; 12]) -> Option<SocketAddr> {
     fallback
 }
 
-fn decode_address(value: &[u8], xor_txid: Option<[u8; 12]>) -> Option<SocketAddr> {
+pub(crate) fn decode_address(value: &[u8], xor_txid: Option<[u8; 12]>) -> Option<SocketAddr> {
     if value.len() < 8 {
         return None;
     }

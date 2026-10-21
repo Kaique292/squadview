@@ -12,9 +12,12 @@ publish = false
 [dependencies]
 bytes = "1"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+# Credencial do TURN (RFC 8656): chave MD5 e HMAC-SHA1 (o ring já vem com o rustls).
+md5 = { package = "md-5", version = "0.11" }
 postcard = { version = "1", features = ["use-std"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 rcgen = "0.14"
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde.workspace = true
 serde_json = "1"
@@ -26,7 +29,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 [dev-dependencies]
 # Testes de integração dos amigos: assinam sessões como o Worker (HMAC-SHA256, base64url).
 base64 = "0.23"
-ring = "0.17"
 
 [lints]
 workspace = true

@@ -10,6 +10,12 @@ class_name = "Room"
 
 # Registro de cada pessoa: amigos e presença (ver docs/adr/0011-amigos-e-presenca.md).
 # O segredo das sessões fica fora do repositório: `wrangler secret put SESSION_SECRET`.
+# Repassador TURN para quem está atrás de CGNAT (ver docs/adr/0014-conexao-em-camadas.md), opcional e
+# plugável (`wrangler secret put <NOME>`), o primeiro completo vale:
+# - Cloudflare Realtime: TURN_KEY_ID e TURN_KEY_API_TOKEN;
+# - Metered (grátis, 20 GB/mês): METERED_DOMAIN (ex.: squadview.metered.live) e METERED_API_KEY;
+# - servidor fixo (coturn próprio): TURN_URLS (separadas por vírgula), TURN_USERNAME e TURN_CREDENTIAL.
+# Sem nenhum, a sala funciona só com conexão direta.
 [[durable_objects.bindings]]
 name = "USERS"
 class_name = "User"

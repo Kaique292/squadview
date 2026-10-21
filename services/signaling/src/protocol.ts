@@ -77,6 +77,8 @@ export type ServerMessage =
   | { type: "join-request"; id: string; from: { id: string; name: string; avatar: string | null } }
   /** O pedido foi respondido (por alguém) ou venceu: some de todos. */
   | { type: "join-request-closed"; id: string }
+  /** Credenciais do repassador TURN (ADR 0014), logo depois do `welcome`, se configurado. */
+  | { type: "turn"; urls: string[]; username: string; credential: string }
   | { type: "error"; code: ErrorCode };
 
 const encoder = new TextEncoder();
