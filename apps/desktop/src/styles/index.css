@@ -159,6 +159,78 @@
   }
 }
 
+/*
+ * Efeito de fala em volta da foto (`VoiceAura`). Fica atrás da foto, centralizado; aparece e
+ * anima só enquanto a pessoa fala (parado, a animação fica pausada e não gasta nada).
+ */
+.voice-aura {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.85);
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms ease-out;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--aura) 60%, transparent));
+}
+.voice-aura[data-active] {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+/* Gira e pulsa em volta do centro do desenho (o 0,0 do viewBox, que vai de -50 a 50). */
+.voice-aura * {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+.voice-aura:not([data-active]) * {
+  animation-play-state: paused;
+}
+.aura-spin {
+  animation: aura-spin linear infinite;
+}
+.aura-spin-reverse {
+  animation: aura-spin linear infinite reverse;
+}
+.aura-pulse {
+  animation: aura-pulse 1.6s ease-in-out infinite;
+}
+.voice-aura .aura-bar {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: aura-bar ease-in-out infinite alternate;
+}
+@keyframes aura-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes aura-pulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+@keyframes aura-bar {
+  from {
+    transform: scaleY(0.25);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+/* Menos movimento: o efeito aparece parado (a regra geral acima o faria piscar). */
+@media (prefers-reduced-motion: reduce) {
+  .voice-aura * {
+    animation: none !important;
+  }
+}
+
 /* Intensidade do vidro (0 = sólido). Quem muda é `applyGlass`. */
 :root {
   --glass: 0;

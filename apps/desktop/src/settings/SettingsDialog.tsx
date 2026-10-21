@@ -55,11 +55,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         id: "voz",
         label: "Voz e vídeo",
         icon: <Mic size={18} />,
-        keywords: "microfone saída fone volume ruído isolamento áudio",
+        keywords: "microfone saída fone volume ruído isolamento áudio efeito fala anel cor",
         parts: [
           { id: "voz-dispositivos", label: "Voz" },
           { id: "voz-teste", label: "Teste do microfone" },
           { id: "voz-processamento", label: "Processamento de voz" },
+          { id: "voz-efeito", label: "Efeito de fala" },
         ],
       },
       {
