@@ -215,7 +215,9 @@ describe("servidores: mais casos", () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("negado"))) } });
     onServerMessage({ type: "server-invite", server: ID, invite: `${ID}.AbCdEf234567` } as never);
     await Promise.resolve();
-    expect(useServersStore.getState().invites[ID]).toBe(`squadview://servidor/${ID}.AbCdEf234567`);
+    expect(useServersStore.getState().invites[ID]).toBe(
+      `https://kaique292.github.io/squadview/convite/?servidor=${ID}.AbCdEf234567`,
+    );
     expect(onServerMessage({ type: "state" })).toBe(false);
   });
 

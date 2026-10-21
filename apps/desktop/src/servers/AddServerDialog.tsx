@@ -15,7 +15,7 @@ type Mode = "create" | "join";
 export function AddServerDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Convite já preenchido (link `squadview://servidor/...`). */
+  /** Convite já preenchido (link de convite ou `squadview://servidor/...`). */
   initialInvite?: string;
   /** Abre a sala rápida (sem servidor) no lugar deste modal. */
   onQuickRoom?: () => void;
@@ -114,7 +114,7 @@ function ServerForm(props: { mode: Mode; initialName: string; initialInvite: str
           value={value}
           onChange={(e) => setValue(e.target.value)}
           maxLength={props.mode === "create" ? 32 : 120}
-          placeholder={props.mode === "create" ? "Turma do bairro" : "squadview://servidor/…"}
+          placeholder={props.mode === "create" ? "Turma do bairro" : "Cole o link do convite"}
           aria-invalid={invalid}
           autoFocus
           required
