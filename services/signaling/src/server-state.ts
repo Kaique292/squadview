@@ -36,6 +36,9 @@ export interface ServerSnapshot {
   members: ServerMember[];
 }
 
+/** Quem está em cada sala do servidor agora (id da sala → membros), ver ADR 0018. */
+export type ServerPresence = Record<string, { id: string; live: boolean }[]>;
+
 /** O que alguém pode pedir ao servidor (já conferido quem é pelo registro dele). */
 export type ServerOp =
   | { kind: "update"; name?: string; icon?: string | null }
@@ -134,6 +137,43 @@ export class ServerState {
   }
   private invites(): Record<string, Invite> {
     return this.store.get<Record<string, Invite>>("invites") ?? {};
+  }
+  /** Onde cada membro está (código da sala do servidor) e se está ao vivo. */
+  private here(): Record<string, { code: string; live: boolean }> {
+    return this.store.get<Record<string, { code: string; live: boolean }>>("presence") ?? {};
+  }
+
+  /**
+   * O registro de um membro avisou que ele entrou numa sala (`code`), saiu (`null`) ou mudou o
+   * "ao vivo". Código que não é de uma sala daqui conta como fora. `true` se algo mudou (avisar).
+   */
+  setPresence(member: string, code: string | null, live: boolean): boolean {
+    if (!this.members()[member]) return false;
+    const inRoom = code !== null && this.rooms().some((r) => r.code === code);
+    const before = this.here()[member];
+    if (!inRoom && !before) return false;
+    if (inRoom && before?.code === code && before.live === live) return false;
+    this.update<Record<string, { code: string; live: boolean }>>("presence", {}, (all) => {
+      if (inRoom) all[member] = { code: code!, live };
+      else delete all[member];
+    });
+    return true;
+  }
+
+  /**
+   * Quem está em cada sala. Só membros e só salas que ainda existem: quem saiu do servidor (ou cuja
+   * sala foi apagada) some daqui sem precisar limpar nada.
+   */
+  presence(): ServerPresence {
+    const members = this.members();
+    const result: ServerPresence = {};
+    for (const room of this.rooms()) result[room.id] = [];
+    const byCode = new Map(this.rooms().map((r) => [r.code, r.id]));
+    for (const [id, at] of Object.entries(this.here())) {
+      const room = byCode.get(at.code);
+      if (room && members[id]) result[room].push({ id, live: at.live });
+    }
+    return result;
   }
 
   /** Cria o servidor com o dono e uma sala "Geral" (vazio, ninguém teria onde entrar). */

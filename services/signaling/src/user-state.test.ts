@@ -67,7 +67,8 @@ class World {
         Date.now,
         {
           roomId: () => (++n).toString(16).padStart(8, "0"),
-          roomCode: () => `SALA${String.fromCharCode(64 + ++n)}${String.fromCharCode(64 + n)}`.slice(0, 6),
+          // Códigos válidos de sala (sem L, I, O): o `status` do app recusa código inválido.
+          roomCode: () => `SXK${"ABCDEFGHJKMNPQRSTUVWXYZ"[++n % 23]}22`,
           secret: () => `Convite${String(++n).padStart(5, "0")}`,
         },
       );
@@ -144,6 +145,13 @@ class World {
       },
       dmSignal: async (to, from, payload) => this.person(to).state.onDmSignal(from, payload),
       turn: async () => this.turnCredentials,
+      serverSetPresence: async (id, member, code, live) => {
+        const srv = this.server(id);
+        if (!srv.setPresence(member, code, live)) return;
+        const presence = srv.presence();
+        for (const m of srv.memberIds()) this.person(m).state.onServerPresence(id, presence);
+      },
+      serverPresence: async (id) => this.server(id).presence(),
       serverRefresh: async (id, profile) => {
         const s = this.server(id);
         if (s.refreshProfile(profile)) this.notify(id, profile.id, s.snapshot(), []);
@@ -554,5 +562,89 @@ describe("mensagens privadas: sinal da conexão direta", () => {
       username: "u",
       credential: "c",
     });
+  });
+});
+
+describe("presença nas salas do servidor (ADR 0018)", () => {
+  const S1 = "0000000000000001";
+  type Msg<T extends UserServerMessage["type"]> = Extract<UserServerMessage, { type: T }>;
+  const action = (server: string, op: unknown) => ({ type: "server-action", server, op });
+  const presence = (c: FakeConn) => (c.last("server-presence") as Msg<"server-presence">)?.presence;
+
+  /** Ana (dona) e Beto (membro) no mesmo servidor, e amigos. Devolve a sala Geral. */
+  async function servidorComAmigos() {
+    const { ana, beto } = await friends(world);
+    await send(world, ANA, ana, { type: "server-create", name: "Turma do bairro" });
+    await send(world, ANA, ana, action(S1, { kind: "invite" }));
+    const { invite } = ana.last("server-invite") as Msg<"server-invite">;
+    await send(world, BETO, beto, { type: "server-join", invite });
+    const geral = (ana.last("server") as Msg<"server">).server.rooms[0];
+    return { ana, beto, geral };
+  }
+
+  it("quem entra, sai ou fica ao vivo numa sala do servidor aparece para todos os membros", async () => {
+    const { ana, beto, geral } = await servidorComAmigos();
+    await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
+    // A Ana está fora da sala e mesmo assim vê o Beto lá dentro.
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false }] });
+    await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: true });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: true }] });
+    // Ao conectar de novo, já chega quem está em cada sala.
+    const outra = await world.connect(ANA, "Ana");
+    expect(presence(outra)).toEqual({ [geral.id]: [{ id: BETO, live: true }] });
+    await send(world, BETO, beto, { type: "status", room: null, live: false });
+    expect(presence(ana)).toEqual({ [geral.id]: [] });
+  });
+
+  it("fechar o app tira a pessoa da sala; sala que não é do servidor não aparece", async () => {
+    const { ana, beto, geral } = await servidorComAmigos();
+    await send(world, BETO, beto, { type: "status", room: { code: "ABCDEF", name: "Outra" }, live: false });
+    expect(ana.last("server-presence")).toBeUndefined();
+    await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false }] });
+    await world.disconnect(BETO, beto);
+    expect(presence(ana)).toEqual({ [geral.id]: [] });
+  });
+
+  it("o servidor só conta membros e salas que existem", () => {
+    const s = world.server(S1);
+    s.create(S1, "Turma", { id: ANA, name: "Ana", avatar: null });
+    const geral = s.snapshot()!.rooms[0];
+    expect(s.setPresence(CAIO, geral.code, false)).toBe(false);
+    expect(s.setPresence(ANA, "ABCDEF", false)).toBe(false);
+    expect(s.setPresence(ANA, geral.code, false)).toBe(true);
+    // Repetir o mesmo não avisa de novo.
+    expect(s.setPresence(ANA, geral.code, false)).toBe(false);
+    expect(s.presence()).toEqual({ [geral.id]: [{ id: ANA, live: false }] });
+    expect(s.setPresence(ANA, null, false)).toBe(true);
+    expect(s.setPresence(ANA, null, false)).toBe(false);
+  });
+
+  it("amigo membro do servidor entra direto na sala dele, sem pedir", async () => {
+    const { ana, beto, geral } = await servidorComAmigos();
+    await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
+    await send(world, ANA, ana, { type: "join", id: BETO });
+    expect(ana.last("join-result")).toEqual({
+      type: "join-result",
+      result: { kind: "approved", code: geral.code, room: "Geral", by: "Beto" },
+    });
+    expect(world.asked).toEqual([]);
+  });
+
+  it("numa sala que não é de servidor, o amigo continua pedindo", async () => {
+    const { ana, beto } = await servidorComAmigos();
+    await send(world, BETO, beto, { type: "status", room: { code: "ABCDEF", name: "Outra" }, live: false });
+    await send(world, ANA, ana, { type: "join", id: BETO });
+    expect(ana.last("join-result")).toEqual({ type: "join-result", result: { kind: "pending", friend: "Beto" } });
+  });
+
+  it("quem sai do servidor some das salas dele e o índice esquece as salas", async () => {
+    const { ana, beto, geral } = await servidorComAmigos();
+    await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
+    await send(world, BETO, beto, action(S1, { kind: "leave" }));
+    expect(world.server(S1).presence()).toEqual({ [geral.id]: [] });
+    // Fora do servidor, pedir para entrar volta a pedir.
+    await send(world, ANA, ana, { type: "join", id: BETO });
+    expect(ana.last("join-result")).toMatchObject({ result: { kind: "pending" } });
   });
 });
