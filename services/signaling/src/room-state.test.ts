@@ -277,6 +277,7 @@ describe("status ao vivo", () => {
         discord: null,
         verified: false,
         watching: null,
+        effect: null,
       },
     });
 
@@ -302,6 +303,7 @@ describe("estado de voz", () => {
         discord: null,
         verified: false,
         watching: null,
+        effect: null,
       },
     });
     send(beto, { type: "status", live: true, muted: true, deafened: true });
@@ -316,6 +318,27 @@ describe("estado de voz", () => {
     expect(ana.last()).toMatchObject({ type: "member-updated", member: { id: idOf(beto), watching: idOf(ana) } });
     send(beto, { type: "status", live: false, watching: null });
     expect(ana.last()).toMatchObject({ member: { id: idOf(beto), watching: null } });
+  });
+});
+
+describe("efeito de fala", () => {
+  it("passa para a sala o efeito que cada membro escolheu, e o anel padrão quando ele tira", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "status", live: false, effect: { kind: "rays", color: "#a78bfa" } });
+    expect(ana.last()).toMatchObject({
+      type: "member-updated",
+      member: { id: idOf(beto), effect: { kind: "rays", color: "#a78bfa" } },
+    });
+    // Quem entra depois já recebe o efeito no welcome.
+    const caio = join("Caio");
+    const welcome = caio.sent.find((m) => m.type === "welcome");
+    expect(welcome?.type === "welcome" && welcome.members.find((m) => m.name === "Beto")?.effect).toEqual({
+      kind: "rays",
+      color: "#a78bfa",
+    });
+    send(beto, { type: "status", live: false, effect: null });
+    expect(ana.last()).toMatchObject({ member: { id: idOf(beto), effect: null } });
   });
 });
 

@@ -19,6 +19,7 @@ import { StreamDialog } from "../stream/StreamDialog";
 import { Avatar, avatarColor } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
+import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { useVoiceStore } from "./voice-store";
 
@@ -258,6 +259,7 @@ function Tile({
   ref?: Ref<HTMLDivElement>;
 } & HTMLAttributes<HTMLDivElement>) {
   const color = avatarColor(member.name);
+  const effect = useMemberEffect(member, isMe);
   const strip = variant === "strip";
   const shape = variant === "focus" ? "h-full w-full" : strip ? "aspect-video h-full" : "aspect-video w-full";
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -283,10 +285,15 @@ function Tile({
       className={`group relative flex ${shape} cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-brand ${
         speaking ? "border-online" : strip ? "border-transparent hover:border-surface-hover" : "border-transparent"
       }`}
-      // Fundo na cor do avatar, escurecido, como os quadros do Discord.
-      style={{ ...style, background: `color-mix(in srgb, ${color} 45%, var(--color-surface-float))` }}
+      style={{
+        ...style,
+        // Fundo na cor do avatar, escurecido, como os quadros do Discord.
+        background: `color-mix(in srgb, ${color} 45%, var(--color-surface-float))`,
+        // Falando com um efeito escolhido: a borda do quadro fica na cor dele.
+        ...(speaking && effect ? { borderColor: effect.color } : null),
+      }}
     >
-      <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} src={photo} />
+      <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} effect={effect} src={photo} />
 
       {member.live && (
         <span

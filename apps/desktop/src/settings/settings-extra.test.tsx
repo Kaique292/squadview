@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useAccountStore } from "../account/account-store";
+import { useSpeakingEffectStore } from "../voice/speaking-effect";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
 import { SettingsDialog } from "./SettingsDialog";
 
@@ -23,6 +24,7 @@ beforeEach(() => {
   invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "voice_devices" ? DEVICES : undefined));
   localStorage.clear();
   useAccountStore.setState({ profile: null });
+  useSpeakingEffectStore.setState({ effect: null });
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, devices: { inputs: [], outputs: [] }, level: 0, speaking: {} });
 });
 
@@ -117,6 +119,57 @@ describe("configurações: busca e navegação", () => {
     const nav = openSettings();
     fireEvent.click(within(nav).getByRole("button", { name: "Desempenho" }));
     expect(await screen.findByRole("switch", { name: "Gravar registro de desempenho" })).toBeInTheDocument();
+  });
+});
+
+describe("configurações: efeito de fala", () => {
+  it("mostra a prévia do efeito e da cor antes de aplicar, e aplica para a sala", () => {
+    openSettings();
+    const efeitos = screen.getByRole("radiogroup", { name: "Efeito" });
+    const aplicar = screen.getByRole("button", { name: "Aplicar" });
+    expect(within(efeitos).getByRole("radio", { name: "Padrão" })).toHaveAttribute("aria-checked", "true");
+    expect(aplicar).toBeDisabled();
+
+    fireEvent.click(within(efeitos).getByRole("radio", { name: "Raios" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Cor #3ba0ff" }));
+    // Só a prévia muda: nada foi aplicado ainda.
+    const previa = screen.getByRole("img", { name: "Prévia: Raios" });
+    expect(previa.querySelector("[data-effect=rays]")).toHaveAttribute("data-active");
+    expect(useSpeakingEffectStore.getState().effect).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("room_set_effect", expect.anything());
+
+    fireEvent.click(aplicar);
+    expect(useSpeakingEffectStore.getState().effect).toEqual({ kind: "rays", color: "#3ba0ff" });
+    expect(invoke).toHaveBeenCalledWith("room_set_effect", { effect: { kind: "rays", color: "#3ba0ff" } });
+    expect(screen.getByText("Efeito aplicado.")).toBeInTheDocument();
+  });
+
+  it("aceita qualquer outra cor e remove o efeito, voltando ao anel padrão", () => {
+    useSpeakingEffectStore.setState({ effect: { kind: "dots", color: "#f5e27a" } });
+    openSettings();
+    // "Outra cor" abre o seletor do próprio app (não o do Windows).
+    const outra = screen.getByRole("button", { name: "Outra cor" });
+    expect(outra).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(outra);
+    expect(outra).toHaveAttribute("aria-expanded", "true");
+    const codigo = screen.getByRole("textbox", { name: "Código da cor" });
+    fireEvent.change(codigo, { target: { value: "12AB34" } });
+    fireEvent.keyDown(codigo, { key: "Enter" });
+    expect(screen.getByRole("img", { name: "Prévia: Esfera de pontos" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    expect(useSpeakingEffectStore.getState().effect).toEqual({ kind: "dots", color: "#12ab34" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover efeito" }));
+    expect(useSpeakingEffectStore.getState().effect).toBeNull();
+    expect(invoke).toHaveBeenLastCalledWith("room_set_effect", { effect: null });
+    expect(screen.getByRole("radio", { name: "Padrão" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("img", { name: "Prévia: anel padrão" })).toBeInTheDocument();
+  });
+
+  it("o subitem Efeito de fala leva até a parte certa da página", () => {
+    const nav = openSettings();
+    fireEvent.click(within(nav).getByRole("button", { name: "Efeito de fala" }));
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("voz-efeito"));
   });
 });
 

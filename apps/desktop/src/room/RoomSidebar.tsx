@@ -38,6 +38,7 @@ import { inviteUrl } from "./invite";
 import { MemberMenu } from "./MemberMenu";
 import { NameDialog } from "./NameDialog";
 import { type Member, memberPhoto, roomTitle, useRoomStore } from "./room-store";
+import { useMemberEffect, useSpeakingEffectStore } from "../voice/speaking-effect";
 
 /**
  * Barra lateral no estilo da lista de canais do Discord: cabeçalho da sala com menu e a sala como
@@ -303,6 +304,7 @@ function MemberRow(props: {
   const { member } = props;
   const profile = useAccountStore((s) => s.profile);
   const speaking = useVoiceStore((s) => !!s.speaking[props.isMe ? "me" : member.id]);
+  const effect = useMemberEffect(member, !!props.isMe);
   const myPrefs = useVoiceStore((s) => s.prefs);
   const muted = props.isMe ? myPrefs.muted || myPrefs.deafened : !!member.muted;
   const deafened = props.isMe ? myPrefs.deafened : !!member.deafened;
@@ -319,6 +321,7 @@ function MemberRow(props: {
           size={24}
           live={member.live}
           speaking={speaking}
+          effect={effect}
           src={memberPhoto(member, !!props.isMe, profile, 64)}
         />
         <span
@@ -425,6 +428,7 @@ function UserPanel() {
   const watching = useRoomStore((s) => s.watching);
   const live = useStreamStore((s) => s.status === "live");
   const speaking = useVoiceStore((s) => !!s.speaking.me);
+  const effect = useSpeakingEffectStore((s) => s.effect);
   const status = live ? "Transmitindo" : watching ? `Assistindo ${watching.name}` : code ? "Na sala" : "Fora de sala";
 
   return (
@@ -435,6 +439,7 @@ function UserPanel() {
           size={32}
           live={live}
           speaking={speaking}
+          effect={effect}
           status={code ? "online" : "offline"}
           src={profile ? avatarUrl(profile) : undefined}
         />

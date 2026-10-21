@@ -25,6 +25,17 @@ export interface DiscordUser {
   avatar: string | null;
 }
 
+/** Efeitos de fala que o app sabe desenhar (o app ignora os que não conhece, de versões novas). */
+export const SPEAKING_EFFECTS = ["dots", "waves", "equalizer", "rays"] as const;
+export type SpeakingEffectKind = (typeof SPEAKING_EFFECTS)[number];
+
+/** Efeito em volta da foto quando o membro fala, escolhido por ele (ADR 0015). */
+export interface SpeakingEffect {
+  kind: SpeakingEffectKind;
+  /** Cor no formato `#rrggbb`. */
+  color: string;
+}
+
 export interface Member {
   id: PeerId;
   name: string;
@@ -39,6 +50,8 @@ export interface Member {
   verified: boolean;
   /** Quem este membro está assistindo (id), ou `null`. Ausente até o primeiro `status` dele. */
   watching?: PeerId | null;
+  /** Efeito de fala escolhido, ou `null` (o anel padrão). Ausente até o primeiro `status` dele. */
+  effect?: SpeakingEffect | null;
 }
 
 export type ClientMessage =
@@ -54,8 +67,18 @@ export type ClientMessage =
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
   | { type: "rename"; name: string; discord?: DiscordUser | null }
-  /** `watching`: quem estamos assistindo (para quem transmite ver quantos e quem assistem). */
-  | { type: "status"; live: boolean; muted: boolean; deafened: boolean; watching: PeerId | null }
+  /**
+   * `watching`: quem estamos assistindo (para quem transmite ver quantos e quem assistem).
+   * `effect`: o efeito de fala escolhido (`null`: o anel padrão).
+   */
+  | {
+      type: "status";
+      live: boolean;
+      muted: boolean;
+      deafened: boolean;
+      watching: PeerId | null;
+      effect: SpeakingEffect | null;
+    }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
   | { type: "join-answer"; id: string; accept: boolean }
@@ -103,6 +126,18 @@ export const REQUEST_ID_PATTERN = PEER_ID_PATTERN;
 const DISCORD_ID_PATTERN = /^[0-9]{15,21}$/;
 /** Hash da foto do Discord (`a_` na frente quando é animada). */
 const DISCORD_AVATAR_PATTERN = /^(a_)?[0-9a-f]{32}$/;
+const COLOR_PATTERN = /^#[0-9a-f]{6}$/;
+
+/**
+ * Lê o campo `effect` do `status`. Fora do formato (ou um efeito que este servidor não conhece,
+ * de um app mais novo) vira `null`, o anel padrão: um efeito nunca derruba a conexão.
+ */
+function parseEffect(value: unknown): SpeakingEffect | null {
+  if (!isPlainObject(value) || typeof value.color !== "string") return null;
+  const kind = SPEAKING_EFFECTS.find((k) => k === value.kind);
+  const color = value.color.toLowerCase();
+  return kind && COLOR_PATTERN.test(color) ? { kind, color } : null;
+}
 
 /**
  * Lê o campo `discord`: `undefined` se veio ausente, `null` se veio nulo, a conta se for válida.
@@ -168,7 +203,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // watching também é opcional (apps até o 0.4.0 não mandam).
       const watching = data.watching ?? null;
       if (watching !== null && (typeof watching !== "string" || !PEER_ID_PATTERN.test(watching))) return null;
-      return { type: "status", live: data.live, muted, deafened, watching };
+      // effect também é opcional (apps até o 0.5.0 não mandam).
+      const effect = parseEffect(data.effect);
+      return { type: "status", live: data.live, muted, deafened, watching, effect };
     }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;

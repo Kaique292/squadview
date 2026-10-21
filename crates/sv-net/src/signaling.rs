@@ -32,6 +32,32 @@ pub struct DiscordUser {
     pub avatar: Option<String>,
 }
 
+/// Efeito em volta da foto quando o membro fala, escolhido por ele (ADR 0015). `kind` fica em
+/// texto: um efeito novo, de uma versão mais nova, não pode estragar a leitura do membro (a
+/// interface desenha o anel padrão no lugar do que não conhece).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeakingEffect {
+    pub kind: String,
+    /// Cor no formato `#rrggbb`.
+    pub color: String,
+}
+
+impl SpeakingEffect {
+    /// Efeitos que esta versão sabe desenhar (iguais aos do Worker).
+    pub const KINDS: [&'static str; 4] = ["dots", "waves", "equalizer", "rays"];
+
+    /// O efeito, se for um que conhecemos e a cor estiver no formato; senão `None` (o anel padrão).
+    pub fn cleaned(kind: &str, color: &str) -> Option<Self> {
+        let color = color.to_ascii_lowercase();
+        let hex = color.strip_prefix('#')?;
+        let valid = hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+        (valid && Self::KINDS.contains(&kind)).then(|| Self {
+            kind: kind.to_owned(),
+            color,
+        })
+    }
+}
+
 /// Quem pediu para entrar na sala (um amigo de alguém daqui, conferido pelo Worker).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoinRequester {
@@ -61,6 +87,9 @@ pub struct Member {
     /// Quem este membro está assistindo (id). Ausente no Worker antigo e em apps até o 0.4.0.
     #[serde(default)]
     pub watching: Option<String>,
+    /// Efeito de fala escolhido (`None`: o anel padrão). Ausente no Worker antigo e em apps até o 0.5.0.
+    #[serde(default)]
+    pub effect: Option<SpeakingEffect>,
 }
 
 /// Mensagens que mandamos.
@@ -85,6 +114,8 @@ enum Outgoing<'a> {
         deafened: bool,
         /// Quem estamos assistindo: quem transmite vê quantos e quem assistem.
         watching: Option<&'a str>,
+        /// O efeito de fala que escolhemos (`None`: o anel padrão).
+        effect: Option<&'a SpeakingEffect>,
     },
     /// Renomeia a sala.
     Room {
@@ -323,16 +354,25 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.set_status(live, false, false, None);
+        self.set_status(live, false, false, None, None);
     }
 
-    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido e quem assistimos.
-    pub fn set_status(&self, live: bool, muted: bool, deafened: bool, watching: Option<&str>) {
+    /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido, quem assistimos e
+    /// o efeito de fala.
+    pub fn set_status(
+        &self,
+        live: bool,
+        muted: bool,
+        deafened: bool,
+        watching: Option<&str>,
+        effect: Option<&SpeakingEffect>,
+    ) {
         self.send(&Outgoing::Status {
             live,
             muted,
             deafened,
             watching,
+            effect,
         });
     }
 
@@ -471,20 +511,35 @@ mod tests {
             muted: false,
             deafened: true,
             watching: None,
+            effect: None,
         })
         .unwrap();
         assert_eq!(
             status,
-            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null}"#
+            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"effect":null}"#
         );
         let watching = serde_json::to_string(&Outgoing::Status {
             live: false,
             muted: false,
             deafened: false,
             watching: Some("0123456789abcdef"),
+            effect: None,
         })
         .unwrap();
-        assert!(watching.ends_with(r#""watching":"0123456789abcdef"}"#), "{watching}");
+        assert!(watching.contains(r#""watching":"0123456789abcdef""#), "{watching}");
+        let ondas = SpeakingEffect::cleaned("waves", "#FF8800").unwrap();
+        let effect = serde_json::to_string(&Outgoing::Status {
+            live: false,
+            muted: false,
+            deafened: false,
+            watching: None,
+            effect: Some(&ondas),
+        })
+        .unwrap();
+        assert!(
+            effect.ends_with(r##""effect":{"kind":"waves","color":"#ff8800"}}"##),
+            "{effect}"
+        );
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
         };
@@ -498,6 +553,31 @@ mod tests {
             r#"{"type":"signal","to":"0123456789abcdef","payload":{"kind":"watch-deny","reason":"não está ao vivo"}}"#
         );
         assert_eq!(serde_json::to_string(&Outgoing::Leave).unwrap(), r#"{"type":"leave"}"#);
+    }
+
+    #[test]
+    fn efeito_de_fala_so_aceita_os_conhecidos_com_cor_valida() {
+        assert_eq!(
+            SpeakingEffect::cleaned("rays", "#A78BFA"),
+            Some(SpeakingEffect {
+                kind: "rays".into(),
+                color: "#a78bfa".into()
+            })
+        );
+        assert_eq!(SpeakingEffect::cleaned("fogo", "#a78bfa"), None);
+        assert_eq!(SpeakingEffect::cleaned("dots", "a78bfa"), None);
+        assert_eq!(SpeakingEffect::cleaned("dots", "#a78bfz"), None);
+        assert_eq!(SpeakingEffect::cleaned("dots", "#a78bfa00"), None);
+    }
+
+    #[test]
+    fn membro_com_efeito_desconhecido_continua_legivel() {
+        // Um efeito de uma versão mais nova não pode fazer o membro sumir da lista.
+        let m: Member = serde_json::from_str(
+            r##"{"id":"bb","name":"Beto","live":false,"effect":{"kind":"fogo","color":"#ff0000"}}"##,
+        )
+        .unwrap();
+        assert_eq!(m.effect.map(|e| e.kind).as_deref(), Some("fogo"));
     }
 
     #[test]
@@ -516,6 +596,7 @@ mod tests {
                     discord: None,
                     verified: false,
                     watching: None,
+                    effect: None,
                 }],
                 room: None,
             })
