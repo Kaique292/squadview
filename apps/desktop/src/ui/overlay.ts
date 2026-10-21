@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect } from "react";
 
 /**
  * O vídeo do stream é uma janela nativa dentro do app: ela sempre fica por cima da interface.
@@ -23,11 +22,6 @@ export function holdOverlay() {
     open = Math.max(0, open - 1);
     sync();
   };
-}
-
-/** Segura o overlay enquanto `open` for verdadeiro (e solta ao desmontar). */
-export function useOverlayWhile(open: boolean) {
-  useEffect(() => (open ? holdOverlay() : undefined), [open]);
 }
 
 /**
