@@ -1,6 +1,6 @@
 # 0015. Efeito de fala escolhido por cada um, enviado no status da sala
 
-- **Status:** proposta
+- **Status:** aceita
 - **Data:** 2026-10-21
 
 ## Contexto
@@ -27,9 +27,11 @@ interface de cada app, com SVG animado só por CSS.
   sem derrubar a conexão. No app, `kind` é lido como texto: um efeito novo, de uma versão mais
   nova, não estraga a leitura do membro; a interface desenha o anel padrão no lugar.
 - A cor só aceita `#rrggbb`: nada de CSS arbitrário vindo de outro membro.
-- Custo: o efeito é montado uma vez e animado por transformações de CSS (rotação e escala, na
-  GPU); parado e pausado quando a pessoa não fala. Não toca em captura, encode, rede de mídia
-  nem no render do vídeo.
+- Custo: o efeito é montado uma vez e só se animam camadas inteiras (cada `<svg>` gira, pulsa ou
+  respira), com transform e opacity, que a GPU faz sem redesenhar; parado e pausado quando a
+  pessoa não fala. Animar o que está _dentro_ do SVG obriga o Chromium a redesenhar a cada
+  quadro: medido com 8 pessoas falando, custava até ~40% da thread da interface; com camadas,
+  fica entre ~0,4% e ~3,5%. Não toca em captura, encode, rede de mídia nem no render do vídeo.
 - Trocar de efeito manda um `status`, que conta no limite de mensagens por conexão; como só
   acontece ao clicar em "Aplicar", não chega perto do limite.
 
