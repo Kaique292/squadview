@@ -5,6 +5,7 @@ import {
   Gamepad2,
   Loader2,
   LogOut,
+  Monitor,
   Mic,
   Palette,
   Pencil,
@@ -27,8 +28,9 @@ import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { usePresenceSettings } from "./presence-store";
 import { VoiceSection } from "./VoiceSection";
+import { WindowsSection } from "./WindowsSection";
 
-type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "desempenho";
+type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho";
 
 interface Item {
   id: Page;
@@ -67,6 +69,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         keywords: "aviso notificação mudo surdo entrar sair alerta",
       },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
+      {
+        id: "windows",
+        label: "Windows",
+        icon: <Monitor size={18} />,
+        keywords: "bandeja fechar minimizar relógio segundo plano iniciar",
+      },
       { id: "desempenho", label: "Desempenho", icon: <Activity size={18} />, keywords: "registro fps gpu diagnóstico" },
     ],
   },
@@ -89,6 +97,7 @@ const TITLES: Record<Page, string> = {
   sons: "Sons",
   discord: "Status no Discord",
   aparencia: "Aparência",
+  windows: "Configurações do Windows",
   desempenho: "Desempenho",
 };
 
@@ -147,6 +156,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
                 {page === "sons" && <SoundsSection />}
                 {page === "discord" && <PresenceSection />}
                 {page === "aparencia" && <AppearanceSection />}
+                {page === "windows" && <WindowsSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
               </div>
             </ScrollArea>
