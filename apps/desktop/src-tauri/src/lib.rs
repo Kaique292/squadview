@@ -170,6 +170,7 @@ pub fn run() {
             room::room_rename,
             room::room_set_name,
             room::room_set_profile,
+            room::room_set_effect,
             room::room_answer_join,
             room::room_watch,
             room::room_stop_watching,
