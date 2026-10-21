@@ -2,7 +2,7 @@
 
 Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 
-Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline funciona com NVIDIA e AMD (League of Legends: 59 fps transmitidos, ~5 ms de captura até o encode), mas falta medir a perda de FPS do jogo com PresentMon. A Fase 2 funciona com a sinalização publicada e falta o teste com um amigo em outra rede. Das Fases 4 e 5 já saíram as salas, as configurações, o login com o Discord, o AMF (pelo Media Foundation) e o Rich Presence.
+Onde estamos (v0.5.0, com mais na `dev`): a Fase 0 fechou. Na Fase 1, o pipeline funciona com NVIDIA e AMD (League of Legends: 59 fps transmitidos, ~5 ms de captura até o encode), mas falta medir a perda de FPS do jogo com PresentMon em mais um jogo. Na Fase 2, a conexão direta, o hole punching e os repasses de reserva já estão no ar; faltam o NACK e o teste com um amigo em outra rede. Na Fase 4, depois da v0.5.0, entraram servidores com salas fixas, conversas privadas com anexos, picture in picture, efeitos de fala e limpeza do cache por parte. Na Fase 5, já saíram o AMF (pelo Media Foundation) e o Rich Presence.
 
 | Fase               | Status | Entrega                                                       | Critério de saída                                                                      |
 | ------------------ | ------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -24,8 +24,8 @@ Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline func
 - [x] Agentes e skills do Claude
 - [x] CI, release-please, instalador NSIS e badge de cobertura
 - [x] Atualização automática assinada (OTA)
-- [ ] CI verde em `dev` e `main`
-- [ ] Release `v0.1.0`
+- [x] CI verde em `dev` e `main`
+- [x] Release `v0.1.0` (e depois até a `v0.5.0`)
 
 ## Fase 1 — Pipeline local
 
@@ -38,10 +38,11 @@ Onde estamos (v0.1.0): a Fase 0 fechou com a release. Na Fase 1, o pipeline func
 
 ## Fase 2 — Transmissão 1:1
 
-- [ ] `sv-net`: conexão QUIC com TLS e ALPN `squadview/1`
-- [ ] Sinalização por WebSocket no Durable Object da sala
-- [ ] Hole punching UDP e fallback por terceiro membro
-- [ ] Envio de mídia com NACK e pedido de keyframe
+- [x] `sv-net`: conexão QUIC com TLS e ALPN `squadview/1` (mais `squadview-voice/1` e `squadview-dm/1`)
+- [x] Sinalização por WebSocket no Durable Object da sala
+- [x] Hole punching UDP e fallback por terceiro membro (repasse por quem já assiste e TURN de reserva, [ADR 0014](adr/0014-conexao-em-camadas.md))
+- [ ] Envio de mídia com NACK e pedido de keyframe (o pedido de keyframe já existe; falta o NACK)
+- [ ] Teste com um amigo em outra rede, medindo a latência ponta a ponta
 
 ## Fase 3 — Malha da sala ([ADR 0012](adr/0012-malha-em-enxame.md))
 
@@ -60,15 +61,22 @@ Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
 
 ## Fase 4 — App completo
 
-- [ ] Criar/entrar em sala por código
-- [ ] Vários streams ao mesmo tempo na grade
-- [ ] Configurações de qualidade, fonte e áudio
-- [ ] Login com Discord (OAuth)
-- [ ] Prints reais no README
+- [x] Criar/entrar em sala por código
+- [ ] Vários streams ao mesmo tempo na grade (hoje cada pessoa assiste uma live por vez)
+- [x] Configurações de qualidade, fonte e áudio
+- [x] Login com Discord (OAuth)
+- [x] Prints reais no README (atualizar a cada versão)
+- [x] Amigos com presença, pedidos e chamar para a sala
+- [x] Voz na sala com supressão de ruído, ganho automático e sons de aviso
+- [x] Efeitos de fala com cor e prévia, vistos por toda a sala
+- [x] Barra da chamada e página de configurações no estilo do Discord
+- [x] Assistir a live em picture in picture
+- [x] Servidores com salas fixas, convites, papéis e ícone com recorte ([ADR 0016](adr/0016-servidores-e-salas-fixas.md))
+- [x] Conversas privadas direto entre dois amigos, com anexos ([ADR 0017](adr/0017-mensagens-privadas-p2p.md))
+- [x] Limpar o cache do app inteiro ou de cada parte
 
 ## Fase 5 — Distribuição
 
-- [ ] Encoder AMF
-
-- [ ] Rich Presence com botão "Assistir"
+- [x] Encoder AMF (pelo Media Foundation)
+- [x] Rich Presence com botão para entrar na sala
 - [ ] Bot de aviso no servidor do Discord
