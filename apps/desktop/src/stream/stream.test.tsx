@@ -98,7 +98,8 @@ describe("transmitir a tela: escolher a fonte", () => {
     expect(screen.getByRole("tab", { name: "Aplicativos" })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
-    expect(screen.getByRole("button", { name: /Monitor 1/ })).toBeInTheDocument();
+    // O conteúdo troca com animação: a aba anterior sai antes da nova entrar.
+    expect(await screen.findByRole("button", { name: /Monitor 1/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Counter-Strike 2" })).not.toBeInTheDocument();
   });
 
@@ -110,7 +111,7 @@ describe("transmitir a tela: escolher a fonte", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
     await waitFor(() => expect(useStreamStore.getState().thumbnails["monitor-1"]).toBeNull());
-    const monitor = screen.getByRole("button", { name: /Monitor 1/ });
+    const monitor = await screen.findByRole("button", { name: /Monitor 1/ });
     expect(monitor.querySelector("img")).toBeNull();
     expect(monitor.querySelector("[data-testid=miniatura-carregando]")).toBeNull();
   });
@@ -253,7 +254,7 @@ describe("transmitir a tela: áudio", () => {
     mockBackend();
     await openDialog();
     fireEvent.click(screen.getByRole("tab", { name: "Telas" }));
-    fireEvent.click(screen.getByRole("button", { name: /Monitor 1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Monitor 1/ }));
     const select = screen.getByRole("combobox", { name: "Som de qual aplicativo?" });
     expect(select).toHaveValue("");
     fireEvent.change(select, { target: { value: "7" } });

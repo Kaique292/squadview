@@ -4,12 +4,19 @@ import { avatarUrl, useAccountStore } from "../account/account-store";
 import { NameDialog } from "../room/NameDialog";
 import { Avatar } from "../ui/Avatar";
 import { Modal } from "../ui/Modal";
+import { TabContent, Tabs } from "../ui/Tabs";
 import { Tooltip } from "../ui/Tooltip";
 import { IconCropDialog } from "./IconCropDialog";
 import { ServerIcon } from "./ServerIcon";
 import { myRole, type Server, type ServerMember, type ServerRoom, useServersStore } from "./servers-store";
 
 type Tab = "geral" | "salas" | "membros";
+
+const TABS = [
+  ["geral", "Visão geral"],
+  ["salas", "Salas"],
+  ["membros", "Membros"],
+] as const satisfies readonly (readonly [Tab, string])[];
 
 const ROLE_LABEL: Record<ServerMember["role"], string> = {
   owner: "Dono",
@@ -27,33 +34,18 @@ export function ServerSettingsDialog(props: { server: Server; open: boolean; onO
       width={560}
       title={`Configurações de ${props.server.name}`}
     >
-      <div role="tablist" aria-label="Partes do servidor" className="mb-4 flex gap-1 border-b border-white/[0.06]">
-        {(
-          [
-            ["geral", "Visão geral"],
-            ["salas", "Salas"],
-            ["membros", "Membros"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-              tab === id ? "border-brand text-text" : "border-transparent text-text-muted hover:text-text"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="min-h-64 text-left">
-        {tab === "geral" && <Overview server={props.server} />}
-        {tab === "salas" && <Rooms server={props.server} />}
-        {tab === "membros" && <Members server={props.server} />}
-      </div>
+      <Tabs label="Partes do servidor" tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
+      <TabContent value={tab} order={TABS.map(([id]) => id)} className="min-h-64 text-left">
+        {(t) =>
+          t === "geral" ? (
+            <Overview server={props.server} />
+          ) : t === "salas" ? (
+            <Rooms server={props.server} />
+          ) : (
+            <Members server={props.server} />
+          )
+        }
+      </TabContent>
     </Modal>
   );
 }

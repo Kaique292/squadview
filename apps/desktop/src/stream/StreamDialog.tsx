@@ -1,6 +1,7 @@
 import { AppWindow, ChevronLeft, Loader2, Monitor, Radio } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Modal, ModalClose } from "../ui/Modal";
+import { TabContent, Tabs } from "../ui/Tabs";
 import { roomTitle, useRoomStore } from "../room/room-store";
 import { AudioSection } from "./AudioSection";
 import { StreamIllustration } from "./StreamIllustration";
@@ -14,6 +15,11 @@ import {
 } from "./stream-store";
 
 type Tab = "apps" | "screens";
+
+const TABS = [
+  ["apps", "Aplicativos"],
+  ["screens", "Telas"],
+] as const satisfies readonly (readonly [Tab, string])[];
 
 const RESOLUTIONS: { value: Resolution; label: string }[] = [
   { value: "720", label: "720p" },
@@ -54,8 +60,6 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
     await start(selected.id, quality, audioPid);
     if (useStreamStore.getState().status === "live") setOpen(false);
   }
-
-  const visible = sources.filter((s) => (tab === "apps" ? s.id.kind === "window" : s.id.kind === "monitor"));
 
   return (
     <Modal
@@ -122,52 +126,33 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
         />
       ) : (
         <div key="fonte" className="animate-step-in">
-          <div role="tablist" aria-label="Tipo de fonte" className="mb-4 flex gap-5 border-b border-surface-3">
-            <TabButton active={tab === "apps"} onClick={() => setTab("apps")}>
-              Aplicativos
-            </TabButton>
-            <TabButton active={tab === "screens"} onClick={() => setTab("screens")}>
-              Telas
-            </TabButton>
-          </div>
-
-          {loadingSources ? (
-            <p className="flex items-center justify-center gap-2 py-12 text-text-muted">
-              <Loader2 size={18} className="animate-spin" /> Procurando telas e janelas…
-            </p>
-          ) : visible.length === 0 ? (
-            <p className="py-12 text-center text-sm text-text-faint">
-              {tab === "apps" ? "Nenhum aplicativo aberto para transmitir." : "Nenhuma tela encontrada."}
-            </p>
-          ) : (
-            <ul aria-label={tab === "apps" ? "Aplicativos" : "Telas"} className="grid grid-cols-2 gap-4 pb-1">
-              {visible.map((s) => (
-                <li key={sourceKey(s.id)}>
-                  <SourceCard source={s} thumbnail={thumbnails[sourceKey(s.id)]} onSelect={() => select(s)} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <Tabs label="Tipo de fonte" tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
+          <TabContent value={tab} order={TABS.map(([id]) => id)}>
+            {(t) => {
+              const shown = sources.filter((s) => (t === "apps" ? s.id.kind === "window" : s.id.kind === "monitor"));
+              return loadingSources ? (
+                <p className="flex items-center justify-center gap-2 py-12 text-text-muted">
+                  <Loader2 size={18} className="animate-spin" /> Procurando telas e janelas…
+                </p>
+              ) : shown.length === 0 ? (
+                <p className="py-12 text-center text-sm text-text-faint">
+                  {t === "apps" ? "Nenhum aplicativo aberto para transmitir." : "Nenhuma tela encontrada."}
+                </p>
+              ) : (
+                <ul aria-label={t === "apps" ? "Aplicativos" : "Telas"} className="grid grid-cols-2 gap-4 pb-1">
+                  {shown.map((s) => (
+                    <li key={sourceKey(s.id)}>
+                      <SourceCard source={s} thumbnail={thumbnails[sourceKey(s.id)]} onSelect={() => select(s)} />
+                    </li>
+                  ))}
+                </ul>
+              );
+            }}
+          </TabContent>
           {error && <ErrorBox message={error} />}
         </div>
       )}
     </Modal>
-  );
-}
-
-function TabButton(props: { active: boolean; onClick: () => void; children: string }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={props.active}
-      onClick={props.onClick}
-      className={`-mb-px border-b-2 pb-2 text-sm font-semibold transition-colors ${
-        props.active ? "border-brand text-text" : "border-transparent text-text-muted hover:text-text"
-      }`}
-    >
-      {props.children}
-    </button>
   );
 }
 
