@@ -637,6 +637,15 @@ export class UserState {
     if (result.invite) conn.send({ type: "server-invite", server, invite: `${server}.${result.invite}` });
     if (!result.snapshot || result.removed.includes(this.id)) return this.onServerRemoved(server);
     this.onServerChanged(result.snapshot);
+    // Acabamos de entrar pelo convite: quem já está nas salas aparece na hora (antes, só ao
+    // reconectar ou quando alguém mudava de sala).
+    if (op.kind === "join") await this.sendServerPresence(server);
+  }
+
+  /** Manda a todas as nossas conexões quem está em cada sala do servidor agora. */
+  private async sendServerPresence(server: string): Promise<void> {
+    const presence = await this.peers.serverPresence(server).catch(() => null);
+    if (presence) this.broadcast({ type: "server-presence", server, presence });
   }
 
   /** Manda todos os nossos servidores; os que acabaram (ou de onde saímos) saem da lista. */

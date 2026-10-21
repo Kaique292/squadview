@@ -324,6 +324,40 @@ describe("servidores na barra de salas", () => {
     expect(useServersStore.getState().presence).toEqual({});
   });
 
+  it("o ícone do servidor mostra o alto-falante com gente em call, e some quando esvazia", () => {
+    render(<App />);
+    emit("friends-event", { type: "servers", servers: [server()] });
+    const rail = screen.getByRole("navigation", { name: "Salas" });
+    expect(within(rail).queryByLabelText("Gente em call")).toBeNull();
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: { "00000001": [{ id: BETO, live: false }], "00000002": [] },
+    });
+    expect(within(rail).getByLabelText("Gente em call")).toBeInTheDocument();
+    emit("friends-event", { type: "server-presence", server: "0000000000000001", presence: { "00000001": [] } });
+    expect(within(rail).queryByLabelText("Gente em call")).toBeNull();
+  });
+
+  it("quem acabou de entrar no servidor aparece na sala assim que o retrato com ele chega", () => {
+    const NOVO = "444444444444444444";
+    render(<App />);
+    emit("friends-event", { type: "servers", servers: [server()] });
+    act(() => useServersStore.getState().select("0000000000000001"));
+    // A presença dele chegou antes do retrato do servidor com ele na lista.
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: { "00000001": [{ id: NOVO, live: false }] },
+    });
+    expect(screen.queryByText("Dani")).toBeNull();
+    emit("friends-event", {
+      type: "server",
+      server: server({ members: [...server().members, { id: NOVO, name: "Dani", avatar: null, role: "member" }] }),
+    });
+    expect(screen.getByText("Dani")).toBeInTheDocument();
+  });
+
   it("saiu ou foi tirado: o servidor some da barra com aviso; erros do servidor viram texto", async () => {
     render(<App />);
     emit("friends-event", { type: "servers", servers: [server()] });

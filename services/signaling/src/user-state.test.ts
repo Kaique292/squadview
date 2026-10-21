@@ -596,6 +596,21 @@ describe("presença nas salas do servidor (ADR 0018)", () => {
     expect(presence(ana)).toEqual({ [geral.id]: [] });
   });
 
+  it("quem entra pelo convite já vê quem está nas salas, sem reconectar", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    await send(world, ANA, ana, { type: "server-create", name: "Turma do bairro" });
+    const geral = (ana.last("server") as Msg<"server">).server.rooms[0];
+    await send(world, ANA, ana, { type: "status", room: { code: geral.code, name: "Geral" }, live: true });
+    await send(world, ANA, ana, action(S1, { kind: "invite" }));
+    const { invite } = ana.last("server-invite") as Msg<"server-invite">;
+    const beto = await world.connect(BETO, "Beto");
+    await send(world, BETO, beto, { type: "server-join", invite });
+    // O retrato chega antes da presença (a lateral precisa do Beto na lista para mostrá-lo).
+    const types = beto.sent.map((m) => m.type);
+    expect(types.lastIndexOf("server")).toBeLessThan(types.lastIndexOf("server-presence"));
+    expect(presence(beto)).toEqual({ [geral.id]: [{ id: ANA, live: true }] });
+  });
+
   it("fechar o app tira a pessoa da sala; sala que não é do servidor não aparece", async () => {
     const { ana, beto, geral } = await servidorComAmigos();
     await send(world, BETO, beto, { type: "status", room: { code: "ABCDEF", name: "Outra" }, live: false });
