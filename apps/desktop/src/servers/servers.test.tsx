@@ -89,7 +89,10 @@ afterEach(() => offs.forEach((off) => off()));
 
 describe("servidores: regras da interface", () => {
   it("lê o convite de um link ou do texto colado", () => {
+    expect(serverInviteUrl(INVITE)).toBe(`https://kaique292.github.io/squadview/convite/?servidor=${INVITE}`);
     expect(parseServerInvite(serverInviteUrl(INVITE))).toBe(INVITE);
+    // Convites antigos (squadview://) continuam valendo ao colar.
+    expect(parseServerInvite(`squadview://servidor/${INVITE}`)).toBe(INVITE);
     expect(parseServerInvite(`  ${INVITE} `)).toBe(INVITE);
     expect(parseServerInvite("squadview://join/B8RJ2Q")).toBeNull();
   });
