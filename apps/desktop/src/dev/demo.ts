@@ -99,7 +99,12 @@ const SERVERS = [
       { id: "r2", name: "Ranked da noite", code: "K7M2Q4" },
       { id: "r3", name: "Só papo", code: "P3X8W1" },
     ],
-    members: [{ id: "eu", name: "Kaique", avatar: null, role: "owner" as const }],
+    members: [
+      { id: "eu", name: "Kaique", avatar: null, role: "owner" as const },
+      { id: "100000000000000004", name: "Itachi", avatar: null, role: "admin" as const },
+      { id: "100000000000000003", name: "Sakura", avatar: null, role: "member" as const },
+      { id: "100000000000000005", name: "Kakashi", avatar: null, role: "member" as const },
+    ],
   },
   { id: "s2", name: "Valorant BR", icon: serverIcon("#ff4655", "#1f2731", "V"), rooms: [], members: [] },
   { id: "s3", name: "Faculdade", icon: null, rooms: [], members: [] },
@@ -254,7 +259,21 @@ export function runDemo(scene: string) {
       online: { "100000000000000001": true },
     });
   }
-  if (scene === "servidor") useServersStore.setState({ servers: SERVERS, selected: "s1" });
+  if (scene === "servidor")
+    useServersStore.setState({
+      servers: SERVERS,
+      selected: "s1",
+      // Gente nas outras salas do servidor, mesmo com a gente fora delas (ADR 0018).
+      presence: {
+        s1: {
+          r2: [
+            { id: "100000000000000004", live: true },
+            { id: "100000000000000003", live: false },
+          ],
+          r3: [{ id: "100000000000000005", live: false }],
+        },
+      },
+    });
   if (scene === "transmitindo" || scene === "detalhes") goLive();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {

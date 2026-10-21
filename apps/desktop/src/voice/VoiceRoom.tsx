@@ -13,7 +13,7 @@ import {
   UserPlus,
   Volume2,
 } from "lucide-react";
-import { type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref, useState } from "react";
+import { type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 import { useAccountStore } from "../account/account-store";
 import { inviteUrl } from "../room/invite";
 import { MemberMenu } from "../room/MemberMenu";
@@ -22,13 +22,14 @@ import { StreamDetailsDialog } from "../stream/StreamDetailsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { MENU_CONTENT, StreamMenuItems } from "../stream/StreamMenu";
 import { StreamTile, type StreamTileVariant } from "../stream/StreamTile";
-import { useStreamStore } from "../stream/stream-store";
+import { onVideoEnter, useStreamStore } from "../stream/stream-store";
 import { useOverlayMenu } from "../ui/overlay";
-import { Avatar, avatarColor } from "../ui/Avatar";
+import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
 import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
+import { tileGlows, tileGradient } from "./tile-background";
 import { useVoiceStore } from "./voice-store";
 import { LiveBadge } from "../ui/LiveBadge";
 
@@ -57,6 +58,12 @@ export function VoiceRoom() {
   // como no Discord. O evento do React conta os menus abertos (em portal) como dentro da área.
   const [pointerIn, setPointerIn] = useState(false);
   const [focusIn, setFocusIn] = useState(false);
+  // Foco que veio de um clique (não do teclado) não segura os controles depois que o mouse sai.
+  const clicked = useRef(false);
+  // Sobre o vídeo nativo o mouse sai da página sem ela saber: quem avisa é o Rust. Ao entrar no
+  // vídeo, o "mouse em cima" da página deixa de valer (senão ficava preso ligado ao sair da janela).
+  const videoHover = useStreamStore((s) => s.videoHover);
+  useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
   // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
@@ -95,11 +102,13 @@ export function VoiceRoom() {
     );
   }
   if (!code) return null;
-  const chrome = pointerIn || focusIn;
+  const chrome = pointerIn || videoHover || focusIn;
   const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
     chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
   }`;
   const columns = gridColumns(ids.length);
+  // Cada pessoa com o seu fundo em degradê, sem repetir o de ninguém da sala.
+  const glows = tileGlows(members.map((m) => m.id));
   const others = ids.map((_, i) => i).filter((i) => i !== focusIndex);
   const stripLabel = stripOpen ? "Esconder participantes" : "Mostrar participantes";
 
@@ -122,6 +131,7 @@ export function VoiceRoom() {
     return (
       <MemberMenu member={m} isMe={isMe} onWatch={m.live && !isMe ? () => void watch(m) : undefined}>
         <Tile
+          glow={glows[m.id]}
           member={m}
           isMe={isMe}
           variant={variant}
@@ -144,7 +154,13 @@ export function VoiceRoom() {
       data-chrome={chrome || undefined}
       onMouseEnter={() => setPointerIn(true)}
       onMouseLeave={() => setPointerIn(false)}
-      onFocus={() => setFocusIn(true)}
+      onPointerDown={() => {
+        clicked.current = true;
+      }}
+      onFocus={() => {
+        setFocusIn(!clicked.current);
+        clicked.current = false;
+      }}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
       }}
@@ -295,6 +311,7 @@ const AVATAR_SIZE: Record<TileVariant, number> = { grid: 80, focus: 112, strip: 
  * `asChild`), por isso repassa o resto para a `div`.
  */
 function Tile({
+  glow,
   member,
   isMe,
   variant,
@@ -310,6 +327,8 @@ function Tile({
   style,
   ...rest
 }: {
+  /** A cor do brilho do fundo (ver `tileGlows`). */
+  glow: string;
   member: Member;
   isMe: boolean;
   variant: TileVariant;
@@ -323,7 +342,6 @@ function Tile({
   onActivate: () => void;
   ref?: Ref<HTMLDivElement>;
 } & HTMLAttributes<HTMLDivElement>) {
-  const color = avatarColor(member.name);
   const effect = useMemberEffect(member, isMe);
   const strip = variant === "strip";
   const shape = variant === "focus" ? "h-full w-full" : strip ? "aspect-video h-full" : "aspect-video w-full";
@@ -352,8 +370,8 @@ function Tile({
       }`}
       style={{
         ...style,
-        // Fundo na cor do avatar, escurecido, como os quadros do Discord.
-        background: `color-mix(in srgb, ${color} 45%, var(--color-surface-float))`,
+        // Fundo em degradê, um brilho subindo de baixo, de uma cor só desta pessoa na sala.
+        background: tileGradient(glow),
         // Falando com um efeito escolhido: a borda do quadro fica na cor dele.
         ...(speaking && effect ? { borderColor: effect.color } : null),
       }}

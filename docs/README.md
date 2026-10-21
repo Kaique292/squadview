@@ -34,3 +34,4 @@
 | [0015](adr/0015-efeito-de-fala-no-status.md)              | Efeito de fala de cada um, enviado no status da sala                                |
 | [0016](adr/0016-servidores-e-salas-fixas.md)              | Servidores com salas fixas, guardados no Worker                                     |
 | [0017](adr/0017-mensagens-privadas-p2p.md)                | Mensagens privadas direto entre os dois PCs                                         |
+| [0018](adr/0018-presenca-nas-salas-do-servidor.md)        | Presença nas salas do servidor e entrada direta para membros                        |

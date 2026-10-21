@@ -32,6 +32,9 @@ export interface Server {
   members: ServerMember[];
 }
 
+/** Quem está em cada sala do servidor (id da sala → membros), espelha o Worker (ADR 0018). */
+export type ServerPresence = Record<string, { id: string; live: boolean }[]>;
+
 /** Pedido a um servidor (espelha `sv_net::friends::ServerOp`). */
 export type ServerOp =
   | { kind: "update"; name?: string; icon?: string | null }
@@ -47,7 +50,8 @@ export type ServerMessage =
   | { type: "servers"; servers: Server[] }
   | { type: "server"; server: Server }
   | { type: "server-removed"; id: string }
-  | { type: "server-invite"; server: string; invite: string };
+  | { type: "server-invite"; server: string; invite: string }
+  | { type: "server-presence"; server: string; presence: ServerPresence };
 
 /** Erros do servidor, em texto para gente. */
 export const SERVER_ERRORS: Record<string, string> = {
@@ -105,6 +109,8 @@ interface ServersState {
   selected: string | null;
   /** Último convite criado em cada servidor (link pronto para copiar). */
   invites: Record<string, string>;
+  /** Quem está em cada sala de cada servidor, mesmo nas salas em que não estamos. */
+  presence: Record<string, ServerPresence>;
   select: (id: string | null) => void;
   create: (name: string) => Promise<void>;
   join: (invite: string) => Promise<void>;
@@ -117,6 +123,7 @@ export const useServersStore = create<ServersState>((set) => ({
   servers: [],
   selected: null,
   invites: {},
+  presence: {},
 
   select(id) {
     set({ selected: id });
@@ -189,6 +196,9 @@ export function onServerMessage(msg: { type: string }): boolean {
       if (gone) toast.info(`Você não está mais em ${gone.name}.`, "Servidor");
       return true;
     }
+    case "server-presence":
+      useServersStore.setState({ presence: { ...state.presence, [m.server]: m.presence } });
+      return true;
     case "server-invite": {
       const link = serverInviteUrl(m.invite);
       useServersStore.setState({ invites: { ...state.invites, [m.server]: link } });
@@ -205,5 +215,5 @@ export function onServerMessage(msg: { type: string }): boolean {
 
 /** Saiu da conta: os servidores somem da tela (voltam ao entrar de novo). */
 export function clearServers() {
-  useServersStore.setState({ servers: [], selected: null, invites: {} });
+  useServersStore.setState({ servers: [], selected: null, invites: {}, presence: {} });
 }

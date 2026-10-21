@@ -225,6 +225,33 @@ describe("a nossa live como um quadro da sala", () => {
     expect(within(detalhes).getByText("1 assistindo")).toBeInTheDocument();
   });
 
+  it("o mouse saindo da janela por cima do vídeo esconde os controles e os ...", () => {
+    render(<App />);
+    // O mouse entra pela página e passa para o vídeo nativo (a página não fica sabendo que ele saiu).
+    fireEvent.mouseEnter(canal());
+    fireEvent.mouseEnter(live());
+    emit("video-pointer", { kind: "enter" });
+    expect(canal()).toHaveAttribute("data-chrome");
+    expect(screen.getByRole("button", { name: "Mais opções da transmissão" })).toBeInTheDocument();
+    // Sai da janela por cima do vídeo: só o Rust avisa.
+    emit("video-pointer", { kind: "leave" });
+    expect(canal()).not.toHaveAttribute("data-chrome");
+    expect(screen.queryByRole("button", { name: "Mais opções da transmissão" })).toBeNull();
+  });
+
+  it("o foco de um clique não segura os controles depois que o mouse sai; o do teclado segura", () => {
+    render(<App />);
+    const convidar = within(canal()).getByRole("button", { name: "Convidar pessoas" });
+    fireEvent.mouseEnter(canal());
+    fireEvent.pointerDown(convidar);
+    fireEvent.focus(convidar);
+    fireEvent.mouseLeave(canal());
+    expect(canal()).not.toHaveAttribute("data-chrome");
+    // Pelo Tab (sem clique), os controles ficam enquanto o foco estiver neles.
+    fireEvent.focus(convidar);
+    expect(canal()).toHaveAttribute("data-chrome");
+  });
+
   it("na barra da chamada, o botão de tela fica verde e abre o menu da live", async () => {
     render(<App />);
     const botao = within(canal()).getByRole("button", { name: "Opções da transmissão" });

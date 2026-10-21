@@ -38,6 +38,8 @@ export function useOverlayMenu(onChange?: (open: boolean) => void) {
  * e o que for marcado com `data-video-hole` (avisos no canto, os selos e botões em cima da live).
  */
 const HOLE_SELECTOR = "[data-radix-popper-content-wrapper], [data-video-hole]";
+/** Quanto o buraco fica para dentro do que está por cima (pixels físicos). */
+const HOLE_INSET = 1;
 
 export interface Hole {
   x: number;
@@ -64,12 +66,14 @@ export function measureHoles(root: ParentNode = document): Hole[] {
   const holes: Hole[] = [];
   const add = (r: DOMRect, radius: number) => {
     if (r.width <= 0 || r.height <= 0) return;
+    // Um pixel para dentro de cada lado: o recorte do Windows tem os cantos em degraus, e onde ele
+    // passava da borda suavizada de uma pílula aparecia o preto de baixo (as "manchas" no AO VIVO).
     holes.push({
-      x: Math.floor(r.left * dpr),
-      y: Math.floor(r.top * dpr),
-      width: Math.ceil(r.width * dpr),
-      height: Math.ceil(r.height * dpr),
-      radius: Math.round(Math.min(radius, r.width / 2, r.height / 2) * dpr),
+      x: Math.ceil(r.left * dpr) + HOLE_INSET,
+      y: Math.ceil(r.top * dpr) + HOLE_INSET,
+      width: Math.max(0, Math.floor(r.width * dpr) - 2 * HOLE_INSET),
+      height: Math.max(0, Math.floor(r.height * dpr) - 2 * HOLE_INSET),
+      radius: Math.max(0, Math.round(Math.min(radius, r.width / 2, r.height / 2) * dpr) - HOLE_INSET),
     });
   };
   for (const el of root.querySelectorAll<HTMLElement>(HOLE_SELECTOR)) {
