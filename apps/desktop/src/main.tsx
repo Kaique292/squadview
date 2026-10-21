@@ -13,11 +13,13 @@ import { listenToSoundEvents } from "./sounds/sound-store";
 import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, boot } from "./splash/boot";
 import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
+import { blockNativeContextMenu } from "./ui/native-menu";
 import { toast } from "./ui/toast-store";
 import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
 
 // Sons de aviso (entrar, sair, mudo, surdo, transmissão).
 listenToSoundEvents();
+blockNativeContextMenu();
 
 // Vidro antes do primeiro desenho, para a janela já abrir com a intensidade salva.
 applyGlass(useAppearanceStore.getState().glass);

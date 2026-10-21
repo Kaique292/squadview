@@ -240,6 +240,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 }));
 
 /**
+ * Chama `cb` quando o mouse entra no vídeo nativo. A página não recebe o "saiu" quando o mouse
+ * passa dela para o vídeo: quem guarda "mouse em cima" usa isto para desligar. Devolve o cancelar.
+ */
+export function onVideoEnter(cb: () => void) {
+  return useStreamStore.subscribe((s, prev) => {
+    if (s.videoHover && !prev.videoHover) cb();
+  });
+}
+
+/**
  * Teto do upload por pessoa assistindo, em Mbps. Mesma fórmula de `StreamQuality::bitrate_kbps`
  * no Rust (0,064 bit por pixel por quadro, entre 1,5 e 25 Mbps), assumindo uma fonte 16:9.
  * Sem saber o tamanho da fonte, supõe que ela preenche a resolução escolhida (4K em "Fonte").

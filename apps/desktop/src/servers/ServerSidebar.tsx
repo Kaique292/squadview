@@ -1,14 +1,12 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, LogOut, Plus, Settings, Trash2, UserPlus, Volume2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, Plus, UserPlus, Volume2 } from "lucide-react";
 import { useAccountStore } from "../account/account-store";
-import { NameDialog } from "../room/NameDialog";
-import { Elapsed, MenuItem, RoomMemberList } from "../room/RoomSidebar";
+import { Elapsed, RoomMemberList } from "../room/RoomSidebar";
 import { useRoomStore } from "../room/room-store";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
 import { useOverlayMenu } from "../ui/overlay";
-import { ServerSettingsDialog } from "./ServerSettingsDialog";
+import { SERVER_MENU_CONTENT, ServerMenuItems, useServerDialogs } from "./ServerMenu";
 import { myRole, type Server, useServersStore } from "./servers-store";
 
 /**
@@ -24,9 +22,7 @@ export function ServerSidebar(props: { server: Server }) {
   const code = useRoomStore((s) => s.code);
   const joinedAt = useRoomStore((s) => s.joinedAt);
   const members = useRoomStore((s) => s.members.length);
-  const [creating, setCreating] = useState(false);
-  const [settings, setSettings] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const dialogs = useServerDialogs(server);
   const onMenuOpenChange = useOverlayMenu();
 
   return (
@@ -46,34 +42,8 @@ export function ServerSidebar(props: { server: Server }) {
             </button>
           </Menu.Trigger>
           <Menu.Portal>
-            <Menu.Content
-              align="start"
-              sideOffset={6}
-              className="z-50 w-56 rounded-lg bg-surface-float p-1.5 shadow-2xl shadow-black/50 data-[state=closed]:animate-overlay-out data-[state=open]:animate-menu-in"
-            >
-              <MenuItem icon={<UserPlus size={16} />} onSelect={() => void act(server.id, { kind: "invite" })} accent>
-                Convidar pessoas
-              </MenuItem>
-              {admin && (
-                <MenuItem icon={<Settings size={16} />} onSelect={() => setSettings(true)}>
-                  Configurações do servidor
-                </MenuItem>
-              )}
-              {admin && (
-                <MenuItem icon={<Plus size={16} />} onSelect={() => setCreating(true)}>
-                  Criar sala
-                </MenuItem>
-              )}
-              <Menu.Separator className="my-1 h-px bg-surface-3" />
-              {role === "owner" ? (
-                <MenuItem icon={<Trash2 size={16} />} onSelect={() => setConfirmDelete(true)} danger>
-                  Apagar servidor
-                </MenuItem>
-              ) : (
-                <MenuItem icon={<LogOut size={16} />} onSelect={() => void act(server.id, { kind: "leave" })} danger>
-                  Sair do servidor
-                </MenuItem>
-              )}
+            <Menu.Content align="start" sideOffset={6} className={SERVER_MENU_CONTENT}>
+              <ServerMenuItems kind="dropdown" server={server} dialogs={dialogs} />
             </Menu.Content>
           </Menu.Portal>
         </Menu.Root>
@@ -97,7 +67,7 @@ export function ServerSidebar(props: { server: Server }) {
               <button
                 type="button"
                 aria-label="Criar sala"
-                onClick={() => setCreating(true)}
+                onClick={dialogs.openCreate}
                 className="rounded p-0.5 transition-colors hover:text-text"
               >
                 <Plus size={14} />
@@ -133,35 +103,7 @@ export function ServerSidebar(props: { server: Server }) {
         </ul>
       </ScrollArea>
 
-      <NameDialog
-        open={creating}
-        onOpenChange={setCreating}
-        title="Criar sala"
-        description={`A sala fica em ${server.name} para todo mundo, mesmo vazia.`}
-        label="Nome da sala"
-        initial=""
-        onSave={(name) => void act(server.id, { kind: "room-create", name })}
-      />
-      <ServerSettingsDialog server={server} open={settings} onOpenChange={setSettings} />
-      <ConfirmDelete server={server} open={confirmDelete} onOpenChange={setConfirmDelete} />
+      {dialogs.dialogs}
     </>
-  );
-}
-
-function ConfirmDelete(props: { server: Server; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const act = useServersStore((s) => s.act);
-  return (
-    <NameDialog
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      title={`Apagar ${props.server.name}?`}
-      description="O servidor some para todos, com as salas e os convites. Não dá para desfazer. Digite o nome do servidor para confirmar."
-      label="Nome do servidor"
-      initial=""
-      confirm="Apagar servidor"
-      danger
-      canSave={(name) => name.trim() === props.server.name}
-      onSave={() => void act(props.server.id, { kind: "delete" })}
-    />
   );
 }

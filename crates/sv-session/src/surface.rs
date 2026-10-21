@@ -32,24 +32,26 @@ impl Surface {
 }
 
 /// Os buracos que caem sobre o vídeo, relativos ao canto dele (o que fica fora é ignorado).
+///
+/// O buraco **não** é cortado na borda do vídeo: um menu que começa na barra lateral e entra no
+/// vídeo mantém o tamanho inteiro, com os cantos arredondados fora da janela (onde não aparecem).
+/// Cortado, o corte ganhava os cantos arredondados bem na borda, e eles viravam entalhes pretos.
 pub(crate) fn local_holes(video: Bounds, holes: &[Hole]) -> Vec<Hole> {
     let (vr, vb) = (video.x + video.width as i32, video.y + video.height as i32);
     holes
         .iter()
-        .filter_map(|&Hole { bounds: h, radius }| {
-            let left = h.x.max(video.x);
-            let top = h.y.max(video.y);
-            let right = (h.x + h.width as i32).min(vr);
-            let bottom = (h.y + h.height as i32).min(vb);
-            (right > left && bottom > top).then(|| Hole {
-                bounds: Bounds {
-                    x: left - video.x,
-                    y: top - video.y,
-                    width: (right - left) as u32,
-                    height: (bottom - top) as u32,
-                },
-                radius,
-            })
+        .filter(|h| {
+            let b = h.bounds;
+            b.x < vr && b.y < vb && b.x + b.width as i32 > video.x && b.y + b.height as i32 > video.y
+        })
+        .map(|&Hole { bounds: h, radius }| Hole {
+            bounds: Bounds {
+                x: h.x - video.x,
+                y: h.y - video.y,
+                width: h.width,
+                height: h.height,
+            },
+            radius,
         })
         .collect()
 }
@@ -137,11 +139,12 @@ mod tests {
         ];
         assert_eq!(
             local_holes(video, &holes),
+            // Inteiro, começando antes do vídeo: o canto arredondado da esquerda fica fora dele.
             vec![Hole {
                 bounds: Bounds {
-                    x: 0,
+                    x: -50,
                     y: 150,
-                    width: 200,
+                    width: 250,
                     height: 180,
                 },
                 radius: 8,
