@@ -370,11 +370,10 @@ mod tests {
         let status = t.events(FRIENDS_STATUS_EVENT);
         save_session(t.handle(), Some("sessao.falsa"));
         start(t.handle());
+        // O `start` desliga antes de conectar e já avisa "signed-out": esse não é a recusa. Espera
+        // tentar conectar e só então o "signed-out" de verdade (a sessão é apagada antes dele).
+        status.wait("connecting", |v| v == "connecting");
         status.wait("signed-out", |v| v == "signed-out");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while session(t.handle()).is_some() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
         assert_eq!(session(t.handle()), None, "a sessão recusada continuou salva");
     }
 
