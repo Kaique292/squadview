@@ -223,18 +223,26 @@ fn apelido_perfil_mudo_e_surdo_chegam_aos_outros() {
     updated(&mut beto, "a Ana surda", &|m| m.muted && m.deafened);
 
     // A Ana conta para a sala quem está assistindo (quem transmite vê quantos e quem assistem).
-    ana.room.set_watching(Some("0123456789abcdef"));
+    ana.room.set_watching(&["0123456789abcdef".to_owned()]);
     ana.members("assistindo na lista", |m| {
         m[0].watching.as_deref() == Some("0123456789abcdef")
     });
     updated(&mut beto, "quem a Ana assiste", &|m| {
         m.watching.as_deref() == Some("0123456789abcdef")
     });
-    ana.room.set_watching(None);
-    updated(&mut beto, "a Ana parar de assistir", &|m| m.watching.is_none());
+    // Duas lives ao mesmo tempo (ADR 0019): a primeira continua no campo antigo.
+    let duas = ["0123456789abcdef".to_owned(), "fedcba9876543210".to_owned()];
+    ana.room.set_watching(&duas);
+    updated(&mut beto, "as duas lives da Ana", &|m| {
+        m.watching_all == duas && m.watching.as_deref() == Some("0123456789abcdef")
+    });
+    ana.room.set_watching(&[]);
+    updated(&mut beto, "a Ana parar de assistir", &|m| {
+        m.watching.is_none() && m.watching_all.is_empty()
+    });
 
     // O Beto fica ao vivo: a Ana vê.
-    beto.client.set_status(true, false, false, None, None);
+    beto.client.set_status(true, false, false, &[], None);
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.name == "Beto" && x.live));
 
     // O Beto sai: some da lista e a voz é atualizada.
@@ -311,7 +319,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
         beto.client.signal(&ana_id, &signal);
     }
     // Um marcador depois dos sinais: até ele chegar, nada de assistir nem de voz.
-    beto.client.set_status(true, false, false, None, None);
+    beto.client.set_status(true, false, false, &[], None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchReady { .. } | RoomUpdate::WatchFailed { .. } | RoomUpdate::VoiceFailed { .. } => {
@@ -411,7 +419,8 @@ fn ana_pede_repasse_ao_caio(rt: &Runtime, url: &str) -> (Someone, Friend, Friend
     let mut caio = friend(rt, url, &code, "Caio");
     let ana_id = ana.id_of("Ana");
     // O Caio conta para a sala que assiste o Beto.
-    caio.client.set_status(false, false, false, Some(&beto.id), None);
+    caio.client
+        .set_status(false, false, false, std::slice::from_ref(&beto.id), None);
     let beto_id = beto.id.clone();
     ana.members("o Caio assistindo o Beto", |m| {
         m.iter()
@@ -663,26 +672,28 @@ fn pedido_para_assistir_sem_resposta_desiste_sozinho() {
                 .updates
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             {
-                Ok(RoomUpdate::WatchFailed { member_id, reason }) => break (member_id, reason),
+                // Cada pedido vence no seu prazo (várias lives, ADR 0019): o de quem já saiu também.
+                Ok(RoomUpdate::WatchFailed { member_id, reason }) if member_id == beto.id => {
+                    break (member_id, reason);
+                }
                 Ok(_) => {}
                 Err(_) => panic!("o pedido não venceu"),
             }
         }
     };
-    assert_eq!(
-        who, beto.id,
-        "só o pedido mais recente vence; o do fantasma foi trocado"
-    );
+    assert_eq!(who, beto.id);
     assert!(reason.contains("não respondeu"), "{reason}");
     assert!(started.elapsed() >= Duration::from_secs(10));
 
     // Resposta atrasada, depois de desistir: ignorada.
     beto.client
         .signal(&ana_id, &Signal::WatchDeny { reason: "tarde".into() });
-    beto.client.set_status(true, false, false, None, None);
+    beto.client.set_status(true, false, false, &[], None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
-        RoomUpdate::WatchFailed { .. } => panic!("resposta atrasada não pode falhar de novo"),
+        RoomUpdate::WatchFailed { member_id, .. } if member_id == beto.id => {
+            panic!("resposta atrasada não pode falhar de novo")
+        }
         _ => None,
     });
 }
@@ -795,12 +806,12 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
         Receiver::start(conn.unwrap(), Sink(mpsc::channel().0)).keyframe_requester()
     });
     let relay = Broadcaster::new();
-    ana.room.set_relay_source(Some(RelaySource {
+    ana.room.add_relay_source(RelaySource {
         streamer: beto.id.clone(),
         desc: desc(),
         broadcaster: relay.clone(),
         keyframes,
-    }));
+    });
 
     // Pedido de repasse de outro stream: recusa.
     let dani_peer = rt.block_on(Peer::bind(&[])).unwrap();

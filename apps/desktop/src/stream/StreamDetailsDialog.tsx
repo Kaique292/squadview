@@ -1,6 +1,6 @@
 import { Activity, Cpu, Gauge, Timer, Volume2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useRoomStore } from "../room/room-store";
+import { useRoomStore, watches } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
 import { Modal } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
@@ -24,7 +24,7 @@ function Details() {
   const { stats, history, system, quality, logPath } = useStreamStore();
   const viewers = useRoomStore((s) => {
     const me = s.members[0]?.id;
-    return me ? s.members.filter((m) => m.watching === me).length : 0;
+    return me ? s.members.filter((m) => watches(m, me)).length : 0;
   });
 
   return (
@@ -109,7 +109,7 @@ function Details() {
 }
 
 /** Um número grande com o gráfico do último minuto embaixo. */
-function Metric(props: {
+export function Metric(props: {
   icon: ReactNode;
   label: string;
   value: string;
@@ -179,7 +179,7 @@ function Sparkline(props: { values: number[]; color: string }) {
 }
 
 /** Barra de uso (0–100%) que cresce e encolhe animando; fica amarela e depois vermelha quando aperta. */
-function Bar(props: { label: string; percent: number }) {
+export function Bar(props: { label: string; percent: number }) {
   const percent = Math.round(Math.min(100, Math.max(0, props.percent)));
   const color = percent > 90 ? "bg-live" : percent > 70 ? "bg-warning" : "bg-online";
   return (

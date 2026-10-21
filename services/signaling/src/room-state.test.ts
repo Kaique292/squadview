@@ -277,6 +277,7 @@ describe("status ao vivo", () => {
         discord: null,
         verified: false,
         watching: null,
+        watchingAll: [],
         effect: null,
       },
     });
@@ -303,6 +304,7 @@ describe("estado de voz", () => {
         discord: null,
         verified: false,
         watching: null,
+        watchingAll: [],
         effect: null,
       },
     });
@@ -317,7 +319,14 @@ describe("estado de voz", () => {
     send(beto, { type: "status", live: false, watching: idOf(ana) });
     expect(ana.last()).toMatchObject({ type: "member-updated", member: { id: idOf(beto), watching: idOf(ana) } });
     send(beto, { type: "status", live: false, watching: null });
-    expect(ana.last()).toMatchObject({ member: { id: idOf(beto), watching: null } });
+    expect(ana.last()).toMatchObject({ member: { id: idOf(beto), watching: null, watchingAll: [] } });
+    // Várias lives ao mesmo tempo (ADR 0019).
+    const caio = join("Caio");
+    send(caio, { type: "status", live: true });
+    send(beto, { type: "status", live: false, watching: idOf(ana), watchingAll: [idOf(ana), idOf(caio)] });
+    expect(ana.last()).toMatchObject({
+      member: { id: idOf(beto), watching: idOf(ana), watchingAll: [idOf(ana), idOf(caio)] },
+    });
   });
 });
 

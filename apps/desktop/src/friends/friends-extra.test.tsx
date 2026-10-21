@@ -51,7 +51,7 @@ beforeEach(async () => {
   localStorage.clear();
   useToastStore.setState({ toasts: [] });
   useAccountStore.setState({ profile: null });
-  useRoomStore.setState({ code: null, roomName: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, roomName: null, members: [], watching: {} });
   useStreamStore.setState({ status: "idle" });
   useFriendsStore.setState({
     status: "signed-out",

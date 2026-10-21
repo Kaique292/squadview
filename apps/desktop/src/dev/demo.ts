@@ -1,7 +1,7 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
  * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`,
- * `#demo=servidor`, `#demo=transmitindo` ou `#demo=detalhes`.
+ * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes` ou `#demo=assistindo`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
 import { useAccountStore } from "../account/account-store";
@@ -201,6 +201,34 @@ function goLive() {
   }, 250);
 }
 
+/** Assistindo duas lives ao mesmo tempo (Minato e Yondaime), cada uma como um quadro da sala. */
+function watchTwo() {
+  const history = liveHistory();
+  const members = MEMBERS.map((m) =>
+    m.id === "c" ? { ...m, live: true, watching: null, watchingAll: [] } : { ...m, watchingAll: ["a", "c"] },
+  );
+  const watch = (id: string) => ({
+    member: members.find((m) => m.id === id)!,
+    stats: { ...history.at(-1)!, rttMs: id === "a" ? 18 : 41 },
+    history,
+    listening: id === "a",
+    volume: 100,
+  });
+  useRoomStore.setState({ members, watching: { a: watch("a"), c: watch("c") } });
+  setTimeout(() => {
+    for (const [id, colors] of [
+      ["a", ["#0a3d62", "#c89b3c"]],
+      ["c", ["#3c1053", "#ad5389"]],
+    ] as const) {
+      const area = document.querySelector<HTMLElement>(`[data-testid="video-de-${id}"]`);
+      if (area) {
+        area.style.background = `center / cover url("${thumbnail(colors[0], colors[1], "")}")`;
+        area.replaceChildren();
+      }
+    }
+  }, 250);
+}
+
 /** Respostas de mentira do Rust, para as telas que perguntam algo a ele. */
 const FAKE_COMMANDS: Record<string, unknown> = {
   diagnostics_status: { enabled: true, files: 3 },
@@ -275,6 +303,7 @@ export function runDemo(scene: string) {
       },
     });
   if (scene === "transmitindo" || scene === "detalhes") goLive();
+  if (scene === "assistindo") watchTwo();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
     // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).

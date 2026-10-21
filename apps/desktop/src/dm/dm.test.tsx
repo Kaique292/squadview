@@ -77,7 +77,7 @@ beforeEach(async () => {
   localStorage.clear();
   useToastStore.setState({ toasts: [] });
   useAccountStore.setState({ profile: { id: ME, username: "k", globalName: "Kaique", avatar: null } });
-  useRoomStore.setState({ code: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, members: [], watching: {} });
   useFriendsStore.setState({
     status: "online",
     open: true,

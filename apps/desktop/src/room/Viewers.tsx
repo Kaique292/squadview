@@ -2,11 +2,11 @@ import { Eye } from "lucide-react";
 import { useAccountStore } from "../account/account-store";
 import { Avatar } from "../ui/Avatar";
 import { Tooltip } from "../ui/Tooltip";
-import { type Member, memberPhoto, useRoomStore } from "./room-store";
+import { type Member, memberPhoto, useRoomStore, watches } from "./room-store";
 
 /** Quem da sala está assistindo `streamerId` (cada app conta para a sala quem assiste). */
 export function viewersOf(members: Member[], streamerId: string): Member[] {
-  return members.filter((m) => m.id !== streamerId && m.watching === streamerId);
+  return members.filter((m) => m.id !== streamerId && watches(m, streamerId));
 }
 
 /** "Ana", "Ana e Beto", "Ana, Beto e Caio". */

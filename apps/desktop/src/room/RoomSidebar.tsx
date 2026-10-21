@@ -279,8 +279,8 @@ export function RoomMemberList() {
         <MemberRow
           key={m.id}
           member={m}
-          watching={watching?.id === m.id}
-          pending={pendingWatch === m.id}
+          watching={!!watching[m.id]}
+          pending={pendingWatch.includes(m.id)}
           onWatch={() => void watch(m)}
         />
       ))}
@@ -444,11 +444,17 @@ function UserPanel() {
   const profile = useAccountStore((s) => s.profile);
   const name = me?.name ?? (profile ? displayName(profile) : "Você");
   const code = useRoomStore((s) => s.code);
-  const watching = useRoomStore((s) => s.watching);
+  const watching = Object.values(useRoomStore((s) => s.watching)).map((w) => w.member.name);
   const live = useStreamStore((s) => s.status === "live");
   const speaking = useVoiceStore((s) => !!s.speaking.me);
   const effect = useSpeakingEffectStore((s) => s.effect);
-  const status = live ? "Transmitindo" : watching ? `Assistindo ${watching.name}` : code ? "Na sala" : "Fora de sala";
+  const status = live
+    ? "Transmitindo"
+    : watching.length > 0
+      ? `Assistindo ${watching[0]}${watching.length > 1 ? ` e mais ${watching.length - 1}` : ""}`
+      : code
+        ? "Na sala"
+        : "Fora de sala";
 
   return (
     <footer className="flex h-[52px] shrink-0 items-center gap-1 px-2">

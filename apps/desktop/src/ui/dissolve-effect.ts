@@ -143,16 +143,18 @@ interface DissolveState {
 }
 
 let nextId = 1;
-/** Último lugar do vídeo na tela (px da interface), guardado pelo `useVideoSlot`. */
-let lastVideoRect: Rect | null = null;
+/** Último lugar de cada vídeo na tela (px da interface), guardado pelo `useVideoSlot`. */
+const lastVideoRects = new Map<string, Rect>();
+/** A chave da nossa live (a mesma do `video-pointer`; repetida aqui para não criar um ciclo). */
+const OWN = "transmissao:minha";
 
-export function rememberVideoRect(rect: Rect) {
-  if (rect.width > 0 && rect.height > 0) lastVideoRect = rect;
+export function rememberVideoRect(rect: Rect, of = OWN) {
+  if (rect.width > 0 && rect.height > 0) lastVideoRects.set(of, rect);
 }
 
 export const useDissolveStore = create<DissolveState>((set, get) => ({
   effect: null,
-  play(src, rect = lastVideoRect) {
+  play(src, rect = lastVideoRects.get(OWN) ?? null) {
     if (!rect) return;
     set({ effect: { id: nextId++, src, rect } });
   },
@@ -161,7 +163,7 @@ export const useDissolveStore = create<DissolveState>((set, get) => ({
   },
 }));
 
-/** Toca a animação de saída com a foto do último quadro (se houver). */
-export function playVideoExit(photo: string | null | undefined) {
-  if (photo) useDissolveStore.getState().play(photo);
+/** Toca a animação de saída com a foto do último quadro do vídeo `of` (se houver). */
+export function playVideoExit(photo: string | null | undefined, of = OWN) {
+  if (photo) useDissolveStore.getState().play(photo, lastVideoRects.get(of) ?? null);
 }
