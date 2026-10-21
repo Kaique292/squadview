@@ -63,7 +63,7 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 1. Os membros trocam candidatos de endereço pela sinalização. Quem aceita a conexão manda também o seu endereço no repassador TURN (`relay`), se tiver.
 2. Quem conecta tenta direto (hole punching UDP), por IPv4 e IPv6 ao mesmo tempo. No IPv6 não há NAT: o furo dos dois lados só abre o firewall do roteador.
 3. Se não fechar em 1,5 s (CGNAT simétrico), tenta também pelo `relay`. Já funciona para vídeo e voz entre dois membros.
-4. Se ainda não der, pede `relay-request` a um membro que já assiste aquele stream, e ele repassa os frames como estão. Já funciona para o vídeo, com um salto. Na malha (Fase 3), isso vira as faixas vindas de membros com rede aberta e vaga, e o repassador fica só para quem não alcança ninguém.
+4. Se ainda não der, pede `relay-request` a um membro que já assiste aquele stream, e ele repassa os frames como estão. Já funciona para o vídeo, com um salto. Para a voz, a [ADR 0020](adr/0020-voz-repassada-pela-sala.md) faz o mesmo: quem chama pede `voice-relay-request` a um membro que já fala com os dois, e ele copia os pacotes de voz por uma conexão de repasse (`sv-voz-repasse`), cada um com a origem. Na malha (Fase 3), isso vira as faixas vindas de membros com rede aberta e vaga, e o repassador fica só para quem não alcança ninguém.
 
 ## Mensagens (esboço)
 
