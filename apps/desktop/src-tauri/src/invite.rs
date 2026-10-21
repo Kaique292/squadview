@@ -1,6 +1,7 @@
 //! Convites por link: `squadview://join/CODIGO` abre o app (ou traz a janela para a frente) e
-//! mostra o modal de entrar na sala já com o código. Nunca entra sozinho: quem decide é a pessoa,
-//! para um link qualquer não colocar ninguém numa sala sem querer.
+//! mostra o modal de entrar na sala já com o código; `squadview://servidor/<id>.<segredo>` faz o
+//! mesmo com o convite de um servidor (a interface recebe `servidor:<convite>`). Nunca entra
+//! sozinho: quem decide é a pessoa, para um link qualquer não colocar ninguém numa sala sem querer.
 
 use std::sync::Mutex;
 
@@ -32,9 +33,19 @@ pub fn handle_urls<'a, R: Runtime>(app: &AppHandle<R>, urls: impl IntoIterator<I
     }
 }
 
-/// `squadview://join/ABC234` (ou com `/` no fim, hífen, minúsculas) → código normalizado.
+/// `squadview://join/ABC234` (ou com `/` no fim, hífen, minúsculas) → código normalizado;
+/// `squadview://servidor/<16 hex>.<12 letras e números>` → `servidor:<convite>`.
 fn parse_invite(url: &str) -> Option<String> {
     let rest = url.trim().strip_prefix("squadview://")?;
+    if let Some(server) = rest.strip_prefix("servidor/") {
+        let invite = server.split(['/', '?', '#']).next()?;
+        let (id, secret) = invite.split_once('.')?;
+        let valid = id.len() == 16
+            && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && secret.len() == 12
+            && secret.bytes().all(|b| b.is_ascii_alphanumeric());
+        return valid.then(|| format!("servidor:{invite}"));
+    }
     let rest = rest.strip_prefix("join/")?;
     let code = rest.split(['/', '?', '#']).next()?;
     sv_net::signaling::normalize_room_code(code)
@@ -64,6 +75,18 @@ mod tests {
     fn le_o_codigo_do_link() {
         assert_eq!(parse_invite("squadview://join/F5B6S9").as_deref(), Some("F5B6S9"));
         assert_eq!(parse_invite("squadview://join/f5b-6s9/").as_deref(), Some("F5B6S9"));
+    }
+
+    #[test]
+    fn le_o_convite_de_servidor() {
+        assert_eq!(
+            parse_invite("squadview://servidor/0123456789abcdef.AbCdEf234567/").as_deref(),
+            Some("servidor:0123456789abcdef.AbCdEf234567")
+        );
+        assert_eq!(parse_invite("squadview://servidor/0123456789abcdef"), None);
+        assert_eq!(parse_invite("squadview://servidor/0123456789ABCDEF.AbCdEf234567"), None);
+        assert_eq!(parse_invite("squadview://servidor/0123456789abcdef.curto"), None);
+        assert_eq!(parse_invite("squadview://servidor/0123456789abcdef.AbCdEf23456!"), None);
     }
 
     #[test]
