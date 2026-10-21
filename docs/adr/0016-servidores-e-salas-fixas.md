@@ -1,6 +1,6 @@
 # 0016. Servidores com salas fixas, guardados no Worker
 
-- **Status:** proposta
+- **Status:** aceita
 - **Data:** 2026-10-21
 
 ## Contexto
