@@ -1,5 +1,5 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Check, Eye, Pencil, UserPlus } from "lucide-react";
+import { Eye, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useFriendsStore } from "../friends/friends-store";
 import { useOverlayMenu } from "../ui/overlay";
@@ -8,6 +8,7 @@ import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
 const DEFAULT_PEER = { volume: 100, muted: false };
 import { NameDialog } from "./NameDialog";
 import { type Member, useRoomStore } from "./room-store";
+import { CheckMark } from "../ui/Checkbox";
 
 /**
  * Menu do botão direito num membro, como o do Discord. No nosso nome: trocar o apelido. Nos
@@ -139,11 +140,7 @@ function PeerVoice(props: { member: Member }) {
         className="flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm font-medium text-text-muted outline-none data-[highlighted]:bg-brand data-[highlighted]:text-white"
       >
         Silenciar
-        <span
-          className={`grid size-5 place-items-center rounded border ${prefs.muted ? "border-brand bg-brand text-white" : "border-text-faint"}`}
-        >
-          {prefs.muted && <Check size={14} />}
-        </span>
+        <CheckMark checked={prefs.muted} />
       </ContextMenu.CheckboxItem>
     </>
   );

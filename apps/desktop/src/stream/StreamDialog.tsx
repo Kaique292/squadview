@@ -1,6 +1,7 @@
 import { AppWindow, ChevronLeft, Loader2, Monitor, Radio } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Modal, ModalClose } from "../ui/Modal";
+import { TabContent, Tabs } from "../ui/Tabs";
 import { roomTitle, useRoomStore } from "../room/room-store";
 import { AudioSection } from "./AudioSection";
 import { StreamIllustration } from "./StreamIllustration";
@@ -15,6 +16,11 @@ import {
 
 type Tab = "apps" | "screens";
 
+const TABS = [
+  ["apps", "Aplicativos"],
+  ["screens", "Telas"],
+] as const satisfies readonly (readonly [Tab, string])[];
+
 const RESOLUTIONS: { value: Resolution; label: string }[] = [
   { value: "720", label: "720p" },
   { value: "1080", label: "1080p" },
@@ -25,15 +31,36 @@ const FRAME_RATES: StreamQuality["fps"][] = [15, 30, 60];
 
 /**
  * Botão "Transmitir minha tela" + modal em dois passos: escolher a fonte, depois a qualidade.
- * `trigger` troca o botão padrão (ex.: o botão do painel da sala na barra lateral).
+ * `trigger` troca o botão padrão (ex.: o botão do painel da sala na barra lateral). Sem gatilho,
+ * `open` e `onOpenChange` abrem por fora (o "Trocar transmissão" do menu da live). Já ao vivo, o
+ * modal troca o que está sendo transmitido, sem sair do ar.
  */
-export function StreamDialog(props: { trigger?: ReactNode } = {}) {
+export function StreamDialog(
+  props: { trigger?: ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void } = {},
+) {
   const { sources, thumbnails, loadingSources, status, error, quality, loadSources, setQuality, start } =
     useStreamStore();
-  const [open, setOpen] = useState(false);
+  const [innerOpen, setInnerOpen] = useState(false);
+  const open = props.open ?? innerOpen;
+  const setOpen = (next: boolean) => {
+    setInnerOpen(next);
+    props.onOpenChange?.(next);
+  };
+  const changing = status === "live";
   const [tab, setTab] = useState<Tab>("apps");
   const [selected, setSelected] = useState<Source | null>(null);
   const [audioPid, setAudioPid] = useState<number | null>(null);
+
+  // Quem abre por fora não passa pelo `onOpenChange` daqui: busca as fontes ao abrir.
+  const outsideOpen = props.open === true;
+  useEffect(() => {
+    if (outsideOpen) void loadSources();
+  }, [outsideOpen, loadSources]);
+  const [openedOutside, setOpenedOutside] = useState(false);
+  if (outsideOpen !== openedOutside) {
+    setOpenedOutside(outsideOpen);
+    if (outsideOpen) setSelected(null);
+  }
 
   /** Janela: o som do próprio programa vai junto por padrão. Tela: sem som até escolher. */
   function select(source: Source) {
@@ -55,27 +82,31 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
     if (useStreamStore.getState().status === "live") setOpen(false);
   }
 
-  const visible = sources.filter((s) => (tab === "apps" ? s.id.kind === "window" : s.id.kind === "monitor"));
-
   return (
     <Modal
       open={open}
       onOpenChange={onOpenChange}
       width={selected ? 480 : 600}
       illustration={<StreamIllustration />}
-      title="Transmitir minha tela"
+      title={changing ? "Trocar transmissão" : "Transmitir minha tela"}
       description={
-        selected ? undefined : "Escolha o que transmitir e chame a galera para assistir. Tudo liberado, sem plano pago."
+        selected
+          ? undefined
+          : changing
+            ? "Escolha o que transmitir no lugar. A live continua no ar enquanto troca."
+            : "Escolha o que transmitir e chame a galera para assistir. Tudo liberado, sem plano pago."
       }
       trigger={
-        props.trigger ?? (
-          <button
-            type="button"
-            className="rounded-md bg-brand px-4 py-2 font-medium transition-colors hover:bg-brand-hover"
-          >
-            Transmitir minha tela
-          </button>
-        )
+        props.open !== undefined
+          ? undefined
+          : (props.trigger ?? (
+              <button
+                type="button"
+                className="rounded-md bg-brand px-4 py-2 font-medium transition-colors hover:bg-brand-hover"
+              >
+                Transmitir minha tela
+              </button>
+            ))
       }
       footer={
         selected ? (
@@ -94,7 +125,7 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
               className="flex items-center gap-2 rounded-md bg-brand px-5 py-2 text-sm font-semibold transition-colors hover:bg-brand-hover disabled:opacity-50"
             >
               {status === "starting" ? <Loader2 size={16} className="animate-spin" /> : <Radio size={16} />}
-              Ficar ao vivo
+              {changing ? "Trocar" : "Ficar ao vivo"}
             </button>
           </>
         ) : (
@@ -103,7 +134,7 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
             <div className="flex gap-2">
               <ModalClose className="rounded-md px-4 py-2 text-sm hover:underline">Cancelar</ModalClose>
               <button type="button" disabled className="rounded-md bg-brand px-5 py-2 text-sm font-semibold opacity-50">
-                Ficar ao vivo
+                {changing ? "Trocar" : "Ficar ao vivo"}
               </button>
             </div>
           </>
@@ -122,52 +153,33 @@ export function StreamDialog(props: { trigger?: ReactNode } = {}) {
         />
       ) : (
         <div key="fonte" className="animate-step-in">
-          <div role="tablist" aria-label="Tipo de fonte" className="mb-4 flex gap-5 border-b border-surface-3">
-            <TabButton active={tab === "apps"} onClick={() => setTab("apps")}>
-              Aplicativos
-            </TabButton>
-            <TabButton active={tab === "screens"} onClick={() => setTab("screens")}>
-              Telas
-            </TabButton>
-          </div>
-
-          {loadingSources ? (
-            <p className="flex items-center justify-center gap-2 py-12 text-text-muted">
-              <Loader2 size={18} className="animate-spin" /> Procurando telas e janelas…
-            </p>
-          ) : visible.length === 0 ? (
-            <p className="py-12 text-center text-sm text-text-faint">
-              {tab === "apps" ? "Nenhum aplicativo aberto para transmitir." : "Nenhuma tela encontrada."}
-            </p>
-          ) : (
-            <ul aria-label={tab === "apps" ? "Aplicativos" : "Telas"} className="grid grid-cols-2 gap-4 pb-1">
-              {visible.map((s) => (
-                <li key={sourceKey(s.id)}>
-                  <SourceCard source={s} thumbnail={thumbnails[sourceKey(s.id)]} onSelect={() => select(s)} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <Tabs label="Tipo de fonte" tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
+          <TabContent value={tab} order={TABS.map(([id]) => id)}>
+            {(t) => {
+              const shown = sources.filter((s) => (t === "apps" ? s.id.kind === "window" : s.id.kind === "monitor"));
+              return loadingSources ? (
+                <p className="flex items-center justify-center gap-2 py-12 text-text-muted">
+                  <Loader2 size={18} className="animate-spin" /> Procurando telas e janelas…
+                </p>
+              ) : shown.length === 0 ? (
+                <p className="py-12 text-center text-sm text-text-faint">
+                  {t === "apps" ? "Nenhum aplicativo aberto para transmitir." : "Nenhuma tela encontrada."}
+                </p>
+              ) : (
+                <ul aria-label={t === "apps" ? "Aplicativos" : "Telas"} className="grid grid-cols-2 gap-4 pb-1">
+                  {shown.map((s) => (
+                    <li key={sourceKey(s.id)}>
+                      <SourceCard source={s} thumbnail={thumbnails[sourceKey(s.id)]} onSelect={() => select(s)} />
+                    </li>
+                  ))}
+                </ul>
+              );
+            }}
+          </TabContent>
           {error && <ErrorBox message={error} />}
         </div>
       )}
     </Modal>
-  );
-}
-
-function TabButton(props: { active: boolean; onClick: () => void; children: string }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={props.active}
-      onClick={props.onClick}
-      className={`-mb-px border-b-2 pb-2 text-sm font-semibold transition-colors ${
-        props.active ? "border-brand text-text" : "border-transparent text-text-muted hover:text-text"
-      }`}
-    >
-      {props.children}
-    </button>
   );
 }
 

@@ -30,6 +30,22 @@ impl App {
         panic!("não chegou: {what}");
     }
 
+    /// Espera várias mensagens em qualquer ordem. Com `message` uma depois da outra, a que chegasse
+    /// antes da primeira era descartada pelo `wait`, e o teste esperava algo que já tinha passado.
+    fn messages(&self, what: &str, oks: &[&dyn Fn(&DmMessage) -> bool]) {
+        let seen = std::cell::RefCell::new(vec![false; oks.len()]);
+        self.wait(what, |e| {
+            let DmEvent::Message { message, .. } = e else {
+                return false;
+            };
+            let mut seen = seen.borrow_mut();
+            for (i, ok) in oks.iter().enumerate() {
+                seen[i] |= ok(message);
+            }
+            seen.iter().all(|s| *s)
+        });
+    }
+
     fn message(&self, what: &str, ok: impl Fn(&DmMessage) -> bool) -> DmMessage {
         match self.wait(what, |e| matches!(e, DmEvent::Message { message, .. } if ok(message))) {
             DmEvent::Message { message, .. } => message,
@@ -142,12 +158,15 @@ fn os_dois_chamando_juntos_fica_uma_conexao_so() {
     let (ana, beto, _) = pair("juntos");
     let a = ana.engine.send_text(BETO, "oi Beto").unwrap();
     let b = beto.engine.send_text(ANA, "oi Ana").unwrap();
-    beto.message("da Ana", |m| m.id == a.id);
-    ana.message("do Beto", |m| m.id == b.id);
-    ana.message("entregue para o Beto", |m| {
-        m.id == a.id && m.status == Status::Delivered
-    });
-    beto.message("entregue para a Ana", |m| m.id == b.id && m.status == Status::Delivered);
+    // A mensagem do outro e a confirmação da nossa chegam em qualquer ordem.
+    beto.messages(
+        "da Ana e entregue para a Ana",
+        &[&|m| m.id == a.id, &|m| m.id == b.id && m.status == Status::Delivered],
+    );
+    ana.messages(
+        "do Beto e entregue para o Beto",
+        &[&|m| m.id == b.id, &|m| m.id == a.id && m.status == Status::Delivered],
+    );
 }
 
 #[test]

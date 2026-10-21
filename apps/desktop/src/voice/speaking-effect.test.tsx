@@ -100,4 +100,16 @@ describe("efeito de fala", () => {
       .find(Boolean)!;
     expect(lista.querySelector("[data-effect=rays]")).toHaveAttribute("data-active");
   });
+
+  it("na lista o efeito aparece inteiro e se mistura com o de quem está do lado", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const membros = screen.getByRole("list", { name: "Membros da sala" });
+    // Recortar sem folga cortava o efeito do primeiro e do último da lista.
+    expect(membros.className).not.toMatch(/overflow-hidden/);
+    expect(membros.className).toMatch(/overflow-clip-margin/);
+    // Com `isolate` na foto, o efeito não enxergava o do vizinho e as cores não se misturavam.
+    const aura = membros.querySelector("[data-effect=rays]")!;
+    expect(aura.parentElement!.className).not.toMatch(/\bisolate\b/);
+  });
 });

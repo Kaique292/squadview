@@ -33,8 +33,9 @@ export function Avatar(props: {
         ? "ring-2 ring-live"
         : "";
   return (
-    // `isolate`: o efeito fica atrás da foto sem ir para trás do que está em volta.
-    <span aria-hidden className="relative isolate shrink-0">
+    // Sem `isolate`: o efeito de quem está do lado precisa enxergar este para as cores se
+    // misturarem onde eles se tocam. A foto fica por cima do efeito pela ordem (os dois posicionados).
+    <span aria-hidden className="relative shrink-0">
       {props.effect && <VoiceAura effect={props.effect} size={props.size} active={!!props.speaking} />}
       {props.src ? (
         <img
@@ -42,12 +43,12 @@ export function Avatar(props: {
           alt=""
           width={props.size}
           height={props.size}
-          className={`rounded-full object-cover transition-shadow duration-150 ${ring}`}
+          className={`relative rounded-full object-cover transition-shadow duration-150 ${ring}`}
           style={{ width: props.size, height: props.size }}
         />
       ) : (
         <span
-          className={`grid place-items-center rounded-full font-semibold text-white transition-shadow duration-150 ${ring}`}
+          className={`relative grid place-items-center rounded-full font-semibold text-white transition-shadow duration-150 ${ring}`}
           style={{
             width: props.size,
             height: props.size,

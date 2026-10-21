@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use sv_media::{Bounds, WindowControl, WindowEvent};
+use sv_media::{Bounds, Hole, WindowControl, WindowEvent};
 
 pub(crate) type OnWindowEvent = Arc<dyn Fn(WindowEvent) + Send + Sync>;
 
@@ -14,7 +14,7 @@ pub(crate) struct Surface {
     pub bounds: Bounds,
     pub hidden: bool,
     /// Onde a interface está por cima do vídeo agora (pixels físicos, relativos à janela do app).
-    pub holes: Vec<Bounds>,
+    pub holes: Vec<Hole>,
     /// Solto da janela do app, pequeno e sempre no topo (picture in picture).
     pub pip: bool,
     pub on_event: Option<OnWindowEvent>,
@@ -32,20 +32,23 @@ impl Surface {
 }
 
 /// Os buracos que caem sobre o vídeo, relativos ao canto dele (o que fica fora é ignorado).
-pub(crate) fn local_holes(video: Bounds, holes: &[Bounds]) -> Vec<Bounds> {
+pub(crate) fn local_holes(video: Bounds, holes: &[Hole]) -> Vec<Hole> {
     let (vr, vb) = (video.x + video.width as i32, video.y + video.height as i32);
     holes
         .iter()
-        .filter_map(|h| {
+        .filter_map(|&Hole { bounds: h, radius }| {
             let left = h.x.max(video.x);
             let top = h.y.max(video.y);
             let right = (h.x + h.width as i32).min(vr);
             let bottom = (h.y + h.height as i32).min(vb);
-            (right > left && bottom > top).then(|| Bounds {
-                x: left - video.x,
-                y: top - video.y,
-                width: (right - left) as u32,
-                height: (bottom - top) as u32,
+            (right > left && bottom > top).then(|| Hole {
+                bounds: Bounds {
+                    x: left - video.x,
+                    y: top - video.y,
+                    width: (right - left) as u32,
+                    height: (bottom - top) as u32,
+                },
+                radius,
             })
         })
         .collect()
@@ -111,28 +114,37 @@ mod tests {
             height: 600,
         };
         let holes = [
-            // Menu que começa na barra lateral e entra 200 px no vídeo.
-            Bounds {
-                x: 250,
-                y: 200,
-                width: 250,
-                height: 180,
+            // Menu que começa na barra lateral e entra 200 px no vídeo (o canto arredondado vai junto).
+            Hole {
+                bounds: Bounds {
+                    x: 250,
+                    y: 200,
+                    width: 250,
+                    height: 180,
+                },
+                radius: 8,
             },
             // Dica toda fora do vídeo.
-            Bounds {
-                x: 10,
-                y: 10,
-                width: 100,
-                height: 30,
+            Hole {
+                bounds: Bounds {
+                    x: 10,
+                    y: 10,
+                    width: 100,
+                    height: 30,
+                },
+                radius: 0,
             },
         ];
         assert_eq!(
             local_holes(video, &holes),
-            vec![Bounds {
-                x: 0,
-                y: 150,
-                width: 200,
-                height: 180,
+            vec![Hole {
+                bounds: Bounds {
+                    x: 0,
+                    y: 150,
+                    width: 200,
+                    height: 180,
+                },
+                radius: 8,
             }]
         );
         assert!(local_holes(video, &[]).is_empty());

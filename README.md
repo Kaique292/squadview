@@ -35,7 +35,7 @@
 </p>
 
 > [!NOTE]
-> **Versão 0.6: servidores e conversas privadas.** Crie um servidor para a turma, com salas de voz fixas, convites, administradores e um ícone recortado do jeito que você quiser. Converse no privado com os amigos e mande fotos, vídeos e arquivos, direto de PC para PC: nada passa por servidor, e o histórico fica só no seu PC. A live também pode ir para uma janelinha (picture in picture), quem fala ganha um efeito com a cor que escolher, e dá para limpar o cache de cada parte do app. A sala inteira distribuindo o vídeo (salas sem limite) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
+> **Versão 0.7: a sua live dentro da sala, como no Discord.** Transmitindo, a sua tela vira um quadro da sala, com a qualidade e o AO VIVO no canto: clique para pôr em foco e use o botão direito para parar, trocar o que transmite, mudar a qualidade ou ligar o som, sem sair do ar. Os detalhes da live ganharam gráficos do último minuto e barras de uso da GPU e da CPU. Também chegaram o checkbox e as abas animadas, efeitos de fala que se misturam quando duas pessoas falam juntas e o ícone do servidor voltou a abrir a imagem. A sala inteira distribuindo o vídeo (salas sem limite) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
 
 ## ✨ O que ele faz
 
@@ -45,9 +45,10 @@
 - **Direto de PC para PC.** O vídeo não passa por servidor. As conexões são cifradas (QUIC com TLS 1.3).
 - **Jogue do jeito que quiser.** Janela, sem bordas ou tela cheia: escolha o jogo uma vez e o app acompanha sozinho do cliente para a partida e de volta (LoL, Valorant e jogos com launcher). Nada é injetado no jogo, então é seguro com Vanguard, EAC e BattlEye.
 - **Só o áudio do jogo.** Transmitindo um jogo ou app, vai só o som dele, e o som acompanha quando o jogo troca de janela; o som da call fica de fora.
+- **A sua live na sala**, como no Discord: transmitindo, a sua tela vira um quadro da sala, com a qualidade e o AO VIVO no canto. Clique para pôr em foco, dois cliques para a tela cheia e o botão direito para parar, trocar o que transmite, mudar a qualidade ou ligar e desligar o som, sem sair do ar. Os detalhes mostram o último minuto em gráficos (fps, bitrate, latência e encode) e o uso da GPU e da CPU em barras.
 - **Assista dentro do app**, como no Discord: o vídeo aparece na janela, com tela cheia, volume de até 200% e estatísticas (fps, bitrate, latência e ping). Quem transmite vê quantos e quem estão assistindo. Quer jogar enquanto assiste? Mande a live para uma **janelinha por cima de tudo** (picture in picture).
 - **Funciona atrás de CGNAT.** Se a conexão direta não fecha (internet da operadora, 4G), o app tenta por IPv6 e, se ainda não der, recebe o vídeo por alguém da sala que já está assistindo. Há também um repassador na nuvem pronto para ligar ([ADR 0014](docs/adr/0014-conexao-em-camadas.md)).
-- **Chat de voz na sala.** A sala é um canal de voz como o do Discord: um quadro por pessoa, borda verde (ou o efeito que você escolher, com a cor que quiser) em quem fala, mudo e surdo, e clique num quadro para pôr a pessoa em foco. Volume e silenciar por pessoa (só para você), isolamento de voz contra teclado e ventilador e controle automático de ganho, para todo mundo chegar no mesmo volume. A voz também vai direto de PC para PC.
+- **Chat de voz na sala.** A sala é um canal de voz como o do Discord: um quadro por pessoa, borda verde (ou o efeito que você escolher, com a cor que quiser; quando duas pessoas falam lado a lado, as cores se misturam onde os efeitos se tocam) em quem fala, mudo e surdo, e clique num quadro para pôr a pessoa em foco. Volume e silenciar por pessoa (só para você), isolamento de voz contra teclado e ventilador e controle automático de ganho, para todo mundo chegar no mesmo volume. A voz também vai direto de PC para PC.
 - **Amigos.** Veja quem está online, numa sala ou transmitindo. Peça para entrar na sala de um amigo (qualquer pessoa da sala aceita), chame amigos para a sua e marque quem entra direto. Adicione direto pelo botão direito em quem está na sala com você, ou depois, em Recentes.
 - **Servidores com salas fixas.** Crie um servidor para a turma, com salas de voz que ficam lá mesmo vazias. Chame a galera por um link de convite, escolha administradores e dê um ícone ao servidor, ajustando o recorte, a posição e o zoom.
 - **Conversas privadas.** Mande mensagens, fotos, vídeos e arquivos para um amigo, direto de PC para PC: nem o texto passa por servidor, e o histórico fica só no seu PC. Fotos pequenas aparecem sozinhas; arquivos grandes e vídeos esperam você clicar em Baixar. O que você mandar com o amigo offline fica esperando e vai quando ele aparecer.
@@ -66,6 +67,14 @@
 - **Bot do Discord (Fase 5)** avisando no servidor quando alguém começar a transmitir.
 
 ## 📸 Telas
+
+<p align="center">
+  <img src="docs/images/tela-transmitindo.png" alt="A sua live como um quadro da sala, com 720P 30FPS e AO VIVO em pílula no canto, ao lado dos amigos na voz" width="90%">
+</p>
+
+<p align="center">
+  <img src="docs/images/tela-detalhes.png" alt="Detalhes da transmissão: fps, bitrate, latência e tempo de encode com o gráfico do último minuto, e o uso do encoder, da GPU e da CPU em barras" width="90%">
+</p>
 
 <p align="center">
   <img src="docs/images/tela-sala.png" alt="Sala do SquadView como canal de voz, com um amigo em foco no centro e os outros numa faixa embaixo, como no Discord" width="90%">
@@ -227,7 +236,7 @@ As miniaturas das janelas usam o crate `jpeg-encoder`: _this software is based i
 
 There is **no media server**: video goes directly between PCs over QUIC, with UDP hole punching. The plan (Phase 3) is for the room itself to distribute the video: members with spare upload relay already-encoded packets, and members on weak connections get a 720p layer. A tiny free signaling service (Cloudflare Worker) only helps peers find each other; no video goes through it.
 
-- **Status:** version 0.6. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD), with a live viewer count. Members behind CGNAT connect over IPv6 or get the stream relayed by someone already watching; an optional cloud TURN relay is ready to turn on. The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), with friends, presence, "ask to join" requests, custom speaking effects, picture-in-picture, notification sounds and a system tray icon. Servers with persistent voice rooms, invites, roles and cropped icons; private peer-to-peer messages with files (no server in between, history kept locally). Discord login, invite links, Rich Presence and a silent Discord-style installer. Full room-wide relaying (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
+- **Status:** version 0.7. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD), with a live viewer count. Members behind CGNAT connect over IPv6 or get the stream relayed by someone already watching; an optional cloud TURN relay is ready to turn on. The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), with friends, presence, "ask to join" requests, custom speaking effects that blend where they touch, picture-in-picture, notification sounds and a system tray icon. Servers with persistent voice rooms, invites, roles and cropped icons; private peer-to-peer messages with files (no server in between, history kept locally). Discord login, invite links, Rich Presence and a silent Discord-style installer. Your own stream shows up as a tile in the room (Discord-style), with a right-click menu to stop, switch source, change quality or toggle audio without going offline, and a details view with live charts. Full room-wide relaying (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
 - **Stack:** Rust core, Tauri v2, React 19 + Tailwind v4, QUIC (quinn) peer-to-peer mesh, Cloudflare Worker for signaling.
 - **Contributing:** PRs target the `dev` branch and use [Conventional Commits](https://www.conventionalcommits.org/). Docs are in Portuguese; issues and PRs in English are welcome too.
 - **Support:** [Buy Me a Coffee](https://buymeacoffee.com/kaiqueamaral).

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import { rememberVideoRect } from "../ui/dissolve-effect";
 import { watchVideoHoles } from "../ui/overlay";
+import { setVideoRect } from "./video-pointer";
 
 /**
  * Informa ao Rust onde está a área do vídeo, em pixels físicos, sempre que ela muda de lugar ou de
@@ -17,6 +18,8 @@ export function useVideoSlot() {
       const r = el.getBoundingClientRect();
       // Guarda onde o vídeo está: a animação de saída aparece exatamente ali.
       rememberVideoRect({ x: r.left, y: r.top, width: r.width, height: r.height });
+      // E onde o mouse que o vídeo repassa cai na página.
+      setVideoRect(r);
       const dpr = window.devicePixelRatio || 1;
       const b = {
         x: Math.round(r.left * dpr),
@@ -39,6 +42,7 @@ export function useVideoSlot() {
       stopHoles();
       observer.disconnect();
       window.removeEventListener("resize", report);
+      setVideoRect(null);
       invoke("set_video_bounds", { x: 0, y: 0, width: 0, height: 0 }).catch(() => {});
     };
   }, []);

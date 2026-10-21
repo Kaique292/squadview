@@ -2,6 +2,7 @@ import { Archive, Send } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Modal } from "../ui/Modal";
 import { useDmStore } from "./dm-store";
+import { Checkbox } from "../ui/Checkbox";
 
 /**
  * Primeira vez que se manda um anexo: guardar uma cópia no SquadView, ou só mandar (o arquivo
@@ -34,15 +35,9 @@ export function CopyDialog() {
           hint="Nenhuma cópia: a conversa aponta para o arquivo onde ele está. Se você apagar o original, ele some daqui também."
           onClick={() => void resolveCopy(false, remember)}
         />
-        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-text-muted">
-          <input
-            type="checkbox"
-            checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
-            className="size-4 accent-brand"
-          />
+        <Checkbox checked={remember} onChange={setRemember} className="mt-2 text-sm text-text-muted">
           Lembrar minha escolha (dá para mudar em Configurações → Mensagens)
-        </label>
+        </Checkbox>
       </div>
     </Modal>
   );

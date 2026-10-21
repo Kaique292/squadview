@@ -242,7 +242,7 @@ describe("servidores na barra de salas", () => {
     fireEvent.click(within(await screen.findByRole("menu")).getByText("Configurações do servidor"));
     const dialog = await screen.findByRole("dialog", { name: "Configurações de Turma do bairro" });
     fireEvent.click(within(dialog).getByRole("tab", { name: "Membros" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Tornar administrador" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Tornar administrador" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Tirar Beto do servidor" }));
     await waitFor(() =>
       expect(actions()).toEqual(
@@ -254,7 +254,7 @@ describe("servidores na barra de salas", () => {
     );
     // A última sala não se apaga; com duas, dá.
     fireEvent.click(within(dialog).getByRole("tab", { name: "Salas" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Apagar Ranked" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Apagar Ranked" }));
     await waitFor(() =>
       expect(actions()).toContainEqual({
         type: "server-action",

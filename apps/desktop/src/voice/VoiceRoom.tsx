@@ -1,12 +1,15 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
   ChevronUp,
   Eye,
   HeadphoneOff,
+  Info,
   Loader2,
   MicOff,
   MonitorUp,
   PhoneOff,
+  TriangleAlert,
   UserPlus,
   Volume2,
 } from "lucide-react";
@@ -15,13 +18,19 @@ import { useAccountStore } from "../account/account-store";
 import { inviteUrl } from "../room/invite";
 import { MemberMenu } from "../room/MemberMenu";
 import { type Member, memberPhoto, roomTitle, useRoomStore } from "../room/room-store";
+import { StreamDetailsDialog } from "../stream/StreamDetailsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
+import { MENU_CONTENT, StreamMenuItems } from "../stream/StreamMenu";
+import { StreamTile, type StreamTileVariant } from "../stream/StreamTile";
+import { useStreamStore } from "../stream/stream-store";
+import { useOverlayMenu } from "../ui/overlay";
 import { Avatar, avatarColor } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
 import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { useVoiceStore } from "./voice-store";
+import { LiveBadge } from "../ui/LiveBadge";
 
 /** Quantas colunas para `n` pessoas (como a grade de um canal de voz do Discord). */
 export function gridColumns(n: number): number {
@@ -50,16 +59,48 @@ export function VoiceRoom() {
   const [focusIn, setFocusIn] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
-  const focusIndex = focusId ? members.findIndex((m) => m.id === focusId) : -1;
-  // Quem estava em foco saiu da sala: volta para a grade.
+  // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
+  const live = useStreamStore((s) => s.status === "live");
+  const fullscreen = useStreamStore((s) => s.fullscreen);
+  const notice = useStreamStore((s) => s.notice);
+  const [changing, setChanging] = useState(false);
+  const [details, setDetails] = useState(false);
+  const ids = [...(live ? [STREAM_TILE] : []), ...members.map((m) => m.id)];
+  const focusIndex = focusId ? ids.indexOf(focusId) : -1;
+  // Quem estava em foco saiu da sala (ou a live parou): volta para a grade.
   if (focusId && focusIndex < 0) setFocusId(null);
+
+  const dialogs = (
+    <>
+      <StreamDialog open={changing} onOpenChange={setChanging} />
+      <StreamDetailsDialog open={details} onOpenChange={setDetails} />
+    </>
+  );
+  const streamTile = (variant: StreamTileVariant) => (
+    <StreamTile
+      variant={variant}
+      focused={focusId === STREAM_TILE}
+      onActivate={() => setFocusId(focusId === STREAM_TILE ? null : STREAM_TILE)}
+      onChange={() => setChanging(true)}
+      onDetails={() => setDetails(true)}
+    />
+  );
+  // Tela cheia (ou ao vivo fora de uma sala): só a live, ocupando tudo.
+  if (live && (fullscreen || !code)) {
+    return (
+      <section aria-label="Sua transmissão" className={`h-full w-full bg-black ${fullscreen ? "" : "p-4"}`}>
+        {streamTile(fullscreen ? "fullscreen" : "focus")}
+        {dialogs}
+      </section>
+    );
+  }
   if (!code) return null;
   const chrome = pointerIn || focusIn;
   const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
     chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
   }`;
-  const columns = gridColumns(members.length);
-  const others = members.map((_, i) => i).filter((i) => i !== focusIndex);
+  const columns = gridColumns(ids.length);
+  const others = ids.map((_, i) => i).filter((i) => i !== focusIndex);
   const stripLabel = stripOpen ? "Esconder participantes" : "Mostrar participantes";
 
   async function invite() {
@@ -71,10 +112,12 @@ export function VoiceRoom() {
     }
   }
 
-  /** O quadro de quem está em `index` (a primeira pessoa da lista somos nós). */
+  /** O quadro em `index` de `ids`: a nossa live ou uma pessoa (a primeira pessoa somos nós). */
   function tile(index: number, variant: TileVariant) {
-    const m = members[index];
-    const isMe = index === 0;
+    if (ids[index] === STREAM_TILE) return streamTile(variant);
+    const memberIndex = index - (live ? 1 : 0);
+    const m = members[memberIndex];
+    const isMe = memberIndex === 0;
     const focused = m.id === focusId;
     return (
       <MemberMenu member={m} isMe={isMe} onWatch={m.live && !isMe ? () => void watch(m) : undefined}>
@@ -124,9 +167,9 @@ export function VoiceRoom() {
             className="flex w-full animate-focus-in flex-wrap content-center justify-center gap-3"
             style={{ maxWidth: columns === 1 ? 900 : undefined }}
           >
-            {members.map((m, i) => (
+            {ids.map((id, i) => (
               <li
-                key={m.id}
+                key={id}
                 className="min-w-0"
                 style={{ flexBasis: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` }}
               >
@@ -171,7 +214,7 @@ export function VoiceRoom() {
                     className="mx-auto flex w-max max-w-full gap-2 overflow-x-auto pb-1"
                   >
                     {others.map((i) => (
-                      <li key={members[i].id} className="h-28 shrink-0 animate-focus-in">
+                      <li key={ids[i]} className="h-28 shrink-0 animate-focus-in">
                         {tile(i, "strip")}
                       </li>
                     ))}
@@ -182,6 +225,24 @@ export function VoiceRoom() {
           )}
         </div>
       )}
+
+      {live && notice && (
+        <p
+          role="status"
+          data-video-hole
+          className={`absolute top-14 left-1/2 z-20 flex max-w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-start gap-2 rounded-lg px-3 py-2 text-left text-sm shadow-lg ${
+            notice.kind === "source-changed" ? "bg-brand" : "bg-warning text-black"
+          }`}
+        >
+          {notice.kind === "source-changed" ? (
+            <Info size={16} className="mt-0.5 shrink-0" />
+          ) : (
+            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+          )}
+          {notice.message}
+        </p>
+      )}
+      {dialogs}
 
       {/* Embaixo: os controles sobre uma sombra que sobe. A sombra não pega o mouse (cobria a
           setinha da faixa de participantes): só os botões, e só quando aparecem. */}
@@ -197,13 +258,17 @@ export function VoiceRoom() {
           <DeafenButton large />
         </ControlGroup>
         <ControlGroup label="Tela e convite">
-          <StreamDialog
-            trigger={
-              <ControlButton label="Transmitir minha tela">
-                <MonitorUp size={20} />
-              </ControlButton>
-            }
-          />
+          {live ? (
+            <StreamControl onChange={() => setChanging(true)} onDetails={() => setDetails(true)} />
+          ) : (
+            <StreamDialog
+              trigger={
+                <ControlButton label="Transmitir minha tela">
+                  <MonitorUp size={20} />
+                </ControlButton>
+              }
+            />
+          )}
           <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
             <UserPlus size={20} />
           </ControlButton>
@@ -295,15 +360,7 @@ function Tile({
     >
       <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} effect={effect} src={photo} />
 
-      {member.live && (
-        <span
-          className={`absolute top-2 left-2 flex items-center gap-1 rounded bg-live font-bold text-white ${
-            strip ? "px-1 py-px text-[10px]" : "px-1.5 py-0.5 text-[11px]"
-          }`}
-        >
-          Ao vivo
-        </span>
-      )}
+      {member.live && <LiveBadge size={strip ? "sm" : "md"} className="absolute top-2 right-2" />}
       {member.live && !isMe && !strip && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <button
@@ -332,6 +389,33 @@ function Tile({
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-live" />}
       </span>
     </div>
+  );
+}
+
+/** O quadro da nossa live (não é uma pessoa: não colide com nenhum id). */
+const STREAM_TILE = "transmissao:minha";
+
+/** Transmitindo, o botão de tela da barra fica verde (como no Discord) e abre o menu da live. */
+function StreamControl(props: { onChange: () => void; onDetails: () => void }) {
+  return (
+    <DropdownMenu.Root onOpenChange={useOverlayMenu()}>
+      <Tooltip label="Opções da transmissão" side="top">
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            aria-label="Opções da transmissão"
+            className="grid size-10 place-items-center rounded-md bg-online/15 text-online transition-colors hover:bg-online/25 data-[state=open]:bg-online/25"
+          >
+            <MonitorUp size={20} />
+          </button>
+        </DropdownMenu.Trigger>
+      </Tooltip>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content side="top" sideOffset={8} aria-label="Opções da transmissão" className={MENU_CONTENT}>
+          <StreamMenuItems kind="dropdown" onChange={props.onChange} onDetails={props.onDetails} />
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 

@@ -30,11 +30,14 @@ use windows::Win32::Graphics::Dxgi::{
     IDXGISwapChain1,
 };
 use windows::Win32::Graphics::Gdi::{
-    CombineRgn, CreateRectRgn, DeleteObject, GetMonitorInfoW, HGDIOBJ, MONITOR_DEFAULTTONEAREST, MONITORINFO,
-    MonitorFromWindow, RGN_DIFF, SetWindowRgn,
+    CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, HGDIOBJ, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromWindow, RGN_DIFF, SetWindowRgn,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_F11};
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_ESCAPE, VK_F11,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
     DispatchMessageW, GWL_EXSTYLE, GWL_STYLE, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW,
@@ -42,9 +45,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SET_WINDOW_POS_FLAGS, SW_SHOW, SWP_ASYNCWINDOWPOS,
     SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW,
     SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_STYLE, WM_APP, WM_CLOSE,
-    WM_DESTROY, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_NCHITTEST,
-    WM_NCLBUTTONDBLCLK, WM_SIZE, WM_SIZING, WMSZ_BOTTOM, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
+    WM_DESTROY, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_RBUTTONUP, WM_SIZE, WM_SIZING, WMSZ_BOTTOM, WMSZ_TOP,
+    WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
 };
 use windows::core::{HSTRING, Result, w};
 
@@ -67,6 +71,15 @@ pub enum WindowEvent {
     ExitFullscreen,
     /// No picture in picture: dois cliques, Esc ou fechar. Quem decide voltar é o app.
     ExitPip,
+    /// Clique no vídeo embutido (pixels físicos, a partir do canto do vídeo). O vídeo fica por
+    /// cima da interface e recebe o mouse no lugar dela: o app repassa para a interface.
+    Click { x: i32, y: i32 },
+    /// Botão direito no vídeo embutido: a interface abre o menu ali.
+    ContextMenu { x: i32, y: i32 },
+    /// O mouse entrou no vídeo embutido (um aviso por entrada, não um por movimento).
+    PointerEnter,
+    /// O mouse saiu do vídeo embutido.
+    PointerLeave,
 }
 
 /// Mensagem para entrar (`wparam` 1) ou sair (0) do picture in picture, tratada na thread da janela.
@@ -99,6 +112,8 @@ struct Shared {
     video_height: AtomicU32,
     /// Fechando de verdade (o app descartou a janela): no picture in picture, fechar só volta.
     dropping: AtomicBool,
+    /// O mouse está sobre o vídeo embutido (já avisamos a entrada; esperando a saída).
+    hovering: AtomicBool,
     /// O último lugar pedido pela interface: reaplicado ao voltar do picture in picture.
     layout: Mutex<EmbeddedLayout>,
 }
@@ -108,7 +123,7 @@ struct Shared {
 struct EmbeddedLayout {
     bounds: Bounds,
     visible: bool,
-    holes: Vec<Bounds>,
+    holes: Vec<Hole>,
 }
 
 impl Default for EmbeddedLayout {
@@ -150,6 +165,14 @@ pub struct Bounds {
     pub height: u32,
 }
 
+/// Um recorte no vídeo (onde a interface fica por cima), com cantos arredondados de `radius`
+/// pixels: um menu ou um selo em pílula aparece inteiro, sem cantos pretos em volta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Hole {
+    pub bounds: Bounds,
+    pub radius: u32,
+}
+
 /// Controla a superfície de vídeo a partir de qualquer thread.
 #[derive(Debug, Clone)]
 pub struct WindowControl {
@@ -174,7 +197,7 @@ impl WindowControl {
     /// Recorta da área do vídeo os retângulos `holes` (relativos ao canto do próprio vídeo): ali a
     /// interface aparece por cima (menus, dicas, avisos) sem precisar esconder o vídeo inteiro.
     /// Vazio: o vídeo volta a ocupar a área toda. Não mexe no desenho (o swap chain continua igual).
-    pub fn set_holes(&self, holes: &[Bounds]) {
+    pub fn set_holes(&self, holes: &[Hole]) {
         holes.clone_into(&mut self.shared.layout().holes);
         if self.shared.closed.load(Ordering::Relaxed) || self.shared.pip.load(Ordering::Relaxed) {
             return;
@@ -478,6 +501,14 @@ enum Action {
     SkipErase,
     /// Pega o foco do teclado (clique no vídeo embutido) para F11 e Esc funcionarem.
     Focus,
+    /// Embutido: repassa o clique para a interface.
+    Click,
+    /// Embutido: repassa o botão direito para a interface (o menu do quadro).
+    ContextMenu,
+    /// Embutido: o mouse se mexeu; na primeira vez, avisa a entrada e pede o aviso de saída.
+    Hover,
+    /// Embutido: o mouse saiu.
+    Leave,
     ToggleFullscreen,
     ExitFullscreen,
     Close,
@@ -510,6 +541,10 @@ fn action(msg: u32, key: usize, embedded: bool, pip: bool) -> Action {
         WM_SIZE => Action::StoreSize,
         WM_ERASEBKGND => Action::SkipErase,
         WM_LBUTTONDOWN if embedded => Action::Focus,
+        WM_LBUTTONUP if embedded && !pip => Action::Click,
+        WM_RBUTTONUP if embedded && !pip => Action::ContextMenu,
+        WM_MOUSEMOVE if embedded && !pip => Action::Hover,
+        WM_MOUSELEAVE if embedded && !pip => Action::Leave,
         WM_KEYDOWN if key == VK_F11.0 as usize => Action::ToggleFullscreen,
         WM_KEYDOWN if key == VK_ESCAPE.0 as usize && embedded => Action::ExitFullscreen,
         WM_LBUTTONDBLCLK => Action::ToggleFullscreen,
@@ -541,6 +576,39 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             Action::SkipErase => LRESULT(1),
             Action::Focus => {
                 let _ = SetFocus(Some(hwnd));
+                LRESULT(0)
+            }
+            Action::Click | Action::ContextMenu => {
+                if let Some(shared) = shared {
+                    let (x, y) = client_point(lparam);
+                    shared.emit(if act == Action::Click {
+                        WindowEvent::Click { x, y }
+                    } else {
+                        WindowEvent::ContextMenu { x, y }
+                    });
+                }
+                LRESULT(0)
+            }
+            Action::Hover => {
+                if let Some(shared) = shared
+                    && !shared.hovering.swap(true, Ordering::Relaxed)
+                {
+                    let mut track = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    let _ = TrackMouseEvent(&mut track);
+                    shared.emit(WindowEvent::PointerEnter);
+                }
+                LRESULT(0)
+            }
+            Action::Leave => {
+                if let Some(shared) = shared {
+                    shared.hovering.store(false, Ordering::Relaxed);
+                    shared.emit(WindowEvent::PointerLeave);
+                }
                 LRESULT(0)
             }
             Action::ToggleFullscreen => {
@@ -621,12 +689,19 @@ unsafe fn store_client_size(hwnd: HWND, shared: &Shared) {
     }
 }
 
+/// O ponto do mouse numa mensagem (`lparam`: x nos 16 bits de baixo, y nos de cima, com sinal).
+fn client_point(lparam: LPARAM) -> (i32, i32) {
+    let x = (lparam.0 & 0xFFFF) as u16 as i16;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16;
+    (i32::from(x), i32::from(y))
+}
+
 /// Recorta `holes` da janela (vazio: a janela inteira volta a aparecer).
 ///
 /// # Safety
 /// `hwnd` precisa ser uma janela viva. As regiões criadas aqui são apagadas aqui, menos a final,
 /// que passa a ser da janela (o Windows apaga quando trocar ou fechar).
-unsafe fn apply_holes(hwnd: HWND, holes: &[Bounds]) {
+unsafe fn apply_holes(hwnd: HWND, holes: &[Hole]) {
     // SAFETY: garantido pelo chamador.
     unsafe {
         if holes.is_empty() {
@@ -636,7 +711,14 @@ unsafe fn apply_holes(hwnd: HWND, holes: &[Bounds]) {
         // Retângulo grande o bastante para qualquer tamanho: a região não depende do tamanho.
         let region = CreateRectRgn(0, 0, i16::MAX as i32, i16::MAX as i32);
         for h in holes {
-            let hole = CreateRectRgn(h.x, h.y, h.x + h.width as i32, h.y + h.height as i32);
+            let (b, r) = (h.bounds, h.radius as i32);
+            let (right, bottom) = (b.x + b.width as i32, b.y + b.height as i32);
+            let hole = if r > 0 {
+                // A elipse do canto tem o dobro do raio; o +1 fecha a borda de baixo e a da direita.
+                CreateRoundRectRgn(b.x, b.y, right + 1, bottom + 1, 2 * r, 2 * r)
+            } else {
+                CreateRectRgn(b.x, b.y, right, bottom)
+            };
             let _ = CombineRgn(Some(region), Some(region), Some(hole), RGN_DIFF);
             let _ = DeleteObject(HGDIOBJ(hole.0));
         }
@@ -922,6 +1004,26 @@ mod tests {
         assert_eq!(action(WM_CLOSE, 0, false, false), Action::Close);
         assert_eq!(action(WM_DESTROY, 0, false, false), Action::Destroyed);
         assert_eq!(action(0x0200, 0, false, false), Action::Default);
+    }
+
+    #[test]
+    fn embutido_repassa_clique_botao_direito_e_mouse_para_a_interface() {
+        assert_eq!(action(WM_LBUTTONUP, 0, true, false), Action::Click);
+        assert_eq!(action(WM_RBUTTONUP, 0, true, false), Action::ContextMenu);
+        assert_eq!(action(WM_MOUSEMOVE, 0, true, false), Action::Hover);
+        assert_eq!(action(WM_MOUSELEAVE, 0, true, false), Action::Leave);
+        // Solta (janela própria) ou no picture in picture: nada é repassado.
+        assert_eq!(action(WM_RBUTTONUP, 0, false, false), Action::Default);
+        assert_eq!(action(WM_LBUTTONUP, 0, true, true), Action::Default);
+        assert_eq!(action(WM_MOUSEMOVE, 0, false, false), Action::Default);
+        assert_eq!(action(WM_NCHITTEST, 0, true, true), Action::DragAnywhere);
+    }
+
+    #[test]
+    fn ponto_do_mouse_sai_do_lparam_com_sinal() {
+        assert_eq!(client_point(LPARAM((40 << 16) | 120)), (120, 40));
+        // Arrastando para fora da janela, as coordenadas ficam negativas.
+        assert_eq!(client_point(LPARAM((0xFFFF << 16) | 0xFFFE)), (-2, -1));
     }
 
     #[test]

@@ -7,6 +7,13 @@
  * Desativado (`disabled` ou `aria-disabled`) fica com a setinha.
  */
 @layer base {
+  /* Onde ainda sobrar rolagem nativa (menus curtos, estatísticas da live), ela fica fina e na cor
+     da barra do app, sem as setinhas do Windows. Listas e painéis usam o `ScrollArea`. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-0) transparent;
+  }
+
   button:not(:disabled, [aria-disabled="true"]),
   [role="button"]:not([aria-disabled="true"]),
   [role="tab"]:not([aria-disabled="true"]),
@@ -68,6 +75,9 @@
   --animate-modal-in: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-modal-out: modal-out 140ms ease-in forwards;
   --animate-step-in: step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Conteúdo das abas: o que sai some rápido para um lado, o novo entra pelo outro. */
+  --animate-tab-out: tab-out 120ms ease-in forwards;
+  --animate-tab-in: tab-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Quadro da voz entrando em foco (ou a grade voltando). */
   --animate-focus-in: focus-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Menus e dicas: aparecem crescendo um pouco a partir do ponto de origem. */
@@ -147,6 +157,19 @@
       transform: translateX(16px);
     }
   }
+  /* `--tab-direction`: 1 indo para uma aba à direita, -1 para uma à esquerda. */
+  @keyframes tab-out {
+    to {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * -12px));
+    }
+  }
+  @keyframes tab-in {
+    from {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * 16px));
+    }
+  }
 }
 
 /* Quem pediu menos movimento no Windows não vê animações. */
@@ -165,12 +188,91 @@
  * transform e opacity de elementos inteiros, nunca o que está dentro de um SVG: assim a GPU faz
  * tudo sem redesenhar.
  */
+/*
+ * Checkbox do app (`ui/Checkbox.tsx`). Marcando: a caixa enche com um pulo e o ✓ se desenha.
+ * Desmarcando: o ✓ se apaga primeiro, depois a caixa esvazia encolhendo de leve.
+ */
+.check-mark {
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  border-radius: 0.3rem;
+  border: 2px solid var(--color-text-faint);
+  background-color: transparent;
+  transition:
+    background-color 140ms ease-in 90ms,
+    border-color 140ms ease-in 90ms;
+}
+.check-mark[data-checked] {
+  border-color: var(--color-brand);
+  background-color: var(--color-brand);
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+.check-mark[data-animate] {
+  animation: check-out 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.check-mark[data-animate][data-checked] {
+  animation: check-in 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.check-mark svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  fill: none;
+  stroke: white;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* O ✓ é desenhado do começo ao fim (e apagado de volta) pelo tracejado. */
+.check-mark path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 110ms ease-in;
+}
+.check-mark[data-checked] path {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 220ms ease-out 70ms;
+}
+@keyframes check-in {
+  0% {
+    transform: scale(0.8);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes check-out {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(0.86);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Gráficos dos detalhes da live: o caminho muda de forma deslizando, em vez de pular. */
+.sparkline {
+  transition: d 450ms linear;
+}
+
 .voice-aura {
   position: absolute;
   top: 50%;
   left: 50%;
-  z-index: -1;
   pointer-events: none;
+  /* Onde dois efeitos se tocam (gente falando lado a lado), as cores se somam: roxo com verde
+     clareia na mistura só ali, e o resto de cada um continua na sua cor. */
+  mix-blend-mode: screen;
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.85);
   transition:

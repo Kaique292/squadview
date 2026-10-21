@@ -301,14 +301,11 @@ describe("assistindo um amigo", () => {
 });
 
 describe("transmitindo", () => {
-  it("dois cliques no vídeo põem em tela cheia e o fone liga o som da prévia", async () => {
+  it("dois cliques no vídeo põem em tela cheia", async () => {
     useStreamStore.setState({ status: "live", stats: STATS });
     render(<App />);
     fireEvent.doubleClick(screen.getByTestId("area-do-video"));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Ouvir o som da prévia" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_preview_listening", { listening: true }));
-    expect(screen.getByRole("button", { name: "Parar de ouvir a prévia" })).toBeInTheDocument();
   });
 });
 

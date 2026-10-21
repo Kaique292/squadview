@@ -494,6 +494,9 @@ fn start_watching<R: Runtime>(
     );
     let event_app = app.clone();
     view.on_video_event(move |event| {
+        if preview::emit_pointer(&event_app, event) {
+            return;
+        }
         let kind = match event {
             WindowEvent::ToggleFullscreen => "toggle",
             WindowEvent::ExitFullscreen => "exit",
@@ -502,6 +505,7 @@ fn start_watching<R: Runtime>(
                 let _ = event_app.emit(PIP_EVENT, false);
                 return;
             }
+            _ => return,
         };
         let _ = event_app.emit(FULLSCREEN_EVENT, kind);
     });

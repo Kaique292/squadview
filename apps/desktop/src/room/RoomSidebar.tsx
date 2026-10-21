@@ -39,6 +39,7 @@ import { MemberMenu } from "./MemberMenu";
 import { NameDialog } from "./NameDialog";
 import { type Member, memberPhoto, roomTitle, useRoomStore } from "./room-store";
 import { useMemberEffect, useSpeakingEffectStore } from "../voice/speaking-effect";
+import { LiveBadge } from "../ui/LiveBadge";
 
 /**
  * Barra lateral no estilo da lista de canais do Discord: cabeçalho da sala com menu e a sala como
@@ -266,7 +267,12 @@ export function RoomMemberList() {
   const { members, pendingWatch, watching, watch } = useRoomStore();
   const [me, ...others] = members;
   return (
-    <ul aria-label="Membros da sala" className="flex min-h-0 flex-col gap-0.5 overflow-hidden pl-6">
+    // Recorta (para recolher a sala), mas com folga: o efeito de fala passa da foto e não pode
+    // ficar cortado no primeiro e no último da lista.
+    <ul
+      aria-label="Membros da sala"
+      className="flex min-h-0 flex-col gap-0.5 overflow-clip pl-6 [overflow-clip-margin:12px]"
+    >
       {me && <MemberRow member={me} isMe />}
       {others.map((m) => (
         <MemberRow
@@ -337,11 +343,7 @@ function MemberRow(props: {
           <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
         )}
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
-        {member.live && (
-          <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
-            Ao vivo
-          </span>
-        )}
+        {member.live && <LiveBadge size="sm" />}
         {member.live && <Viewers streamerId={member.id} compact />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">

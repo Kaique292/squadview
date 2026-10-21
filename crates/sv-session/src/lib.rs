@@ -18,7 +18,7 @@ mod viewer;
 mod voice;
 mod voice_mesh;
 
-pub use sv_media::{Bounds, WindowEvent, WindowTarget};
+pub use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
 
 use std::fmt;
 
