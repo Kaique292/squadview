@@ -8,12 +8,20 @@ import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
 import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
 
+// Lobo e Yondaime assistem o Minato: o 👁 2 aparece ao lado do "Ao vivo".
 const MEMBERS = [
   { id: "eu", name: "Kaique", live: false },
   { id: "a", name: "Minato", live: true },
-  { id: "b", name: "Lobo", live: false, muted: true },
-  { id: "c", name: "Yondaime", live: false },
+  { id: "b", name: "Lobo", live: false, muted: true, watching: "a" },
+  { id: "c", name: "Yondaime", live: false, watching: "a" },
 ];
+
+/** Na página de amigos, Minato e Lobo estão na sala com a gente: aparecem "Na sua sala". */
+const WITH_FRIENDS = MEMBERS.map((m) =>
+  m.id === "a" || m.id === "b"
+    ? { ...m, discord: { id: m.id === "a" ? "100000000000000001" : "100000000000000002", avatar: null } }
+    : m,
+);
 
 const online = (room: string | null, live = false) => ({ online: true, inRoom: room !== null, room, live });
 const FRIENDS = [
@@ -95,6 +103,7 @@ export function runDemo(scene: string) {
     __TAURI_INTERNALS__: { invoke: async (cmd: string) => FAKE_COMMANDS[cmd] ?? null },
   });
   if (scene === "amigos") {
+    useRoomStore.setState({ members: WITH_FRIENDS });
     useFriendsStore.setState({
       status: "online",
       open: true,
