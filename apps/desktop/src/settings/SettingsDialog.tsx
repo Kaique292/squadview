@@ -3,6 +3,7 @@ import {
   Activity,
   Bell,
   Gamepad2,
+  HardDrive,
   Loader2,
   LogOut,
   Monitor,
@@ -27,10 +28,11 @@ import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { usePresenceSettings } from "./presence-store";
+import { StorageSection } from "./StorageSection";
 import { VoiceSection } from "./VoiceSection";
 import { WindowsSection } from "./WindowsSection";
 
-type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho";
+type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho" | "armazenamento";
 
 interface Item {
   id: Page;
@@ -77,6 +79,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         keywords: "bandeja fechar minimizar relógio segundo plano iniciar",
       },
       { id: "desempenho", label: "Desempenho", icon: <Activity size={18} />, keywords: "registro fps gpu diagnóstico" },
+      {
+        id: "armazenamento",
+        label: "Armazenamento",
+        icon: <HardDrive size={18} />,
+        keywords: "cache limpar espaço disco imagens registros",
+      },
     ],
   },
   {
@@ -100,6 +108,7 @@ const TITLES: Record<Page, string> = {
   aparencia: "Aparência",
   windows: "Configurações do Windows",
   desempenho: "Desempenho",
+  armazenamento: "Armazenamento",
 };
 
 /**
@@ -159,6 +168,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
                 {page === "aparencia" && <AppearanceSection />}
                 {page === "windows" && <WindowsSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
+                {page === "armazenamento" && <StorageSection />}
               </div>
             </ScrollArea>
           </div>

@@ -8,6 +8,7 @@ mod invite;
 mod presence;
 mod preview;
 mod room;
+mod storage;
 #[cfg(test)]
 mod test_support;
 mod tray;
@@ -176,6 +177,8 @@ pub fn run() {
             room::room_stop_watching,
             room::set_watch_listening,
             room::set_watch_volume,
+            storage::storage_usage,
+            storage::storage_clear,
             voice::voice_devices,
             voice::voice_set_muted,
             voice::voice_set_deafened,
