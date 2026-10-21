@@ -22,6 +22,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
+import { Viewers } from "./Viewers";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { useStreamStore } from "../stream/stream-store";
@@ -332,9 +333,10 @@ function MemberRow(props: {
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && (
           <span className="flex shrink-0 items-center gap-1 rounded bg-live px-1.5 py-0.5 text-[10px] font-bold text-white">
-            <Radio size={10} /> AO VIVO
+            Ao vivo
           </span>
         )}
+        {member.live && <Viewers streamerId={member.id} compact />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">
             <button

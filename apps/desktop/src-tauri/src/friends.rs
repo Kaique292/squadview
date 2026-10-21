@@ -19,6 +19,10 @@ pub const FRIENDS_STATUS_EVENT: &str = "friends-status";
 
 /// Espera entre tentativas de reconectar, em segundos.
 const RECONNECT_DELAYS_S: [u64; 6] = [1, 2, 4, 8, 15, 30];
+/// Espera entre tentativas de trocar o token do Discord pela sessão, em segundos (uns 5 minutos
+/// no total). O Discord já aceitou o token, então a falha é passageira: o Worker fora do ar ou o
+/// Discord limitando os pedidos vindos da Cloudflare.
+const EXCHANGE_DELAYS_S: [u64; 9] = [2, 5, 10, 20, 30, 60, 60, 60, 60];
 
 #[derive(Default)]
 pub struct Friends(Mutex<Running>);
@@ -80,6 +84,55 @@ pub async fn exchange(http: &reqwest::Client, access_token: &str) -> Option<Stri
         .await
         .ok()?;
     Some(reply.session)
+}
+
+/// Depois do login com o Discord: troca o token pela sessão e liga os amigos e a conferência na
+/// sala atual. Se a troca falhar, o login vale do mesmo jeito e o app continua tentando em
+/// segundo plano (os amigos ficam em "conectando"), em vez de pedir para a pessoa entrar de novo.
+pub async fn activate<R: Runtime>(app: &AppHandle<R>, http: reqwest::Client, token: String) {
+    stop(app);
+    // A sessão antiga pode ser de outra conta: só vale a desta conta.
+    save_session(app, None);
+    if let Some(session) = exchange(&http, &token).await {
+        return signed_in(app, &session);
+    }
+    set_status(app, Status::Connecting);
+    let task_app = app.clone();
+    let task = tauri::async_runtime::spawn(async move {
+        let delays = EXCHANGE_DELAYS_S.map(Duration::from_secs);
+        let session = retry(&delays, || exchange(&http, &token)).await;
+        drop(token);
+        // Esta tarefa termina aqui: sai do lugar antes de `start` ocupá-lo com a dos amigos.
+        lock(&task_app.state::<Friends>()).task = None;
+        match session {
+            Some(session) => signed_in(&task_app, &session),
+            None => set_status(&task_app, Status::SignedOut),
+        }
+    });
+    lock(&app.state::<Friends>()).task = Some(task);
+}
+
+/// Com a sessão: guarda, conecta ao registro e confere a conta na sala em que estamos (os outros
+/// passam a nos ver como conferidos e entramos nos recentes deles, sem sair da sala).
+fn signed_in<R: Runtime>(app: &AppHandle<R>, session: &str) {
+    save_session(app, Some(session));
+    start(app);
+    crate::room::verify_in_room(app, session);
+}
+
+/// Tenta de novo depois de cada espera, até dar certo ou acabarem as esperas.
+async fn retry<T, F, Fut>(delays: &[Duration], mut attempt: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    for delay in delays {
+        tokio::time::sleep(*delay).await;
+        if let Some(value) = attempt().await {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn session_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
@@ -205,6 +258,35 @@ mod tests {
     use crate::test_support::{fresh_discord_id, session as signed, test_app, worker};
 
     #[test]
+    fn troca_da_sessao_tenta_de_novo_ate_dar_certo() {
+        let mut tries = 0;
+        let got = tauri::async_runtime::block_on(retry(&[Duration::ZERO; 5], || {
+            tries += 1;
+            let ok = tries == 3;
+            async move { ok.then_some("sessao") }
+        }));
+        assert_eq!(got, Some("sessao"));
+        assert_eq!(tries, 3);
+    }
+
+    #[test]
+    fn troca_da_sessao_desiste_quando_acabam_as_esperas() {
+        let mut tries = 0;
+        let got: Option<()> = tauri::async_runtime::block_on(retry(&[Duration::ZERO; 4], || {
+            tries += 1;
+            async { None }
+        }));
+        assert_eq!(got, None);
+        assert_eq!(tries, 4);
+    }
+
+    #[test]
+    fn esperas_da_troca_somam_uns_cinco_minutos() {
+        let total: u64 = EXCHANGE_DELAYS_S.iter().sum();
+        assert!((240..=420).contains(&total), "{total} s");
+    }
+
+    #[test]
     fn status_vai_como_texto_para_a_interface() {
         assert_eq!(serde_json::to_string(&Status::SignedOut).unwrap(), r#""signed-out""#);
         assert_eq!(serde_json::to_string(&Status::Online).unwrap(), r#""online""#);
@@ -294,5 +376,26 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::new();
         assert_eq!(tauri::async_runtime::block_on(exchange(&http, "token-falso")), None);
+    }
+
+    /// Regressão: o Worker não trocou o token na hora e o login seguia sem amigos, até a pessoa
+    /// entrar com o Discord de novo. Agora fica "conectando" e segue tentando sozinho.
+    #[test]
+    fn troca_que_falha_no_login_continua_tentando_em_vez_de_desligar_os_amigos() {
+        if worker().is_none() {
+            return;
+        }
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let t = test_app();
+        let status = t.events(FRIENDS_STATUS_EVENT);
+        save_session(t.handle(), Some("sessao.de.outra.conta"));
+        tauri::async_runtime::block_on(activate(t.handle(), reqwest::Client::new(), "token-falso".into()));
+        status.wait("connecting", |v| v == "connecting");
+        assert_eq!(friends_status(t.app.state::<Friends>()), Status::Connecting);
+        assert_eq!(session(t.handle()), None, "ficou a sessão de outra conta");
+        // Sair da conta cancela as tentativas.
+        stop(t.handle());
+        assert_eq!(friends_status(t.app.state::<Friends>()), Status::SignedOut);
+        assert!(lock(&t.app.state::<Friends>()).task.is_none());
     }
 }

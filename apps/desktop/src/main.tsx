@@ -8,11 +8,15 @@ import { useAccountStore } from "./account/account-store";
 import { listenToFriendsEvents, useFriendsStore } from "./friends/friends-store";
 import { listenToRoomEvents, rejoinAfterUpdate, useRoomStore } from "./room/room-store";
 import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
+import { listenToSoundEvents } from "./sounds/sound-store";
 import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, boot } from "./splash/boot";
 import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { toast } from "./ui/toast-store";
 import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
+
+// Sons de aviso (entrar, sair, mudo, surdo, transmissão).
+listenToSoundEvents();
 
 // Vidro antes do primeiro desenho, para a janela já abrir com a intensidade salva.
 applyGlass(useAppearanceStore.getState().glass);

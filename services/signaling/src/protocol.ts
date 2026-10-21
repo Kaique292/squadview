@@ -37,6 +37,8 @@ export interface Member {
   discord: DiscordUser | null;
   /** A conta foi conferida pela sessão do SquadView (só conferidos podem virar amigos). */
   verified: boolean;
+  /** Quem este membro está assistindo (id), ou `null`. Ausente até o primeiro `status` dele. */
+  watching?: PeerId | null;
 }
 
 export type ClientMessage =
@@ -52,7 +54,8 @@ export type ClientMessage =
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
   | { type: "rename"; name: string; discord?: DiscordUser | null }
-  | { type: "status"; live: boolean; muted: boolean; deafened: boolean }
+  /** `watching`: quem estamos assistindo (para quem transmite ver quantos e quem assistem). */
+  | { type: "status"; live: boolean; muted: boolean; deafened: boolean; watching: PeerId | null }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
   | { type: "join-answer"; id: string; accept: boolean }
@@ -74,6 +77,8 @@ export type ServerMessage =
   | { type: "join-request"; id: string; from: { id: string; name: string; avatar: string | null } }
   /** O pedido foi respondido (por alguém) ou venceu: some de todos. */
   | { type: "join-request-closed"; id: string }
+  /** Credenciais do repassador TURN (ADR 0014), logo depois do `welcome`, se configurado. */
+  | { type: "turn"; urls: string[]; username: string; credential: string }
   | { type: "error"; code: ErrorCode };
 
 const encoder = new TextEncoder();
@@ -160,7 +165,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const muted = flag(data.muted);
       const deafened = flag(data.deafened);
       if (muted === null || deafened === null) return null;
-      return { type: "status", live: data.live, muted, deafened };
+      // watching também é opcional (apps até o 0.4.0 não mandam).
+      const watching = data.watching ?? null;
+      if (watching !== null && (typeof watching !== "string" || !PEER_ID_PATTERN.test(watching))) return null;
+      return { type: "status", live: data.live, muted, deafened, watching };
     }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;

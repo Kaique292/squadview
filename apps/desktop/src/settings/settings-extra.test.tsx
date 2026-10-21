@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useAccountStore } from "../account/account-store";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
 import { SettingsDialog } from "./SettingsDialog";
@@ -140,5 +140,43 @@ describe("configurações: voz", () => {
       "voice_set_settings",
       expect.objectContaining({ prefs: expect.objectContaining({ autoGain: false }) }),
     );
+  });
+});
+
+describe("configurações: amigos e sons", () => {
+  it("Minha conta mostra se os amigos estão ativos, ativando ou desligados", async () => {
+    const { useFriendsStore } = await import("../friends/friends-store");
+    useAccountStore.setState({ profile: PROFILE });
+    useFriendsStore.setState({ status: "online" });
+    const nav = openSettings();
+    fireEvent.click(within(nav).getByRole("button", { name: "Minha conta" }));
+    expect(screen.getByText(/Amigos ativos/)).toBeInTheDocument();
+    act(() => useFriendsStore.setState({ status: "connecting" }));
+    expect(screen.getByText("Ativando os amigos…")).toBeInTheDocument();
+    // A sessão não saiu: dá para entrar de novo ali mesmo, sem ir na página de amigos.
+    act(() => useFriendsStore.setState({ status: "signed-out" }));
+    expect(screen.getByText(/Os amigos não estão ativos/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Entrar com o Discord/ }).length).toBeGreaterThan(0);
+  });
+
+  it("Sons: volume, cada som liga e desliga, e o botão de ouvir toca", async () => {
+    vi.useFakeTimers();
+    const { useSoundStore } = await import("../sounds/sound-store");
+    useSoundStore.setState({ volume: 60, off: [] });
+    const nav = openSettings();
+    fireEvent.click(within(nav).getByRole("button", { name: "Sons" }));
+    const volume = screen.getByRole("slider", { name: "Volume dos avisos" });
+    fireEvent.change(volume, { target: { value: "30" } });
+    fireEvent.pointerUp(volume);
+    expect(useSoundStore.getState().volume).toBe(30);
+    fireEvent.click(screen.getByRole("switch", { name: "Mudo" }));
+    expect(useSoundStore.getState().off).toEqual(["mute", "unmute"]);
+    // Som desligado: o botão de ouvir fica desativado; os outros tocam (os dois sons, um depois do outro).
+    expect(screen.getByRole("button", { name: "Ouvir: Mudo" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Ouvir: Surdo" }));
+    act(() => vi.advanceTimersByTime(1000));
+    fireEvent.click(screen.getByRole("switch", { name: "Mudo" }));
+    expect(useSoundStore.getState().off).toEqual([]);
+    vi.useRealTimers();
   });
 });

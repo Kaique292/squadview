@@ -135,11 +135,11 @@ describe("na sala", () => {
     emit("room-members", [ME, ANA, BETO]);
     const list = screen.getByRole("list", { name: "Membros da sala" });
     expect(list).toHaveTextContent("Kaique (você)");
-    expect(list).toHaveTextContent("Ana AO VIVO");
+    expect(list).toHaveTextContent("AnaAo vivo");
     // Na grade da voz, quem está ao vivo tem o selo e o botão de assistir.
     const grid = screen.getByRole("list", { name: "Quem está na voz" });
     expect(grid).toHaveTextContent("Ana");
-    expect(within(grid).getAllByText("AO VIVO")).toHaveLength(1);
+    expect(within(grid).getAllByText("Ao vivo")).toHaveLength(1);
     expect(within(grid).getByRole("button", { name: "Assistir a transmissão" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Assistir Beto" })).not.toBeInTheDocument();
   });
@@ -250,7 +250,7 @@ describe("na sala", () => {
     render(<App />);
     emit("room-members", [ME, ANA, { ...BETO, live: true }]);
     const grid = screen.getByRole("list", { name: "Quem está na voz" });
-    expect(within(grid).getAllByText("AO VIVO")).toHaveLength(2);
+    expect(within(grid).getAllByText("Ao vivo")).toHaveLength(2);
   });
 
   it("avisa quando não consegue copiar o convite", async () => {

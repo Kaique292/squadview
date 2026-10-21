@@ -102,6 +102,14 @@ describe("voz com alguém em foco", () => {
     expect(within(canal()).getByRole("list", { name: "Outros na voz" })).not.toHaveAttribute("inert");
   });
 
+  it("a sombra dos controles não pega o clique da setinha (só os botões pegam)", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA, BETO]);
+    const controles = within(canal()).getByRole("navigation", { name: "Controles da voz" });
+    // A sombra tem 96 px e ficava por cima da setinha da faixa: o clique ia para ela.
+    expect(controles).toHaveClass("pointer-events-none");
+  });
+
   it("sozinho na sala, em foco não tem faixa", () => {
     render(<App />);
     emit("room-members", [ME]);
@@ -124,7 +132,7 @@ describe("voz com alguém em foco", () => {
     emit("room-members", [ME, ANA]);
     fireEvent.click(within(canal()).getByRole("button", { name: "Pôr Ana em foco" }));
     const foco = within(canal()).getByRole("group", { name: "Em foco" });
-    expect(within(foco).getByText("AO VIVO")).toBeInTheDocument();
+    expect(within(foco).getByText("Ao vivo")).toBeInTheDocument();
     fireEvent.click(within(foco).getByRole("button", { name: "Assistir a transmissão" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_watch", expect.anything()));
     expect(within(canal()).getByRole("group", { name: "Em foco" })).toBeInTheDocument();

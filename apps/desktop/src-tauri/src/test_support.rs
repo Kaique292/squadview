@@ -3,6 +3,7 @@
 //! do SquadView instalado (sessão, perfil, registros).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -63,10 +64,24 @@ fn unique() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
 }
 
+/// Identificador só deste app de teste. O relógio do Windows anda de 100 em 100 ns, então dois
+/// testes em paralelo podiam pegar o mesmo horário, dividir a mesma pasta de dados e um apagar a
+/// do outro no `Drop`. O contador separa os apps do mesmo processo; o id do processo e o horário
+/// separam execuções diferentes (outras worktrees rodando os testes ao mesmo tempo).
+fn test_identifier() -> String {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "io.github.kaique292.squadview.testes.{}.{n}.{}",
+        std::process::id(),
+        unique()
+    )
+}
+
 /// App de mentira com os estados de verdade, uma janela "main" e pastas de dados só dele.
 pub fn test_app() -> TestApp {
     let mut context = mock_context(noop_assets());
-    context.config_mut().identifier = format!("io.github.kaique292.squadview.testes.{}", unique());
+    context.config_mut().identifier = test_identifier();
     let app = crate::manage_states(mock_builder(), crate::presence::Presence::start())
         .build(context)
         .expect("app de teste");
@@ -78,6 +93,25 @@ pub fn test_app() -> TestApp {
         .filter_map(Result::ok)
         .collect();
     TestApp { app, dirs }
+}
+
+#[test]
+fn apps_de_teste_criados_juntos_tem_pastas_diferentes() {
+    // Todas as threads largam juntas, como os testes em paralelo do `cargo test`.
+    let start = std::sync::Barrier::new(64);
+    let ids: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..64)
+            .map(|_| {
+                s.spawn(|| {
+                    start.wait();
+                    test_identifier()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let unicos: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(unicos.len(), ids.len(), "{ids:?}");
 }
 
 /// Worker de sinalização local e o segredo das sessões dele (`scripts/with-worker.mjs`, usado

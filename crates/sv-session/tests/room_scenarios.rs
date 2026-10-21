@@ -16,8 +16,8 @@ use sv_encode::EncodedFrame;
 use sv_gpu::Size;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::{error_message, new_room_code};
-use sv_net::{DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent};
-use sv_session::{AudioPacket, JoinAs, KeyframeHandle, Member, Room, RoomUpdate, StreamInfo};
+use sv_net::{Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, VideoFrame};
+use sv_session::{AudioPacket, JoinAs, KeyframeHandle, Member, RelaySource, Room, RoomUpdate, StreamInfo, WatchPath};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -218,8 +218,19 @@ fn apelido_perfil_mudo_e_surdo_chegam_aos_outros() {
     ana.members("surda na lista", |m| m[0].deafened);
     updated(&mut beto, "a Ana surda", &|m| m.muted && m.deafened);
 
+    // A Ana conta para a sala quem está assistindo (quem transmite vê quantos e quem assistem).
+    ana.room.set_watching(Some("0123456789abcdef"));
+    ana.members("assistindo na lista", |m| {
+        m[0].watching.as_deref() == Some("0123456789abcdef")
+    });
+    updated(&mut beto, "quem a Ana assiste", &|m| {
+        m.watching.as_deref() == Some("0123456789abcdef")
+    });
+    ana.room.set_watching(None);
+    updated(&mut beto, "a Ana parar de assistir", &|m| m.watching.is_none());
+
     // O Beto fica ao vivo: a Ana vê.
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.name == "Beto" && x.live));
 
     // O Beto sai: some da lista e a voz é atualizada.
@@ -279,6 +290,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
             candidates: candidates.clone(),
             fingerprint: "ab".into(),
             stream: desc(),
+            relay: None,
         },
         Signal::WatchDeny { reason: "não".into() },
         // A Ana entrou sem voz: convite e resposta de voz não fazem nada.
@@ -289,12 +301,13 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
         Signal::VoiceAnswer {
             candidates,
             fingerprint: "ab".into(),
+            relay: None,
         },
     ] {
         beto.client.signal(&ana_id, &signal);
     }
     // Um marcador depois dos sinais: até ele chegar, nada de assistir nem de voz.
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchReady { .. } | RoomUpdate::WatchFailed { .. } | RoomUpdate::VoiceFailed { .. } => {
@@ -334,14 +347,16 @@ fn assiste_um_amigo_que_aceita_pela_conexao_direta() {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
             stream: desc(),
+            relay: None,
         },
     );
     let accepted = rt.spawn(async move {
         let accepted = beto_peer.accept().await;
         (beto_peer, accepted)
     });
-    let (member, got) = ana.wait("a conexão", |u| match u {
-        RoomUpdate::WatchReady { member, desc, .. } => Some((member, desc)),
+    let (member, got, _conn) = ana.wait("a conexão", |u| match u {
+        // A conexão fica viva até o fim: fechar na hora faz quem aceita descartá-la (tentativa perdedora).
+        RoomUpdate::WatchReady { member, desc, conn, .. } => Some((member, desc, conn)),
         RoomUpdate::WatchFailed { reason, .. } => panic!("falhou: {reason}"),
         _ => None,
     });
@@ -371,6 +386,7 @@ fn sem_conexao_direta_quem_pediu_para_assistir_fica_sabendo() {
             candidates: Vec::new(),
             fingerprint: "ab".into(),
             stream: desc(),
+            relay: None,
         },
     );
     let (who, reason) = ana.wait("a falha", |u| match u {
@@ -378,6 +394,101 @@ fn sem_conexao_direta_quem_pediu_para_assistir_fica_sabendo() {
         RoomUpdate::WatchReady { .. } => panic!("não devia conectar"),
         _ => None,
     });
+    assert_eq!(who, beto.id);
+    assert!(reason.contains("conectar direto"), "{reason}");
+}
+
+/// Prepara a sala da camada do meio (ADR 0014): a Ana quer assistir o Beto mas não alcança ele;
+/// o Caio já assiste o Beto. Devolve o pedido de repasse que a Ana mandou para o Caio.
+fn ana_pede_repasse_ao_caio(rt: &Runtime, url: &str) -> (Someone, Friend, Friend, String, Signal) {
+    let code = new_room_code();
+    let ana = join(url, &code, "Ana", None);
+    let mut beto = friend(rt, url, &code, "Beto");
+    let mut caio = friend(rt, url, &code, "Caio");
+    let ana_id = ana.id_of("Ana");
+    // O Caio conta para a sala que assiste o Beto.
+    caio.client.set_status(false, false, false, Some(&beto.id));
+    let beto_id = beto.id.clone();
+    ana.members("o Caio assistindo o Beto", |m| {
+        m.iter()
+            .any(|x| x.name == "Caio" && x.watching.as_deref() == Some(beto_id.as_str()))
+    });
+
+    ana.room.watch(&beto.id);
+    beto.signal_from(rt, &ana_id);
+    // O Beto aceita, mas nenhum endereço dele serve: o direto falha.
+    beto.client.signal(
+        &ana_id,
+        &Signal::WatchAccept {
+            candidates: Vec::new(),
+            fingerprint: "ab".into(),
+            stream: desc(),
+            relay: None,
+        },
+    );
+    let request = caio.signal_from(rt, &ana_id);
+    (ana, beto, caio, ana_id, request)
+}
+
+#[test]
+fn sem_caminho_ate_quem_transmite_recebe_por_quem_ja_assiste() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let (ana, beto, caio, ana_id, request) = ana_pede_repasse_ao_caio(&rt, &url);
+    let Signal::RelayRequest {
+        streamer, fingerprint, ..
+    } = request
+    else {
+        panic!("esperava o pedido de repasse: {request:?}")
+    };
+    assert_eq!(streamer, beto.id);
+
+    // O Caio aceita repassar: responde como quem transmite, com os endereços dele.
+    let caio_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    caio_peer.allowed().allow(&fingerprint);
+    caio.client.signal(
+        &ana_id,
+        &Signal::WatchAccept {
+            candidates: caio_peer.candidates().to_vec(),
+            fingerprint: caio_peer.fingerprint().to_owned(),
+            stream: desc(),
+            relay: None,
+        },
+    );
+    let accepted = rt.spawn(async move {
+        let accepted = caio_peer.accept().await;
+        (caio_peer, accepted)
+    });
+    let (member, path, _conn) = ana.wait("a conexão pelo Caio", |u| match u {
+        RoomUpdate::WatchReady { member, path, conn, .. } => Some((member, path, conn)),
+        RoomUpdate::WatchFailed { reason, .. } => panic!("falhou: {reason}"),
+        _ => None,
+    });
+    // Para quem assiste, é o stream do Beto, que chega pelo Caio.
+    assert_eq!(member.name, "Beto");
+    assert_eq!(path, WatchPath::Member(caio.id.clone()));
+    let (_peer, accepted) = rt.block_on(accepted).unwrap();
+    assert_eq!(accepted.expect("o Caio aceitou").purpose, Purpose::Stream);
+}
+
+#[test]
+fn quem_ja_assiste_recusa_repassar_e_a_falha_chega_com_o_motivo_do_direto() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let (ana, beto, caio, ana_id, request) = ana_pede_repasse_ao_caio(&rt, &url);
+    assert!(matches!(request, Signal::RelayRequest { .. }), "{request:?}");
+    caio.client.signal(
+        &ana_id,
+        &Signal::WatchDeny {
+            reason: "Não dá para repassar agora.".into(),
+        },
+    );
+    let (who, reason) = ana.wait("a falha", |u| match u {
+        RoomUpdate::WatchFailed { member_id, reason } => Some((member_id, reason)),
+        RoomUpdate::WatchReady { .. } => panic!("não devia conectar"),
+        _ => None,
+    });
+    // Não sobrou ninguém: a falha é sobre o Beto, com o motivo da conexão direta.
     assert_eq!(who, beto.id);
     assert!(reason.contains("conectar direto"), "{reason}");
 }
@@ -441,13 +552,14 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         candidates,
         fingerprint,
         stream,
+        ..
     } = beto.signal_from(&rt, &ana_id)
     else {
         panic!("a Ana devia aceitar")
     };
     assert_eq!((stream.width, stream.height, stream.fps), (1280, 720, 30));
     let conn = rt
-        .block_on(beto_peer.connect(&candidates, &fingerprint))
+        .block_on(beto_peer.connect(&candidates, None, &fingerprint))
         .expect("conectar na Ana");
     let (tx, got) = mpsc::channel();
     let _receiver = {
@@ -488,7 +600,7 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
 
     // Uma conexão de voz de quem não chamou para a voz é recusada.
     let voice = rt
-        .block_on(beto_peer.connect_for(&candidates, &fingerprint, Purpose::Voice))
+        .block_on(beto_peer.connect_for(&candidates, None, &fingerprint, Purpose::Voice))
         .expect("o aperto de mão passa: a fingerprint do Beto foi autorizada");
     let reason = rt.block_on(voice.closed());
     assert!(reason.to_string().contains("desconhecido"), "{reason}");
@@ -497,7 +609,7 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
     ana.room.stream_stopped();
     assert_eq!(ana.room.viewer_count(), 0);
     let late = rt
-        .block_on(beto_peer.connect(&candidates, &fingerprint))
+        .block_on(beto_peer.connect(&candidates, None, &fingerprint))
         .expect("o aperto de mão passa");
     let reason = rt.block_on(late.closed());
     assert!(reason.to_string().contains("nao esta transmitindo"), "{reason}");
@@ -563,7 +675,7 @@ fn pedido_para_assistir_sem_resposta_desiste_sozinho() {
     // Resposta atrasada, depois de desistir: ignorada.
     beto.client
         .signal(&ana_id, &Signal::WatchDeny { reason: "tarde".into() });
-    beto.client.set_status(true, false, false);
+    beto.client.set_status(true, false, false, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchFailed { .. } => panic!("resposta atrasada não pode falhar de novo"),
@@ -656,4 +768,85 @@ fn sala_cheia_na_volta_desiste_e_avisa() {
         RoomUpdate::Reconnected => panic!("voltou para uma sala cheia"),
         _ => None,
     });
+}
+
+/// Quem já assiste e recebe um pedido de repasse (ADR 0014): aceita, recebe a conexão de quem pediu
+/// e manda para ela os frames do stream que assiste (não o próprio). Pedido de outro stream: recusa.
+#[test]
+fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let beto = friend(&rt, &url, &code, "Beto");
+    let mut dani = friend(&rt, &url, &code, "Dani");
+    let ana_id = ana.id_of("Ana");
+
+    // A Ana assiste o Beto: o que chega dele vai para este Broadcaster de repasse. Os pedidos de
+    // keyframe sobem por uma conexão de verdade (aqui, entre dois pontos de teste).
+    let (up, down) = rt.block_on(async { (Peer::bind(&[]).await.unwrap(), Peer::bind(&[]).await.unwrap()) });
+    up.allowed().allow(down.fingerprint());
+    let keyframes = rt.block_on(async {
+        let (_, conn) = tokio::join!(up.accept(), down.connect(up.candidates(), None, up.fingerprint()));
+        Receiver::start(conn.unwrap(), Sink(mpsc::channel().0)).keyframe_requester()
+    });
+    let relay = Broadcaster::new();
+    ana.room.set_relay_source(Some(RelaySource {
+        streamer: beto.id.clone(),
+        desc: desc(),
+        broadcaster: relay.clone(),
+        keyframes,
+    }));
+
+    // Pedido de repasse de outro stream: recusa.
+    let dani_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let ask = |streamer: &str| Signal::RelayRequest {
+        streamer: streamer.to_owned(),
+        candidates: dani_peer.candidates().to_vec(),
+        fingerprint: dani_peer.fingerprint().to_owned(),
+    };
+    dani.client.signal(&ana_id, &ask("0123456789abcdef"));
+    assert!(matches!(dani.signal_from(&rt, &ana_id), Signal::WatchDeny { .. }));
+
+    // Do Beto: aceita, com o formato do stream dele.
+    dani.client.signal(&ana_id, &ask(&beto.id));
+    let Signal::WatchAccept {
+        candidates,
+        fingerprint,
+        stream,
+        ..
+    } = dani.signal_from(&rt, &ana_id)
+    else {
+        panic!("a Ana devia aceitar repassar")
+    };
+    assert_eq!(stream, desc());
+    let conn = rt
+        .block_on(dani_peer.connect(&candidates, None, &fingerprint))
+        .expect("conectar na Ana");
+    let (tx, got) = mpsc::channel();
+    let _receiver = {
+        let _guard = rt.enter();
+        Receiver::start(conn, Sink(tx))
+    };
+    for _ in 0..100 {
+        if relay.viewer_count() == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(relay.viewer_count(), 1, "a Dani recebe pelo repasse");
+    assert_eq!(ana.room.viewer_count(), 0, "não é espectadora da transmissão da Ana");
+
+    // O que chega do Beto na Ana segue para a Dani.
+    relay.send_video(&VideoFrame {
+        header: FrameHeader {
+            seq: 5,
+            timestamp_us: 1,
+            keyframe: true,
+            encode_us: 1,
+        },
+        data: std::sync::Arc::from(vec![7u8; 2000]),
+    });
+    let first = got.recv_timeout(WAIT).expect("o frame repassado não chegou");
+    assert!(matches!(first, Got::Video(5)));
 }

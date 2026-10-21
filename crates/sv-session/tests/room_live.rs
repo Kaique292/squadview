@@ -87,7 +87,7 @@ fn um_amigo_assiste_o_outro_pela_sala() {
             .recv_timeout(Duration::from_secs(10))
             .expect("sem resposta ao pedido")
         {
-            RoomUpdate::WatchReady { conn, desc, member } => {
+            RoomUpdate::WatchReady { conn, desc, member, .. } => {
                 assert_eq!(member.name, "Ana");
                 break (conn, desc);
             }

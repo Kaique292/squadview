@@ -248,8 +248,18 @@ pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
         preview::hand_off_exit(&app, watching.view.snapshot());
         drop(watching);
         preview::set_watching(&app, false);
+        announce_watching(&app, None);
     })
     .await
+}
+
+/// Conta para a sala quem estamos assistindo (quem transmite vê quantos e quem assistem) e deixa a
+/// sala repassar esse stream a quem não alcança quem transmite (ADR 0014).
+fn announce_watching<R: Runtime>(app: &AppHandle<R>, watching: Option<sv_session::RelaySource>) {
+    if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
+        room.set_watching(watching.as_ref().map(|s| s.streamer.as_str()));
+        room.set_relay_source(watching);
+    }
 }
 
 /// Liga ou desliga o som de quem estamos assistindo.
@@ -286,13 +296,14 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
 }
 
 /// Repassa a posição do vídeo para quem estamos assistindo.
-pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, bounds: sv_session::Bounds, hidden: bool) -> bool {
+pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, layout: &preview::Layout) -> bool {
     let state = app.state::<RoomState>();
     let running = lock(&state);
     match running.watching.as_ref() {
         Some(w) => {
-            w.view.set_video_bounds(bounds);
-            w.view.set_video_hidden(hidden);
+            w.view.set_video_bounds(layout.bounds);
+            w.view.set_video_hidden(layout.hidden);
+            w.view.set_video_holes(layout.holes.clone());
             true
         }
         None => false,
@@ -326,7 +337,20 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
                 crate::voice::VoiceFailed { member_id, reason },
             );
         }
-        RoomUpdate::WatchReady { member, conn, desc } => start_watching(app, member, conn, desc),
+        RoomUpdate::WatchReady {
+            member,
+            conn,
+            desc,
+            path,
+        } => start_watching(app, member, conn, desc, path),
+        // O repassador TURN da sala (ADR 0014): só para o registro, a interface não muda.
+        RoomUpdate::Relay(result) => {
+            let detail = match &result {
+                Ok(addr) => json!({ "ready": true, "addr": addr.to_string() }),
+                Err(reason) => json!({ "ready": false, "reason": reason }),
+            };
+            app.state::<Diagnostics>().write("relay", &detail);
+        }
         RoomUpdate::WatchFailed { member_id, reason } => {
             app.state::<Diagnostics>()
                 .write("watch-failed", &json!({ "reason": reason }));
@@ -378,6 +402,7 @@ fn start_watching<R: Runtime>(
     member: Member,
     conn: quinn::Connection,
     desc: sv_net::protocol::StreamDescription,
+    path: sv_session::WatchPath,
 ) {
     let target = match preview::video_target(app) {
         Ok(t) => t,
@@ -419,6 +444,7 @@ fn start_watching<R: Runtime>(
                     }
                     drop(ended);
                     preview::set_watching(&app, false);
+                    announce_watching(&app, None);
                     let _ = app.emit(
                         WATCH_ENDED_EVENT,
                         WatchEnded {
@@ -441,17 +467,20 @@ fn start_watching<R: Runtime>(
     let layout = preview::layout(app);
     view.set_video_bounds(layout.bounds);
     view.set_video_hidden(layout.hidden);
+    view.set_video_holes(layout.holes);
 
     app.state::<Diagnostics>().write(
         "watch-start",
-        &json!({ "member": member.name, "desc": format!("{desc:?}") }),
+        &json!({ "member": member.name, "desc": format!("{desc:?}"), "path": path.label() }),
     );
+    let relay = view.relay_source(&member.id);
     let state = app.state::<RoomState>();
     lock(&state).watching = Some(Watching {
         member: member.clone(),
         view,
     });
     preview::set_watching(app, true);
+    announce_watching(app, Some(relay));
     let _ = app.emit(WATCH_STARTED_EVENT, member);
 }
 
@@ -518,7 +547,7 @@ mod tests {
         set_watch_volume(state(), 1.5);
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
-        assert!(!apply_layout(t.handle(), sv_session::Bounds::default(), false));
+        assert!(!apply_layout(t.handle(), &preview::Layout::default()));
         tauri::async_runtime::block_on(room_stop_watching(t.handle().clone())).unwrap();
         tauri::async_runtime::block_on(room_leave(t.handle().clone())).unwrap();
     }

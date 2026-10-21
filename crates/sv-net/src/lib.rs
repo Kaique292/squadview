@@ -6,9 +6,9 @@
 //! - [`media`]: vídeo (um stream por frame), áudio (datagramas) e controle.
 //! - [`protocol`]: os formatos que viajam; [`clock`]: estimativa do relógio do outro lado.
 //! - [`signaling`]: a sala; [`friends`]: o registro de amigos e presença.
+//! - [`turn`]: o repassador na nuvem, para quando dois membros não se veem (CGNAT simétrico).
 //!
-//! Quando dois membros não conseguem se ver (CGNAT simétrico), a conexão falha com uma mensagem
-//! clara; a ponte por um terceiro membro da sala vem na Fase 3.
+//! A conexão vai em camadas (ADR 0014): direto; se não der, pelo repassador TURN de quem aceita.
 
 pub mod cert;
 pub mod clock;
@@ -18,10 +18,12 @@ pub mod media;
 pub mod protocol;
 pub mod signaling;
 pub mod stun;
+pub mod turn;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
 pub use signaling::{DiscordUser, JoinRequester, Member, RoomClient, RoomEvent};
+pub use turn::{TurnError, TurnServer};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.
 pub const PROTOCOL_VERSION: u16 = 1;

@@ -21,14 +21,14 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Cliente → servidor
 
-| Mensagem                                                       | Quando                                                                                                                                                                                                              |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria). |
-| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                    |
-| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                         |
-| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem).                                                                         |
-| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                          |
-| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                          |
+| Mensagem                                                       | Quando                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria).                                               |
+| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                                                                  |
+| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                                                                       |
+| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem). `watching` (opcional, `null` se faltar) é o id de quem estamos assistindo: quem transmite vê quantos e quem assistem. |
+| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                                                                        |
+| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                                                                        |
 
 ### Servidor → cliente
 
@@ -62,6 +62,14 @@ Desde a 0.3.0 ([ADR 0011](../../docs/adr/0011-amigos-e-presenca.md)):
 - `{"type":"join-answer","id":"<id>","accept":true}` (cliente → servidor): qualquer membro aceita ou recusa. O primeiro a responder decide.
 - `{"type":"join-request-closed","id":"<id>"}` (servidor → todos): o pedido foi respondido ou venceu (60 s).
 - Só quem foi aceito recebe o código da sala, pelo próprio registro.
+
+### Repassador TURN
+
+Desde a 0.5.0 ([ADR 0014](../../docs/adr/0014-conexao-em-camadas.md)), para quem não conecta direto (CGNAT):
+
+- `{"type":"turn","urls":["turn:turn.cloudflare.com:3478?transport=udp",...],"username":"...","credential":"..."}` (servidor → quem acabou de entrar): credenciais do repassador TURN. Só vai se o Worker tiver um provedor configurado (Cloudflare, Metered ou servidor fixo; ver `wrangler.toml`). Apps antigos ignoram.
+- Sinal `relay-request` (entre apps, pelo `signal`): quem não alcança quem transmite pede a um membro que já assiste para repassar. A resposta é um `watch-accept` ou `watch-deny` normal.
+- Nos sinais, `watch-accept` e `voice-answer` ganham o campo opcional `relay` (`"ip:porta"`): o endereço que quem aceita pegou emprestado no repassador. Quem conecta tenta os `candidates` e, se não fechar em 1,5 s, também o `relay`. O Worker não olha os sinais; o campo é só entre os apps.
 
 ## Amigos e presença
 

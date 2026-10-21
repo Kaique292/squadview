@@ -10,7 +10,10 @@ mod preview;
 mod room;
 #[cfg(test)]
 mod test_support;
+mod tray;
 mod voice;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Versão do app, exibida na interface e usada pelo auto-update.
 #[tauri::command]
@@ -31,9 +34,12 @@ fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
     let Some(main) = app.get_webview_window("main") else {
         return;
     };
-    if main.is_visible().unwrap_or(false) && reason == "rede-de-seguranca" {
+    // A rede de segurança só vale para a abertura: se a janela já apareceu e a pessoa mandou para
+    // a bandeja, ela fica lá.
+    if reason == "rede-de-seguranca" && (main.is_visible().unwrap_or(false) || SHOWN.load(Ordering::Relaxed)) {
         return;
     }
+    SHOWN.store(true, Ordering::Relaxed);
     let _ = main.show();
     let _ = main.unminimize();
     let _ = main.set_focus();
@@ -46,6 +52,9 @@ fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
         diagnostics.write("window-shown", &serde_json::json!({ "reason": reason }));
     }
 }
+
+/// A janela principal já apareceu alguma vez.
+static SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Se a interface travar antes de avisar, a janela principal aparece mesmo assim.
 const SPLASH_FAILSAFE: std::time::Duration = std::time::Duration::from_secs(8);
@@ -79,6 +88,7 @@ fn manage_states<R: tauri::Runtime>(builder: tauri::Builder<R>, presence: presen
         .manage(room::RoomState::default())
         .manage(invite::PendingInvite::default())
         .manage(friends::Friends::default())
+        .manage(tray::Tray::default())
         .manage(presence)
 }
 
@@ -113,8 +123,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        // Fechar a janela principal manda para a bandeja (se ligado em Configurações › Windows).
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                tray::on_close_requested(window, api);
+            }
+        })
         .setup(|app| {
             diagnostics::setup(app);
+            tray::setup(app);
             setup_deep_links(app);
             // Amigos e presença: conecta sozinho se já entrou com o Discord (ADR 0011).
             friends::start(app.handle());
@@ -146,6 +163,7 @@ pub fn run() {
             preview::set_preview_listening,
             preview::set_video_bounds,
             preview::set_video_hidden,
+            preview::set_video_holes,
             preview::set_fullscreen,
             room::room_join,
             room::room_leave,
@@ -164,6 +182,8 @@ pub fn run() {
             voice::voice_set_peer_volume,
             voice::voice_set_peer_muted,
             preview::stop_preview,
+            tray::window_settings,
+            tray::set_close_to_tray,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| crash::fatal(&format!("O SquadView não conseguiu abrir: {e}")));

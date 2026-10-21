@@ -9,7 +9,7 @@ use sv_encode::EncodedFrame;
 use sv_gpu::{Size, clock};
 use sv_media::{Bounds, WindowEvent, WindowTarget};
 use sv_net::protocol::{FrameHeader, StreamDescription};
-use sv_net::{KeyframeRequester, Receiver, ReceiverSink};
+use sv_net::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
 
 use crate::surface::{Surface, lock};
 use crate::{AudioPacket, AudioReceiver, ReceiverEvent, StatsMeter, StreamInfo, StreamStats, VideoViewer, ViewerEvent};
@@ -25,6 +25,9 @@ struct Shared {
     surface: Mutex<Surface>,
     keyframes: OnceLock<KeyframeRequester>,
     rtt_us: OnceLock<Arc<std::sync::atomic::AtomicU64>>,
+    /// Repasse pela sala (ADR 0014): quem não conecta em quem transmite recebe daqui, os mesmos
+    /// frames já codificados (sem decodificar de novo).
+    relay: Broadcaster,
     on_stats: Mutex<OnStats>,
     on_closed: Mutex<Option<OnClosed>>,
 }
@@ -45,6 +48,7 @@ impl Shared {
             surface: Mutex::new(Surface::default()),
             keyframes: OnceLock::new(),
             rtt_us: OnceLock::new(),
+            relay: Broadcaster::new(),
             on_stats: Mutex::new(on_stats),
             on_closed: Mutex::new(Some(on_closed)),
         })
@@ -77,6 +81,27 @@ pub struct RemoteView {
     // A ordem importa: a conexão fecha antes do decoder e da janela.
     receiver: Receiver,
     state: Arc<Shared>,
+    desc: StreamDescription,
+}
+
+/// O que a sala precisa para repassar um stream que estamos assistindo a quem não alcança quem
+/// transmite (ver [`crate::Room::set_relay_source`]).
+#[derive(Clone)]
+pub struct RelaySource {
+    /// Id de quem transmite.
+    pub streamer: String,
+    pub desc: StreamDescription,
+    pub broadcaster: Broadcaster,
+    pub keyframes: KeyframeRequester,
+}
+
+impl std::fmt::Debug for RelaySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelaySource")
+            .field("streamer", &self.streamer)
+            .field("viewers", &self.broadcaster.viewer_count())
+            .finish()
+    }
 }
 
 impl std::fmt::Debug for RemoteView {
@@ -136,7 +161,23 @@ impl RemoteView {
         *lock(&state.viewer) = Some(viewer);
 
         let _ = state.rtt_us.set(receiver.rtt_handle());
-        Self { receiver, state }
+        Self { receiver, state, desc }
+    }
+
+    /// Para repassar este stream pela sala: quem pedir recebe os mesmos frames, e os pedidos de
+    /// keyframe deles sobem até quem transmite (`streamer` é o id dele).
+    pub fn relay_source(&self, streamer: &str) -> RelaySource {
+        RelaySource {
+            streamer: streamer.to_owned(),
+            desc: self.desc,
+            broadcaster: self.state.relay.clone(),
+            keyframes: self.receiver.keyframe_requester(),
+        }
+    }
+
+    /// Quantas pessoas recebem este stream repassado por nós.
+    pub fn relayed_viewers(&self) -> usize {
+        self.state.relay.viewer_count()
     }
 
     pub fn set_video_bounds(&self, bounds: Bounds) {
@@ -148,6 +189,13 @@ impl RemoteView {
     pub fn set_video_hidden(&self, hidden: bool) {
         let mut s = lock(&self.state.surface);
         s.hidden = hidden;
+        s.apply();
+    }
+
+    /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
+    pub fn set_video_holes(&self, holes: Vec<Bounds>) {
+        let mut s = lock(&self.state.surface);
+        s.holes = holes;
         s.apply();
     }
 
@@ -183,6 +231,8 @@ impl RemoteView {
 
 impl Drop for RemoteView {
     fn drop(&mut self) {
+        // Paramos de assistir: quem recebia repassado por nós cai (e procura outro caminho).
+        self.state.relay.close();
         lock(&self.state.viewer).take();
         lock(&self.state.audio).take();
     }
@@ -196,6 +246,13 @@ impl ReceiverSink for Sink {
     fn video(&mut self, header: FrameHeader, data: Vec<u8>) {
         let state = &self.state;
         lock(&state.meter).record_encoded(data.len(), header.encode_us);
+        // Repasse: só copia quando alguém recebe por nós (sem ninguém, nada muda no caminho).
+        if state.relay.viewer_count() > 0 {
+            state.relay.send_video(&VideoFrame {
+                header,
+                data: Arc::from(&data[..]),
+            });
+        }
         let frame = EncodedFrame {
             data,
             keyframe: header.keyframe,
@@ -220,6 +277,9 @@ impl ReceiverSink for Sink {
 
     fn audio(&mut self, seq: u32, timestamp_us: u64, peak: f32, opus: &[u8]) {
         lock(&self.state.meter).record_audio(opus.len(), peak);
+        if self.state.relay.viewer_count() > 0 {
+            self.state.relay.send_audio(seq, timestamp_us, peak, opus);
+        }
         if let Some(audio) = lock(&self.state.audio).as_ref() {
             audio.submit(AudioPacket {
                 seq,

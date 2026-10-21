@@ -1,10 +1,26 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Activity, Gamepad2, LogOut, Mic, Palette, Pencil, RotateCcw, Search, User, X } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  Gamepad2,
+  Loader2,
+  LogOut,
+  Monitor,
+  Mic,
+  Palette,
+  Pencil,
+  RotateCcw,
+  Search,
+  User,
+  X,
+} from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
+import { useFriendsStore } from "../friends/friends-store";
 import { Avatar } from "../ui/Avatar";
 import { holdOverlay } from "../ui/overlay";
+import { SoundsSection } from "../sounds/SoundsSection";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
@@ -12,8 +28,9 @@ import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { usePresenceSettings } from "./presence-store";
 import { VoiceSection } from "./VoiceSection";
+import { WindowsSection } from "./WindowsSection";
 
-type Page = "conta" | "voz" | "discord" | "aparencia" | "desempenho";
+type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho";
 
 interface Item {
   id: Page;
@@ -45,7 +62,19 @@ const GROUPS: { title: string; items: Item[] }[] = [
           { id: "voz-processamento", label: "Processamento de voz" },
         ],
       },
+      {
+        id: "sons",
+        label: "Sons",
+        icon: <Bell size={18} />,
+        keywords: "aviso notificação mudo surdo entrar sair alerta",
+      },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
+      {
+        id: "windows",
+        label: "Windows",
+        icon: <Monitor size={18} />,
+        keywords: "bandeja fechar minimizar relógio segundo plano iniciar",
+      },
       { id: "desempenho", label: "Desempenho", icon: <Activity size={18} />, keywords: "registro fps gpu diagnóstico" },
     ],
   },
@@ -65,8 +94,10 @@ const GROUPS: { title: string; items: Item[] }[] = [
 const TITLES: Record<Page, string> = {
   conta: "Minha conta",
   voz: "Voz e vídeo",
+  sons: "Sons",
   discord: "Status no Discord",
   aparencia: "Aparência",
+  windows: "Configurações do Windows",
   desempenho: "Desempenho",
 };
 
@@ -122,8 +153,10 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
               <div key={page} className="mx-auto max-w-[680px] animate-step-in text-left">
                 {page === "conta" && <AccountSection />}
                 {page === "voz" && <VoiceSection />}
+                {page === "sons" && <SoundsSection />}
                 {page === "discord" && <PresenceSection />}
                 {page === "aparencia" && <AppearanceSection />}
+                {page === "windows" && <WindowsSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
               </div>
             </ScrollArea>
@@ -297,6 +330,32 @@ function AppearanceSection() {
   );
 }
 
+/**
+ * Se os amigos estão ligados para esta conta. O login vale para o app inteiro: quando a sessão
+ * ainda não saiu (o app segue tentando sozinho), aparece aqui também, e não só na página de amigos.
+ */
+function FriendsState() {
+  const status = useFriendsStore((s) => s.status);
+  if (status === "online") {
+    return <p className="text-xs text-text-faint">Amigos ativos: você aparece nos recentes de quem está na sala.</p>;
+  }
+  if (status === "connecting") {
+    return (
+      <p className="flex items-center gap-2 text-xs text-text-faint">
+        <Loader2 size={12} className="animate-spin" /> Ativando os amigos…
+      </p>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-md bg-surface-1 p-3">
+      <p className="flex-1 text-sm text-text-muted">
+        Os amigos não estão ativos nesta conta. Entre de novo para o SquadView confirmar que é você.
+      </p>
+      <DiscordLoginButton />
+    </div>
+  );
+}
+
 /** Conta do Discord: quem está conectado, ou o botão para entrar. */
 function AccountSection() {
   const profile = useAccountStore((s) => s.profile);
@@ -321,7 +380,9 @@ function AccountSection() {
             Sair
           </button>
         </div>
-      ) : (
+      ) : null}
+      {profile && <FriendsState />}
+      {!profile && (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-text-muted">
             Entre com o Discord para usar seu nome e sua foto nas salas. O SquadView só lê seu perfil público: não vê

@@ -62,7 +62,7 @@ describe("chat de voz", () => {
     expect(within(canal).getByText("Galera")).toBeInTheDocument();
     const grade = within(canal).getByRole("list", { name: "Quem está na voz" });
     expect(within(grade).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(grade).getByText("AO VIVO")).toBeInTheDocument();
+    expect(within(grade).getByText("Ao vivo")).toBeInTheDocument();
     expect(within(grade).getByLabelText("Microfone silenciado")).toBeInTheDocument();
   });
 

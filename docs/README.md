@@ -30,3 +30,4 @@
 | [0011](adr/0011-amigos-e-presenca.md)                     | Amigos, presença e pedido para entrar na sala, com identidade conferida pelo Worker |
 | [0012](adr/0012-malha-em-enxame.md)                       | Malha em enxame: várias árvores, paridade e repassador na nuvem de reserva          |
 | [0013](adr/0013-seguir-o-jogo-sem-injecao.md)             | Seguir o jogo entre janelas e para o monitor, sem injeção                           |
+| [0014](adr/0014-conexao-em-camadas.md)                    | Conexão em camadas: direto, depois o repassador TURN de quem aceita (CGNAT)         |

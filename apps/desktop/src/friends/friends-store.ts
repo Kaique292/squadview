@@ -119,6 +119,10 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
   },
 
   async joinFriend(friend) {
+    if (inMyRoom(friend.id)) {
+      toast.info(`${friend.name} já está na sua sala.`, "Entrar na sala");
+      return;
+    }
     set({ waitingFor: friend.name });
     await get().act({ type: "join", id: friend.id });
   },
@@ -142,8 +146,24 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
   },
 }));
 
+/** A pessoa (id do Discord) está na sala em que estamos. */
+export function inMyRoom(id: string): boolean {
+  const { code, members } = useRoomStore.getState();
+  return code !== null && members.some((m) => m.discord?.id === id);
+}
+
+/** O mesmo, como hook (a lista da sala muda e o botão acompanha). */
+export function useInMyRoom(id: string): boolean {
+  return useRoomStore((s) => s.code !== null && s.members.some((m) => m.discord?.id === id));
+}
+
 /** Entra numa sala recebida de um amigo, com o nosso nome de sempre. */
 async function enterRoom(code: string) {
+  // Já estamos nela (ex.: aprovaram um pedido antigo): entrar de novo duplicava a gente na sala.
+  if (code === useRoomStore.getState().code) {
+    useFriendsStore.setState({ open: false });
+    return;
+  }
   const profile = useAccountStore.getState().profile;
   const name = profile ? displayName(profile) : savedName() || "Você";
   const ok = await useRoomStore.getState().join(code, name);
@@ -194,6 +214,7 @@ function onMessage(msg: RegistryMessage) {
       onJoinResult(msg.result);
       return;
     case "invited":
+      if (msg.code === useRoomStore.getState().code) return;
       useFriendsStore.setState({
         invites: [...useFriendsStore.getState().invites.filter((i) => i.from.id !== msg.from.id), msg],
       });
@@ -242,6 +263,12 @@ export async function listenToFriendsEvents() {
   // Entrou, saiu ou renomeou a sala, ou começou a transmitir: os amigos ficam sabendo.
   const offRoom = useRoomStore.subscribe((s, prev) => {
     if (s.code !== prev.code) useFriendsStore.setState({ joinRequests: [] });
+    // Quem pediu para entrar e já está na sala (outro membro aceitou): o pedido some.
+    else if (s.members !== prev.members) {
+      const { joinRequests } = useFriendsStore.getState();
+      const open = joinRequests.filter((r) => !inMyRoom(r.from.id));
+      if (open.length !== joinRequests.length) useFriendsStore.setState({ joinRequests: open });
+    }
     // Entrou numa sala ou começou a assistir alguém: sai da página de amigos para mostrar a sala
     // ou o vídeo (antes o vídeo ficava escondido atrás dela).
     const enteredRoom = s.code !== null && s.code !== prev.code;
