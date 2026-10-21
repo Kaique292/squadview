@@ -43,6 +43,33 @@ yarn dev          # abre o app em modo desenvolvimento
 | `yarn coverage:badge`                     | Junta as coberturas e gera `build/badges/coverage.json`                                                               |
 | `yarn workspace @squadview/signaling dev` | Sobe o Worker de sinalização localmente                                                                               |
 
+## Tamanho da target/
+
+Em out/2026 a `target/` chegou a 133 GB e quase lotou o disco C: (117 GB em `target/debug`, 11,6 GB em `target/llvm-cov-target`, 3,6 GB em `target/release`). Ela foi apagada e estas proteções entraram.
+
+**O que cresce e por quê:**
+
+- `target/debug`: cada combinação de features, flags e toolchain compila as dependências de novo, e os crates do workspace guardam os artefatos do build incremental (`incremental/`). Com a informação de debug completa, cada cópia pesa muito.
+- `target/llvm-cov-target`: o `cargo llvm-cov` (usado pelo `yarn test:rs`) compila tudo outra vez com instrumentação, numa pasta só dele, e guarda os perfis de cada execução.
+- `target/release`: o `yarn build`.
+- `.claude/worktrees/*/target`: cada worktree do git tem a sua própria `target/`, que não some sozinha quando o trabalho acaba.
+- Nada disso é apagado sozinho: sessões automatizadas que compilam e testam o tempo todo acumulam dezenas de GB em poucos dias.
+
+**Proteções:**
+
+- `.cargo/config.toml` deixa o perfil `dev` mais leve: os nossos crates só com a tabela de linhas (`debug = "line-tables-only"`; backtraces continuam com arquivo e linha) e as dependências sem informação de debug. O cargo já não usa build incremental nas dependências, só nos crates do workspace. Para depurar com variáveis no debugger, rode com `CARGO_PROFILE_DEV_DEBUG=full`.
+- `scripts/clean-build.ps1` mostra os tamanhos e limpa o que for pedido. Ele nunca apaga nada fora de uma pasta `target/`.
+
+| Comando                                  | O que faz                                                     |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| `./scripts/clean-build.ps1`              | Só mostra: `target/`, as subpastas grandes e as dos worktrees |
+| `./scripts/clean-build.ps1 -IfOverGB 20` | `cargo clean` se a `target/` passar de 20 GB                  |
+| `./scripts/clean-build.ps1 -Coverage`    | `cargo llvm-cov clean --workspace` (só a cobertura)           |
+| `./scripts/clean-build.ps1 -Clean`       | `cargo clean` (a `target/` inteira)                           |
+| `./scripts/clean-build.ps1 -Worktrees`   | Apaga a `target/` de cada worktree em `.claude/worktrees`     |
+
+**Opcional:** o [`cargo-sweep`](https://github.com/holmgr/cargo-sweep) limpa só o que está velho, sem perder o cache inteiro: `cargo install cargo-sweep`, depois `cargo sweep --time 7` (apaga artefatos sem uso há 7 dias) ou `cargo sweep --installed` (apaga os de toolchains que não estão mais instaladas).
+
 ## Instalador
 
 O instalador e a atualização funcionam como os do Discord: sem assistente. Dois cliques no instalador instalam em silêncio, em poucos segundos, e o app abre direto na splash.
