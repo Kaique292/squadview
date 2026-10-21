@@ -16,4 +16,4 @@ pub use devices::{AudioDevice, Flow, list_devices};
 pub use level::{AutoGain, soft_clip, volume_gain};
 pub use mic::{MIC_SAMPLE_RATE, MicCapture};
 pub use playback::{AudioPlayer, MAX_BUFFERED_MS, MAX_VOLUME};
-pub use window::{Bounds, Renderer, VideoWindow, WindowControl, WindowEvent, WindowTarget};
+pub use window::{Bounds, Hole, Renderer, VideoWindow, WindowControl, WindowEvent, WindowTarget};

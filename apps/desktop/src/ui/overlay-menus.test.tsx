@@ -99,13 +99,30 @@ describe("menus por cima do vídeo", () => {
     expect(changes).toEqual([true, false]);
   });
 
-  it("o buraco tem folga em volta e vem em pixels físicos", () => {
+  it("o buraco tem o tamanho e os cantos exatos do que está por cima, em pixels físicos", () => {
+    // Uma folga em volta aparecia como moldura preta (embaixo do buraco não há vídeo).
     const root = document.createElement("div");
-    root.innerHTML = "<div data-video-hole></div>";
+    root.innerHTML =
+      '<div data-video-hole class="cartao"></div><div data-radix-popper-content-wrapper><div class="pilula"></div></div>';
+    // O jsdom não entende `border-radius`: o raio de cada um vem daqui.
+    const style = vi
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation(
+        (el) =>
+          ({ borderTopLeftRadius: (el as Element).className === "pilula" ? "999px" : "8px" }) as CSSStyleDeclaration,
+      );
     const dpr = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", { value: 1.5, configurable: true });
-    expect(measureHoles(root)).toEqual([{ x: 6, y: 21, width: 318, height: 168 }]);
-    Object.defineProperty(window, "devicePixelRatio", { value: dpr, configurable: true });
+    try {
+      expect(measureHoles(root)).toEqual([
+        { x: 15, y: 30, width: 300, height: 150, radius: 12 },
+        // Pílula: o raio para na metade da altura.
+        { x: 15, y: 30, width: 300, height: 150, radius: 75 },
+      ]);
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { value: dpr, configurable: true });
+      style.mockRestore();
+    }
   });
 
   it("soltar duas vezes não conta em dobro, e erro do Rust não quebra nada", async () => {

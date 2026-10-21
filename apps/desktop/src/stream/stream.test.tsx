@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import { App } from "../App";
-import { StatsCard } from "./StatsCard";
+import { StreamDetailsDialog, sparklinePoints } from "./StreamDetailsDialog";
 import { StreamDialog } from "./StreamDialog";
-import { StreamView } from "./StreamView";
+import { StreamTile } from "./StreamTile";
 import { openOverlays } from "../ui/overlay";
 import {
   DEFAULT_QUALITY,
@@ -62,7 +62,10 @@ beforeEach(() => {
     thumbnails: {},
     quality: DEFAULT_QUALITY,
     stats: null,
+    history: [],
     system: null,
+    current: null,
+    videoHover: false,
     notice: null,
     listening: false,
     fullscreen: false,
@@ -263,14 +266,19 @@ describe("transmitir a tela: áudio", () => {
   });
 });
 
-describe("prévia ao vivo", () => {
-  it("mostra o medidor do áudio e liga o som da prévia", async () => {
+function details() {
+  render(<StreamDetailsDialog open onOpenChange={() => {}} />);
+  return screen.getByRole("dialog", { name: "Detalhes da transmissão" });
+}
+
+describe("detalhes da transmissão", () => {
+  it("mostra o som da live e liga o som da prévia", async () => {
     invoke.mockResolvedValue(undefined);
     useStreamStore.setState({ status: "live", stats: { ...STATS, audioLost: 2 } });
-    render(<StatsCard />);
-    expect(screen.getByRole("meter", { name: "Nível do áudio" })).toHaveAttribute("aria-valuenow", "50");
-    expect(screen.getByText(/128 kbps · 2 perdidos/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: "Ouvir o som da prévia" }));
+    const dialog = details();
+    expect(within(dialog).getByRole("meter", { name: "Nível do som do jogo" })).toHaveAttribute("aria-valuenow", "50");
+    expect(within(dialog).getByText(/128 kbps · 2 pacotes perdidos/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Ouvir o som da prévia" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_preview_listening", { listening: true }));
     expect(useStreamStore.getState().listening).toBe(true);
   });
@@ -283,19 +291,19 @@ describe("prévia ao vivo", () => {
 
   it("explica quando não há som ou deu erro na captura", () => {
     useStreamStore.setState({ status: "live", stats: { ...STATS, audioActive: false } });
-    const { rerender } = render(<StatsCard />);
-    expect(screen.getByText(/Sem som: escolha um aplicativo/)).toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    useStreamStore.setState({
-      stats: { ...STATS, audioActive: false, audioError: "não deu para capturar o áudio desse aplicativo" },
-    });
-    rerender(<StatsCard />);
-    expect(screen.getByText(/não deu para capturar o áudio/)).toBeInTheDocument();
+    const dialog = details();
+    expect(within(dialog).getByText(/Sem som: ligue “Compartilhar áudio da transmissão”/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("switch")).not.toBeInTheDocument();
+    act(() =>
+      useStreamStore.setState({
+        stats: { ...STATS, audioActive: false, audioError: "não deu para capturar o áudio desse aplicativo" },
+      }),
+    );
+    expect(within(dialog).getByText(/não deu para capturar o áudio/)).toBeInTheDocument();
   });
 
   it("mostra 'Medindo…' até chegar a primeira estatística", () => {
-    render(<StatsCard />);
-    expect(screen.getByText("Medindo…")).toBeInTheDocument();
+    expect(within(details()).getByText("Medindo…")).toBeInTheDocument();
   });
 
   it("segue funcionando se o caminho do registro não vier", async () => {
@@ -305,73 +313,85 @@ describe("prévia ao vivo", () => {
     unlisten();
   });
 
-  it("mostra os números e destaca latência alta", () => {
-    useStreamStore.setState({ status: "live", stats: { ...STATS, latencyMs: 80 } });
-    render(<StatsCard />);
-    expect(screen.getByText("1920×1080")).toBeInTheDocument();
-    expect(screen.getByText("8.0")).toBeInTheDocument();
-    expect(screen.getByText("80")).toHaveClass("text-warning");
-    expect(screen.getByText(/NVIDIA H.264 Encoder MFT/)).toBeInTheDocument();
+  it("mostra os números com o gráfico do último minuto, as barras de uso e destaca latência alta", () => {
+    useStreamStore.setState({
+      status: "live",
+      quality: { resolution: "720", fps: 30 },
+      stats: { ...STATS, latencyMs: 80 },
+      history: [STATS, { ...STATS, fps: 58 }, { ...STATS, latencyMs: 80 }],
+      system: { gpu3d: 95, gpuEncode: 72, gpuDecode: 0, cpu: 20 },
+    });
+    const dialog = details();
+    expect(within(dialog).getByText("720p 30fps")).toBeInTheDocument();
+    expect(within(dialog).getByText("1920×1080")).toBeInTheDocument();
+    const bitrate = within(dialog).getByRole("figure", { name: "Bitrate" });
+    expect(bitrate).toHaveTextContent("8.0 Mbps");
+    // O gráfico desenha a linha e a área (que deslizam com uma transição).
+    expect(bitrate.querySelectorAll("path.sparkline")).toHaveLength(2);
+    expect(within(dialog).getByRole("figure", { name: "Latência (captura → tela)" })).toHaveTextContent("80 ms");
+    expect(within(dialog).getByText("80")).toHaveClass("text-warning");
+    // Barras: verde, amarela (acima de 70%) e vermelha (acima de 90%).
+    const encoder = within(dialog).getByRole("meter", { name: "Encoder da GPU" });
+    expect(encoder).toHaveAttribute("aria-valuenow", "72");
+    expect(encoder.firstElementChild).toHaveClass("bg-warning");
+    expect(within(dialog).getByRole("meter", { name: "GPU (3D, o jogo)" }).firstElementChild).toHaveClass("bg-live");
+    expect(within(dialog).getByRole("meter", { name: "CPU" }).firstElementChild).toHaveClass("bg-online");
+    expect(within(dialog).getByText(/NVIDIA H.264 Encoder MFT/)).toBeInTheDocument();
   });
 
-  it("para a prévia pelo botão", async () => {
-    invoke.mockResolvedValue(undefined);
-    useStreamStore.setState({ status: "live", stats: STATS });
-    render(<StreamView />);
-    fireEvent.click(screen.getByRole("button", { name: "Parar" }));
-    await waitFor(() => expect(useStreamStore.getState().status).toBe("idle"));
-    expect(invoke).toHaveBeenCalledWith("stop_preview");
+  it("o gráfico põe a medição mais nova na direita e cabe na altura", () => {
+    const points = sparklinePoints([0, 10, 5]);
+    expect(points.at(-1)![0]).toBe(240);
+    expect(Math.min(...points.map(([, y]) => y))).toBeGreaterThan(0);
+    expect(points[0][1]).toBe(56);
   });
 
-  it("recebe estatísticas, uso do sistema e o fim da prévia pelos eventos do Rust", async () => {
+  it("recebe estatísticas, o histórico, o uso do sistema e o fim da live pelos eventos do Rust", async () => {
     invoke.mockImplementation((cmd: string) =>
       Promise.resolve(cmd === "session_log_path" ? "D:/SquadView/logs/sessao.jsonl" : undefined),
     );
     const unlisten = await listenToStreamEvents();
     useStreamStore.setState({ status: "live" });
     render(<App />);
-
     act(() => handlers.get("stream-stats")!({ payload: STATS }));
+    act(() => handlers.get("stream-stats")!({ payload: { ...STATS, fps: 59 } }));
     act(() => handlers.get("system-load")!({ payload: { gpu3d: 71, gpuEncode: 9, gpuDecode: 3, cpu: 22 } }));
-    expect(screen.getByRole("region", { name: "Prévia ao vivo" })).toHaveTextContent("60 fps · 12 ms · 8.0 Mbps");
-    fireEvent.click(screen.getByRole("button", { name: "Detalhes da transmissão" }));
-    const card = screen.getByRole("region", { name: "Estatísticas da transmissão" });
-    expect(card).toHaveTextContent("Quadros do jogo74");
-    expect(card).toHaveTextContent("Encoder da GPU9");
-    expect(card).toHaveTextContent("D:/SquadView/logs/sessao.jsonl");
+    expect(useStreamStore.getState().history.map((h) => h.fps)).toEqual([60, 59]);
 
-    act(() =>
-      handlers.get("stream-notice")!({
-        payload: { kind: "source-changed", message: "O jogo trocou de janela. Agora transmitindo “LoL”." },
-      }),
+    // Fora de uma sala, a live ocupa a área toda.
+    const live = screen.getByRole("region", { name: "Sua transmissão" });
+    fireEvent.contextMenu(within(live).getByRole("button", { name: /sua transmissão em foco/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Detalhes da transmissão/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Detalhes da transmissão" });
+    expect(within(dialog).getByRole("figure", { name: "Quadros transmitidos" })).toHaveTextContent(
+      "o jogo entrega 74 fps",
     );
-    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Agora transmitindo “LoL”");
-    act(() => handlers.get("stream-notice")!({ payload: { kind: "no-frames", message: "A imagem parou de chegar." } }));
-    const view = screen.getByRole("region", { name: "Prévia ao vivo" });
-    expect(view).toHaveTextContent("A imagem parou de chegar.");
-    act(() => handlers.get("stream-notice")!({ payload: null }));
-    expect(view).not.toHaveTextContent("A imagem parou de chegar.");
+    expect(within(dialog).getByRole("meter", { name: "Encoder da GPU" })).toHaveAttribute("aria-valuenow", "9");
+    expect(dialog).toHaveTextContent("D:/SquadView/logs/sessao.jsonl");
+    fireEvent.keyDown(dialog, { key: "Escape" });
 
     act(() => handlers.get("stream-ended")!({ payload: null }));
     // Acabou a transmissão fora de uma sala: volta para a página inicial (Amigos).
     expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
+    expect(useStreamStore.getState().history).toEqual([]);
     unlisten();
     expect(handlers.size).toBe(0);
   });
 });
 
 describe("vídeo dentro do app", () => {
-  it("entra e sai da tela cheia pelo botão, escondendo as barras laterais", async () => {
+  it("entra e sai da tela cheia pelo menu e por dois cliques, escondendo as barras laterais", async () => {
     invoke.mockResolvedValue(undefined);
     useStreamStore.setState({ status: "live", stats: STATS });
     render(<App />);
     expect(screen.getByRole("navigation", { name: "Salas" })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /sua transmissão em foco/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Tela cheia/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: true }));
     expect(screen.getByRole("navigation", { name: "Salas", hidden: true })).toHaveClass("hidden");
 
-    fireEvent.click(screen.getByRole("button", { name: "Sair da tela cheia" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /sua transmissão em foco/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false }));
   });
 
@@ -443,7 +463,9 @@ describe("posição do vídeo nativo", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       () => ({ ...rect, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect,
     );
-    const { unmount } = render(<StreamView />);
+    const { unmount } = render(
+      <StreamTile variant="focus" focused={false} onActivate={() => {}} onChange={() => {}} onDetails={() => {}} />,
+    );
     expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675 });
 
     invoke.mockClear();

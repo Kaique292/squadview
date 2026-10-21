@@ -1,6 +1,6 @@
 import { ImageOff, Loader2, Maximize2, Minimize2, PictureInPicture2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { BarButton } from "../stream/StreamView";
+import { BarButton } from "../stream/BarButton";
 import { useStreamStore } from "../stream/stream-store";
 import { useVideoSlot } from "../stream/video-slot";
 import type { Member } from "./room-store";

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use sv_capture::CaptureSource;
 use sv_core::StreamQuality;
 use sv_gpu::{Gpu, clock};
-use sv_media::{Bounds, WindowEvent, WindowTarget};
+use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
 
 use sv_encode::EncodedFrame;
 
@@ -194,7 +194,7 @@ impl LocalPreview {
     }
 
     /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
-    pub fn set_video_holes(&self, holes: Vec<Bounds>) {
+    pub fn set_video_holes(&self, holes: Vec<Hole>) {
         let mut s = lock(&self.state.surface);
         s.holes = holes;
         s.apply();

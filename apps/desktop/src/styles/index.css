@@ -260,6 +260,11 @@
   }
 }
 
+/* Gráficos dos detalhes da live: o caminho muda de forma deslizando, em vez de pular. */
+.sparkline {
+  transition: d 450ms linear;
+}
+
 .voice-aura {
   position: absolute;
   top: 50%;
