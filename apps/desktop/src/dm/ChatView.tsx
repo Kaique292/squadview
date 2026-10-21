@@ -39,7 +39,11 @@ export function ChatView(props: { friend: string }) {
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => holdOverlay(), []);
   // Mensagem nova (ou a prévia de uma foto que acabou de carregar e cresceu a conversa): rola até o fim.
-  const toEnd = () => bottom.current?.scrollIntoView?.({ block: "end" });
+  // Sem devolver nada: no Chromium novo o `scrollIntoView` devolve uma Promise, e o React a
+  // chamaria como limpeza do efeito ao fechar a conversa.
+  const toEnd = () => {
+    bottom.current?.scrollIntoView?.({ block: "end" });
+  };
   useEffect(toEnd, [messages?.length]);
 
   const status = direct
