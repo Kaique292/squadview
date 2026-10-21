@@ -33,3 +33,4 @@
 | [0014](adr/0014-conexao-em-camadas.md)                    | Conexão em camadas: direto, depois o repassador TURN de quem aceita (CGNAT)         |
 | [0015](adr/0015-efeito-de-fala-no-status.md)              | Efeito de fala de cada um, enviado no status da sala                                |
 | [0016](adr/0016-servidores-e-salas-fixas.md)              | Servidores com salas fixas, guardados no Worker                                     |
+| [0017](adr/0017-mensagens-privadas-p2p.md)                | Mensagens privadas direto entre os dois PCs                                         |

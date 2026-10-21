@@ -129,6 +129,20 @@ Registro → app:
 
 O Worker antigo não conhece essas mensagens e fecha a conexão de amigos (4400): publique o Worker antes do app.
 
+### Mensagens privadas (ADR 0017)
+
+O conteúdo das conversas vai direto entre os dois PCs (QUIC); o registro só repassa o sinal para eles se conectarem e não guarda nada.
+
+| Direção        | Mensagem                                                           | O que faz                                                                                 |
+| -------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| App → registro | `{"type":"dm-signal","to":"<discord id>","payload":{...}}`         | Repassa o sinal ao amigo (`payload` objeto, até 8 KB). Só entre amigos (`unknown-person`) |
+| Registro → app | `{"type":"dm-signal","from":"<discord id>","payload":{...}}`       | Chegou o sinal de um amigo, em todas as nossas conexões                                   |
+| Registro → app | `{"type":"dm-unreachable","id":"<discord id>"}`                    | O amigo não está online: a mensagem espera no nosso PC                                    |
+| App → registro | `{"type":"turn-request"}`                                          | Pede credenciais do repassador TURN para a conversa direta                                |
+| Registro → app | `{"type":"turn","urls":[...],"username":"...","credential":"..."}` | As credenciais (nada vem sem provedor configurado)                                        |
+
+Também precisam do Worker publicado antes do app.
+
 ## Erros
 
 | `code`             | Causa                                                                             | Fecha a conexão? |

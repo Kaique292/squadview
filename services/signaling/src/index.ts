@@ -231,6 +231,9 @@ export class User extends DurableObject<Env> {
   onServerRemoved(id: string): void {
     this.state.onServerRemoved(id);
   }
+  onDmSignal(from: string, payload: Record<string, unknown>): boolean {
+    return this.state.onDmSignal(from, payload);
+  }
 }
 
 /**
@@ -317,6 +320,8 @@ function peers(env: Env): Peers {
     serverAct: async (id, actor, op) => server(env, id).act(actor, op),
     serverSnapshot: async (id) => server(env, id).snapshot(),
     serverRefresh: async (id, profile) => server(env, id).refresh(profile),
+    dmSignal: async (to, from, payload) => user(env, to).onDmSignal(from, payload),
+    turn: async () => (await turnProvider(env)?.()) ?? null,
   };
 }
 
