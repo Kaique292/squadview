@@ -1,4 +1,10 @@
-import { byteLength, MAX_MESSAGE_BYTES, RATE_LIMIT_MESSAGES, RATE_LIMIT_WINDOW_MS } from "./protocol";
+import {
+  byteLength,
+  MAX_MESSAGE_BYTES,
+  MAX_SIGNAL_PAYLOAD_BYTES,
+  RATE_LIMIT_MESSAGES,
+  RATE_LIMIT_WINDOW_MS,
+} from "./protocol";
 import { isValidRoomCode } from "./room-code";
 import {
   cleanIcon,
@@ -11,6 +17,7 @@ import {
   type ServerSnapshot,
 } from "./server-state";
 import { cleanAvatar, cleanProfileName, type Profile } from "./session";
+import type { TurnCredentials } from "./turn";
 
 /**
  * O registro de uma pessoa (ver docs/adr/0011-amigos-e-presenca.md): amigos, pedidos, recentes
@@ -61,7 +68,10 @@ export type UserClientMessage =
   // Servidores (ADR 0016): o registro confere quem pede e repassa ao servidor.
   | { type: "server-create"; name: string }
   | { type: "server-join"; invite: string }
-  | { type: "server-action"; server: string; op: ServerOp };
+  | { type: "server-action"; server: string; op: ServerOp }
+  // Mensagens privadas (ADR 0017): só o sinal para os dois PCs se conectarem; o conteúdo vai direto.
+  | { type: "dm-signal"; to: string; payload: Record<string, unknown> }
+  | { type: "turn-request" };
 
 export interface UserSnapshot {
   me: Profile;
@@ -86,6 +96,12 @@ export type UserServerMessage =
   | { type: "server-removed"; id: string }
   /** Convite criado: `<id do servidor>.<segredo>`. */
   | { type: "server-invite"; server: string; invite: string }
+  /** Sinal de um amigo para conectar a conversa direto (ADR 0017). */
+  | { type: "dm-signal"; from: string; payload: Record<string, unknown> }
+  /** O amigo não está online agora: a mensagem espera no nosso PC. */
+  | { type: "dm-unreachable"; id: string }
+  /** Credenciais do repassador TURN, pedidas para a conversa direta. */
+  | ({ type: "turn" } & TurnCredentials)
   | {
       type: "error";
       code: "invalid-message" | "rate-limited" | "unknown-person" | "too-many" | "not-in-room" | ServerError;
@@ -131,6 +147,10 @@ export interface Peers {
   serverSnapshot(server: string): Promise<ServerSnapshot | null>;
   /** Nome ou foto mudou: o servidor atualiza e avisa os outros. */
   serverRefresh(server: string, profile: Profile): Promise<void>;
+  /** Entrega o sinal da conversa ao registro do amigo. `false` se ele não está online. */
+  dmSignal(to: string, from: string, payload: Record<string, unknown>): Promise<boolean>;
+  /** Credenciais do repassador TURN (`null` sem provedor configurado). */
+  turn(): Promise<TurnCredentials | null>;
 }
 
 const DISCORD_ID = /^[0-9]{15,21}$/;
@@ -237,6 +257,16 @@ export function parseUserMessage(raw: string): UserClientMessage | null {
       const op = parseServerOp(data.op);
       return op ? { type: "server-action", server: data.server, op } : null;
     }
+    case "dm-signal":
+      // O mesmo limite do `signal` da sala: endereços e a impressão digital do certificado.
+      return typeof data.to === "string" &&
+        DISCORD_ID.test(data.to) &&
+        isPlainObject(data.payload) &&
+        byteLength(JSON.stringify(data.payload)) <= MAX_SIGNAL_PAYLOAD_BYTES
+        ? { type: "dm-signal", to: data.to, payload: data.payload }
+        : null;
+    case "turn-request":
+      return { type: "turn-request" };
     default:
       return null;
   }
@@ -396,6 +426,18 @@ export class UserState {
       }
       case "server-action":
         return this.serverAction(conn, msg.server, msg.op);
+      case "dm-signal": {
+        // Só entre amigos: quem não é amigo nem descobre se a pessoa está online.
+        if (!this.friends()[msg.to]) return conn.send({ type: "error", code: "unknown-person" });
+        const delivered = await this.peers.dmSignal(msg.to, this.id, msg.payload).catch(() => false);
+        if (!delivered) conn.send({ type: "dm-unreachable", id: msg.to });
+        return;
+      }
+      case "turn-request": {
+        const turn = await this.peers.turn().catch(() => null);
+        if (turn) conn.send({ type: "turn", ...turn });
+        return;
+      }
     }
   }
 
@@ -483,6 +525,16 @@ export class UserState {
       if (!list.includes(server.id)) list.push(server.id);
     });
     this.broadcast({ type: "server", server });
+  }
+
+  /**
+   * Um amigo mandou o sinal da conversa direta. Vai para todas as nossas conexões (o app que
+   * estiver aberto responde). `false` se não somos amigos ou não estamos online.
+   */
+  onDmSignal(from: string, payload: Record<string, unknown>): boolean {
+    if (!this.friends()[from] || this.connections().length === 0) return false;
+    this.broadcast({ type: "dm-signal", from, payload });
+    return true;
   }
 
   /** Fomos tirados do servidor, ou ele foi apagado. */

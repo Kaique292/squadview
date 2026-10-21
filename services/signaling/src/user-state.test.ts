@@ -50,6 +50,8 @@ class World {
   servers = new Map<string, ServerState>();
   private nextServer = 1;
   serverDown = false;
+  /** Credenciais do repassador (`null`: sem provedor configurado). */
+  turnCredentials: { urls: string[]; username: string; credential: string } | null = null;
 
   server(id: string) {
     let s = this.servers.get(id);
@@ -140,6 +142,8 @@ class World {
         if (this.serverDown) throw new Error("fora do ar");
         return this.server(id).snapshot();
       },
+      dmSignal: async (to, from, payload) => this.person(to).state.onDmSignal(from, payload),
+      turn: async () => this.turnCredentials,
       serverRefresh: async (id, profile) => {
         const s = this.server(id);
         if (s.refreshProfile(profile)) this.notify(id, profile.id, s.snapshot(), []);
@@ -469,5 +473,86 @@ describe("servidores", () => {
     for (let i = 0; i < 20; i++) await send(world, ANA, ana, { type: "server-create", name: `S${i}` });
     await send(world, ANA, ana, { type: "server-create", name: "Mais um" });
     expect(ana.last("error")).toEqual({ type: "error", code: "too-many" });
+  });
+});
+
+describe("mensagens privadas: sinal da conexão direta", () => {
+  type Msg<T extends UserServerMessage["type"]> = Extract<UserServerMessage, { type: T }>;
+  const OFFER = { kind: "dm-offer", candidates: ["203.0.113.7:51000"], fingerprint: "ab".repeat(32) };
+
+  it("lê o sinal e o pedido de TURN, e recusa o que não segue o contrato", () => {
+    expect(parseUserMessage(JSON.stringify({ type: "dm-signal", to: BETO, payload: OFFER }))).toEqual({
+      type: "dm-signal",
+      to: BETO,
+      payload: OFFER,
+    });
+    expect(parseUserMessage(JSON.stringify({ type: "turn-request" }))).toEqual({ type: "turn-request" });
+    for (const bad of [
+      { type: "dm-signal", to: "nao-e-id", payload: OFFER },
+      { type: "dm-signal", to: BETO, payload: "texto" },
+      { type: "dm-signal", to: BETO, payload: [1, 2] },
+      { type: "dm-signal", to: BETO, payload: { grande: "x".repeat(9000) } },
+    ]) {
+      expect(parseUserMessage(JSON.stringify(bad)), JSON.stringify(bad).slice(0, 60)).toBeNull();
+    }
+  });
+
+  it("entrega o sinal só ao amigo, em todas as conexões dele, com quem mandou", async () => {
+    const { ana } = await friends(world);
+    const outraDoBeto = await world.connect(BETO, "Beto");
+    await send(world, ANA, ana, { type: "dm-signal", to: BETO, payload: OFFER });
+    for (const conn of world.person(BETO).conns) {
+      expect(conn.last("dm-signal")).toEqual({ type: "dm-signal", from: ANA, payload: OFFER });
+    }
+    expect(outraDoBeto.last("dm-signal")).toBeDefined();
+    expect(ana.last("dm-unreachable")).toBeUndefined();
+  });
+
+  it("amigo offline: avisa quem mandou, sem guardar nada", async () => {
+    const { ana, beto } = await friends(world);
+    await world.disconnect(BETO, beto);
+    await send(world, ANA, ana, { type: "dm-signal", to: BETO, payload: OFFER });
+    expect(ana.last("dm-unreachable")).toEqual({ type: "dm-unreachable", id: BETO });
+    // Ao voltar, o Beto não recebe sinal velho.
+    const volta = await world.connect(BETO, "Beto");
+    expect(volta.last("dm-signal")).toBeUndefined();
+  });
+
+  it("quem não é amigo não manda nem recebe sinal", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    const caio = await world.connect(CAIO, "Caio");
+    await send(world, ANA, ana, { type: "dm-signal", to: CAIO, payload: OFFER });
+    expect(ana.last("error")).toEqual({ type: "error", code: "unknown-person" });
+    expect(caio.last("dm-signal")).toBeUndefined();
+    // Mesmo chegando por outro caminho, o registro do Caio recusa (não são amigos).
+    expect(world.person(CAIO).state.onDmSignal(ANA, OFFER)).toBe(false);
+  });
+
+  it("registro do amigo fora do ar conta como offline", async () => {
+    const { ana } = await friends(world);
+    const peers = world.peers();
+    const quebrado = new UserState(
+      ANA,
+      () => world.person(ANA).conns,
+      { get: () => undefined, put: () => {} },
+      { ...peers, dmSignal: async () => Promise.reject(new Error("fora do ar")) },
+    );
+    quebrado["friends"] = () => ({ [BETO]: { id: BETO, name: "Beto", avatar: null, direct: false } });
+    await quebrado.message(ana, JSON.stringify({ type: "dm-signal", to: BETO, payload: OFFER }));
+    expect(ana.last("dm-unreachable")).toEqual({ type: "dm-unreachable", id: BETO });
+  });
+
+  it("manda as credenciais do repassador quando pedidas (e nada sem provedor)", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    await send(world, ANA, ana, { type: "turn-request" });
+    expect(ana.last("turn")).toBeUndefined();
+    world.turnCredentials = { urls: ["turn:turn.exemplo:3478"], username: "u", credential: "c" };
+    await send(world, ANA, ana, { type: "turn-request" });
+    expect(ana.last("turn") as Msg<"turn">).toEqual({
+      type: "turn",
+      urls: ["turn:turn.exemplo:3478"],
+      username: "u",
+      credential: "c",
+    });
   });
 });
