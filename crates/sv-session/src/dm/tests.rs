@@ -133,6 +133,26 @@ fn texto_vai_direto_e_volta_entregue() {
 }
 
 #[test]
+fn amigo_voltando_a_pendente_vai_sem_precisar_mandar_outra() {
+    let (ana, beto, online) = pair("tentar-de-novo");
+    // Nada pendente: não há o que tentar.
+    assert!(!ana.engine.retry(BETO));
+    online.store(false, Ordering::Relaxed);
+    let sent = ana.engine.send_text(BETO, "tá aí?").unwrap();
+    ana.wait(
+        "aviso de offline",
+        |e| matches!(e, DmEvent::Unreachable { friend } if friend == BETO),
+    );
+    // O Beto ficou online: antes, a pendente só ia junto com uma mensagem nova.
+    online.store(true, Ordering::Relaxed);
+    assert!(ana.engine.retry(BETO));
+    beto.message("pendente", |m| m.id == sent.id);
+    ana.message("entregue", |m| m.id == sent.id && m.status == Status::Delivered);
+    // Conectado: nada a tentar.
+    assert!(!ana.engine.retry(BETO));
+}
+
+#[test]
 fn amigo_offline_a_mensagem_espera_e_vai_quando_ele_volta() {
     let (ana, beto, online) = pair("offline");
     online.store(false, Ordering::Relaxed);

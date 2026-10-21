@@ -216,6 +216,19 @@ impl DmEngine {
         lock(&self.inner.links).contains_key(friend)
     }
 
+    /// Há mensagens nossas esperando: tenta abrir a conexão com o amigo de novo (ele acabou de
+    /// ficar online, ou a tentativa anterior não teve resposta). Sem pendentes, ou já conectado,
+    /// não faz nada; entre tentativas espera `OFFER_RETRY`. Devolve se tentou.
+    pub fn retry(&self, friend: &str) -> bool {
+        if self.inner.has_link(friend) || self.inner.history.pending(friend).is_empty() {
+            return false;
+        }
+        let inner = self.inner.clone();
+        let friend = friend.to_owned();
+        self.spawn(async move { inner.ensure_link(&friend).await });
+        true
+    }
+
     /// Apaga o histórico de uma conversa (ou de todas).
     pub fn clear(&self, friend: Option<&str>) {
         self.inner.history.clear(friend);

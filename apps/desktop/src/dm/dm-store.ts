@@ -234,15 +234,40 @@ export async function listenToDmEvents() {
   // Entrou com o Discord (ou o app abriu já logado): carrega a lista; saiu: limpa.
   const offFriends = useFriendsStore.subscribe((s, prev) => {
     if (s.status === "online" && prev.status !== "online") void useDmStore.getState().load();
+    // Um amigo ficou online: o que estava esperando por ele vai agora (sem precisar mandar outra).
+    for (const f of s.friends) {
+      const was = prev.friends.find((p) => p.id === f.id)?.presence.online ?? false;
+      if (f.presence.online && !was) retryPending(f.id);
+    }
     if (s.status === "signed-out" && prev.status !== "signed-out") {
       useDmStore.setState({ conversations: [], messages: {}, open: null, online: {}, unread: {} });
     }
   });
   if (useFriendsStore.getState().status === "online") await useDmStore.getState().load();
+  // E de tempos em tempos, enquanto houver algo esperando um amigo online sem conexão aberta
+  // (a primeira tentativa pode ter falhado, ou ele abriu o app agora).
+  const timer = setInterval(() => {
+    const { conversations, online } = useDmStore.getState();
+    const friends = useFriendsStore.getState().friends;
+    for (const c of conversations) {
+      const friendOnline = friends.find((f) => f.id === c.friend)?.presence.online;
+      if (c.pending > 0 && friendOnline && !online[c.friend]) retryPending(c.friend);
+    }
+  }, RETRY_EVERY_MS);
   return () => {
     off();
     offFriends();
+    clearInterval(timer);
   };
+}
+
+/** De quanto em quanto tentar de novo o que está esperando um amigo online. */
+export const RETRY_EVERY_MS = 15_000;
+
+/** Pede ao Rust para tentar mandar de novo o que está pendente para o amigo. */
+function retryPending(friend: string) {
+  if (!useDmStore.getState().conversations.some((c) => c.friend === friend && c.pending > 0)) return;
+  invoke("dm_retry", { friend }).catch(() => {});
 }
 
 /** Tamanho para gente ler. */
