@@ -199,6 +199,13 @@ impl RemoteView {
         s.apply();
     }
 
+    /// Solta o vídeo numa janela pequena, sempre no topo (picture in picture), ou devolve ao app.
+    pub fn set_video_pip(&self, pip: bool) {
+        let mut s = lock(&self.state.surface);
+        s.pip = pip;
+        s.apply();
+    }
+
     pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
         lock(&self.state.surface).set_on_event(Arc::new(cb));
     }
