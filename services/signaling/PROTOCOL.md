@@ -103,6 +103,32 @@ Registro → app:
 | `{"type":"session","session":"..."}`                                     | Sessão renovada                                                                                             |
 | `{"type":"error","code":"..."}`                                          | `invalid-message` (fecha, 4400), `rate-limited` (fecha, 4429), `unknown-person`, `too-many`, `not-in-room`  |
 
+### Servidores (ADR 0016)
+
+Pela mesma conexão `/me`. O registro confere quem pede e repassa ao Durable Object `Server`, que avisa o registro dos outros membros. Limites: 20 servidores por pessoa, 100 membros e 20 salas por servidor, 20 convites ativos (valem 7 dias), ícone em data URL `image/webp|png|jpeg` até 12 KB.
+
+App → registro:
+
+| Mensagem                                                       | O que faz                                                   |
+| -------------------------------------------------------------- | ----------------------------------------------------------- |
+| `{"type":"server-create","name":"Turma"}`                      | Cria o servidor (quem cria é o dono), já com a sala "Geral" |
+| `{"type":"server-join","invite":"<id 16 hex>.<segredo 12>"}`   | Entra pelo convite                                          |
+| `{"type":"server-action","server":"<id>","op":{"kind":"..."}}` | Pedido a um servidor nosso (abaixo)                         |
+
+`op`: `update` (`name` e/ou `icon`, `null` tira o ícone), `delete` (só o dono), `leave` (o dono não sai), `invite` (qualquer membro), `room-create` (`name`), `room-rename` (`room`, `name`), `room-delete` (`room`; a última sala fica), `kick` (`member`: administrador tira membros, só o dono tira administradores) e `role` (`member`, `role`: `admin` ou `member`, só o dono). Mexer no servidor (nome, ícone, salas) é do dono e dos administradores.
+
+Registro → app:
+
+| Mensagem                                                            | Quando                                                                                                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"servers","servers":[...]}`                                | Ao conectar: todos os nossos (`id`, `name`, `icon`, `rooms`, `members`)                                                          |
+| `{"type":"server","server":{...}}`                                  | Entramos, criamos ou alguém mudou um servidor nosso                                                                              |
+| `{"type":"server-removed","id":"..."}`                              | Saímos, fomos tirados ou o servidor foi apagado                                                                                  |
+| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta `squadview://servidor/<convite>`)                                                                    |
+| `{"type":"error","code":"..."}`                                     | `not-member`, `not-allowed`, `unknown-room`, `unknown-member`, `invite-invalid`, `server-full`, `too-many`, `owner-cannot-leave` |
+
+O Worker antigo não conhece essas mensagens e fecha a conexão de amigos (4400): publique o Worker antes do app.
+
 ## Erros
 
 | `code`             | Causa                                                                             | Fecha a conexão? |

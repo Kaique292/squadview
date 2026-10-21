@@ -1,14 +1,18 @@
 import { Plus } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import logo from "../assets/logo.svg";
 import { useFriendsStore } from "../friends/friends-store";
+import { AddServerDialog } from "../servers/AddServerDialog";
+import { ServerIcon } from "../servers/ServerIcon";
+import { serverOfRoom, useServersStore } from "../servers/servers-store";
 import { Tooltip } from "../ui/Tooltip";
 import { RoomDialog } from "./RoomDialog";
-import { roomInitials, roomTitle, useRoomStore } from "./room-store";
+import { roomInitials, roomTitle, useRoomStore, useServerInviteStore } from "./room-store";
 
 /**
- * Barra de salas (a coluna da esquerda, como a de servidores do Discord): ícones redondos que
- * viram quadrados arredondados com o mouse, e a "pílula" branca na borda indicando onde estamos.
+ * Barra de salas (a coluna da esquerda, como a de servidores do Discord): Amigos, os nossos
+ * servidores e a sala avulsa em que estamos. Ícones redondos que viram quadrados arredondados com o
+ * mouse, e a "pílula" branca na borda indicando onde estamos.
  */
 export function ServerRail(props: { hidden: boolean }) {
   const code = useRoomStore((s) => s.code);
@@ -17,41 +21,84 @@ export function ServerRail(props: { hidden: boolean }) {
   const friendsOpen = useFriendsStore((s) => s.open);
   const setFriendsOpen = useFriendsStore((s) => s.setOpen);
   const pending = useFriendsStore((s) => s.incoming.length);
+  const servers = useServersStore((s) => s.servers);
+  const selected = useServersStore((s) => s.selected);
+  const select = useServersStore((s) => s.select);
+  // A sala em que estamos é de um servidor: ela aparece no servidor, não como sala avulsa.
+  const roomServer = serverOfRoom(servers, code);
+  const [adding, setAdding] = useState(false);
+  const [quickRoom, setQuickRoom] = useState(false);
+  // Convite de servidor recebido por link: abre o "Entrar num servidor" já preenchido.
+  const linkInvite = useServerInviteStore((s) => s.invite);
 
   return (
     <nav
       aria-label="Salas"
       className={`${props.hidden ? "hidden" : "flex"} col-1 row-2 min-h-0 flex-col items-center gap-2 overflow-y-auto pt-1 pb-3`}
     >
-      <RailItem label="Amigos" active={friendsOpen || !code} count={pending} onClick={() => setFriendsOpen(true)}>
+      <RailItem
+        label="Amigos"
+        active={friendsOpen || (!code && !selected)}
+        count={pending}
+        onClick={() => {
+          select(null);
+          setFriendsOpen(true);
+        }}
+      >
         <span className="grid size-12 place-items-center bg-brand transition-colors group-hover:bg-brand-hover">
           <img src={logo} alt="SquadView" className="size-8" />
         </span>
       </RailItem>
       <div className="h-0.5 w-8 rounded-full bg-surface-3" />
-      {code && (
+      {servers.map((server) => (
+        <RailItem
+          key={server.id}
+          label={server.name}
+          active={!friendsOpen && selected === server.id}
+          badge={roomServer?.id === server.id && someoneLive}
+          onClick={() => select(server.id)}
+        >
+          <ServerIcon name={server.name} icon={server.icon} />
+        </RailItem>
+      ))}
+      {code && !roomServer && (
         <RailItem
           label={roomTitle(code, roomName)}
-          active={!friendsOpen}
+          active={!friendsOpen && !selected}
           badge={someoneLive}
-          onClick={() => setFriendsOpen(false)}
+          onClick={() => {
+            select(null);
+            setFriendsOpen(false);
+          }}
         >
           <span className="grid size-12 place-items-center bg-surface-3 font-mono text-[11px] font-bold tracking-wider">
             {roomInitials(code, roomName)}
           </span>
         </RailItem>
       )}
-      <RoomDialog
-        trigger={
-          <button type="button" aria-label="Criar sala" className="group relative">
-            <Tooltip label="Criar uma sala" side="right">
-              <span className="grid size-12 place-items-center overflow-hidden rounded-[24px] bg-surface-3 text-online transition-all duration-200 ease-out group-hover:rounded-2xl group-hover:bg-online group-hover:text-white">
-                <Plus size={22} />
-              </span>
-            </Tooltip>
-          </button>
-        }
+      <button
+        type="button"
+        aria-label="Adicionar um servidor"
+        onClick={() => setAdding(true)}
+        className="group relative"
+      >
+        <Tooltip label="Adicionar um servidor" side="right">
+          <span className="grid size-12 place-items-center overflow-hidden rounded-[24px] bg-surface-3 text-online transition-all duration-200 ease-out group-hover:rounded-2xl group-hover:bg-online group-hover:text-white">
+            <Plus size={22} />
+          </span>
+        </Tooltip>
+      </button>
+      <AddServerDialog
+        key={linkInvite ?? "novo"}
+        open={adding || linkInvite !== null}
+        onOpenChange={(open) => {
+          setAdding(open);
+          if (!open) useServerInviteStore.setState({ invite: null });
+        }}
+        initialInvite={linkInvite ?? undefined}
+        onQuickRoom={() => setQuickRoom(true)}
       />
+      <RoomDialog open={quickRoom} onOpenChange={setQuickRoom} />
     </nav>
   );
 }
