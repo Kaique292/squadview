@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.9.0](https://github.com/Kaique292/squadview/compare/v0.8.0...v0.9.0) (2026-10-21)
+
+
+### ✨ Novidades
+
+* **app:** assistir várias lives ao mesmo tempo, cada uma num quadro da sala ([#73](https://github.com/Kaique292/squadview/issues/73)) ([0dd3ef2](https://github.com/Kaique292/squadview/commit/0dd3ef2488f0ab691082a834ea20d13515bddc33))
+* **app:** convite do servidor vira link clicável ([#70](https://github.com/Kaique292/squadview/issues/70)) ([dbe426a](https://github.com/Kaique292/squadview/commit/dbe426af208de21f485c1d0cf26464f1bd5e3cf3))
+* **net:** voz repassada por um membro da sala quando dois não se alcançam ([#72](https://github.com/Kaique292/squadview/issues/72)) ([47ee234](https://github.com/Kaique292/squadview/commit/47ee234cf100dbad795d64d59dec293602569219))
+* **signal:** sala sem limite de pessoas ([#74](https://github.com/Kaique292/squadview/issues/74)) ([dc51756](https://github.com/Kaique292/squadview/commit/dc517565f7dba4281ff21870e3eec12bfee4e80d))
+* **ui:** conversas com cancelar download, aviso de arquivo apagado, som e contador ([#68](https://github.com/Kaique292/squadview/issues/68)) ([9670804](https://github.com/Kaique292/squadview/commit/9670804f6d305ecbc2dad05f1402e9a4ccde9edc))
+* **ui:** mostra quem está em call no servidor ao entrar e no ícone lateral ([#69](https://github.com/Kaique292/squadview/issues/69)) ([5e20149](https://github.com/Kaique292/squadview/commit/5e201491455f31f79e2f6a8a647ec5269fa69dc7))
+
+
+### 🐛 Correções
+
+* **media:** silenciar e volume de alguém valem também depois que a voz dele reconecta ([#66](https://github.com/Kaique292/squadview/issues/66)) ([71d38f4](https://github.com/Kaique292/squadview/commit/71d38f40b75b0bd56dfd07b298bc5b422536505a))
+
+
+### 📝 Documentação
+
+* README, site e roadmap da versão 0.9 ([#75](https://github.com/Kaique292/squadview/issues/75)) ([178141c](https://github.com/Kaique292/squadview/commit/178141c7514998ef0203f06cf009c83d8ede26b7))
+
+
+### 📦 Build
+
+* limita o tamanho da target/ e documenta a limpeza ([#71](https://github.com/Kaique292/squadview/issues/71)) ([03fc6f7](https://github.com/Kaique292/squadview/commit/03fc6f7366dcd5fe1bbd424053cde81ff5d67a29))
+
 ## [0.8.0](https://github.com/Kaique292/squadview/compare/v0.7.0...v0.8.0) (2026-10-21)
 
 
