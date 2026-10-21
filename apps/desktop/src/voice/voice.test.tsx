@@ -35,7 +35,7 @@ beforeEach(async () => {
   invoke.mockResolvedValue(undefined);
   handlers.clear();
   localStorage.clear();
-  useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], level: 0 });
+  useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], bridges: {}, level: 0 });
   useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   useToastStore.setState({ toasts: [] });
@@ -218,6 +218,21 @@ describe("chat de voz", () => {
     emit("voice-peers", [ANA.id, BETO.id]);
     expect(invoke).toHaveBeenCalledWith("voice_set_peer_muted", { memberId: ANA.id, muted: true });
     expect(invoke).toHaveBeenCalledWith("voice_set_peer_volume", { memberId: ANA.id, volume: 0.4 });
+  });
+
+  it("quem só se ouve pela conexão de outro membro aparece com o aviso na lista da sala", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA, BETO]);
+    const lista = screen.getByRole("list", { name: "Membros da sala" });
+    expect(within(lista).queryByLabelText(/Voz pela conexão/)).toBeNull();
+    emit("voice-bridges", { [ANA.id]: BETO.id });
+    expect(within(lista).getByLabelText("Voz pela conexão de Beto")).toBeInTheDocument();
+    // Quem repassa saiu da sala antes do aviso novo: não some o aviso, só o nome.
+    emit("voice-bridges", { [ANA.id]: "dddddddddddddddd" });
+    expect(within(lista).getByLabelText("Voz pela conexão de outro membro")).toBeInTheDocument();
+    // A voz direta abriu (ou a ponte caiu): o aviso some.
+    emit("voice-bridges", {});
+    expect(within(lista).queryByLabelText(/Voz pela conexão/)).toBeNull();
   });
 
   it("sem nome conhecido, o aviso de falha fala de um amigo", () => {

@@ -11,16 +11,17 @@ Na prática, o repassador TURN está desligado (nenhum provedor configurado no W
 
 ## Decisão
 
-Quando a voz entre dois membros não abre, **um terceiro membro que já fala com os dois repassa os pacotes de voz entre eles**, como já acontece com o vídeo. Os pacotes passam como estão, sem decodificar nem misturar, por uma conexão de repasse separada, e cada pacote leva o id de quem falou.
+Quando a voz entre dois membros não abre, **um terceiro membro que já fala com os dois repassa os pacotes de voz entre eles**, como já acontece com o vídeo. Os pacotes passam como estão, sem decodificar nem misturar, por uma conexão de repasse separada. Cada pacote leva o id de quem falou e uma **assinatura com uma chave que só as duas pontas conhecem**: quem repassa não consegue inventar nem desviar a voz de ninguém.
 
 Como funciona:
 
 1. **Quem pede.** Entre A e B, quem chama (o id menor, ADR 0010) é quem fica sabendo da falha. Nesse momento, A manda `voice-relay-request { to: B }` a um membro H com quem já tem voz. A ordem é do menor ping para o maior. Se H recusar ou não responder em 4 s, A tenta o próximo. Sem ninguém, a falha chega à interface como hoje.
-2. **Quem ajuda.** H aceita se tiver voz aberta com B e vaga: cada membro repassa no máximo **6 pares**. A voz é leve (Opus, ~32 kbps por sentido), então 6 pares gastam menos de 400 kbps de upload. Ao aceitar, H responde `voice-relay-accept { to: B }` a A e manda `voice-relay-start { from: A }` a B. Se não puder, responde `voice-relay-deny { to: B, reason }`.
-3. **A conexão de repasse.** H abre com A e com B uma **segunda conexão QUIC**, com ALPN próprio (`sv-voz-repasse`), no mesmo socket e para o mesmo endereço da conexão de voz que já existe. O caminho no NAT já está aberto, e a fingerprint de H já é conhecida. Os datagramas dessa conexão são `origem: 8 bytes (id do membro) | datagrama de áudio de sempre`.
-4. **O repasse.** Cada pacote do microfone de A que chega a H pela voz normal é copiado para a conexão de repasse com B, com a origem A, e o de B vai para A do mesmo jeito. H continua ouvindo A e B normalmente. O repasse não passa pelo mixer de H, só copia bytes, sem alocar por pacote (um buffer por conexão).
-5. **Quem recebe.** B só aceita na conexão de repasse pacotes de uma origem que H anunciou com `voice-relay-start`. Esses pacotes entram no mixer como a voz de A: o volume, o silenciar, o "falando" e o efeito de fala de A funcionam igual. Para a interface, A aparece conectado na voz, com a dica "pela conexão de H".
-6. **Quando cai.** Se H sair da sala, ou perder a voz com A ou com B, a conexão de repasse fecha. A pede de novo a outro membro, e B espera. Se a conexão direta entre A e B abrir depois (por exemplo, numa nova tentativa ao reconectar), ela substitui o repasse, e o repasse do par fecha.
+2. **Quem ajuda.** H aceita se tiver voz aberta com A e com B e se ainda tiver vaga: cada membro repassa no máximo **6 pares**. A voz é leve (Opus, ~32 kbps por sentido), então 6 pares gastam menos de 400 kbps de upload. Ao aceitar, H responde `voice-relay-accept { to: B }` a A. Se não puder, responde `voice-relay-deny { to: B, reason }`.
+3. **A chave do par.** A sorteia uma chave de 32 bytes e a manda a B com `voice-relay-key { via: H, key }`. O `signal` vai direto de A para B pela sinalização, então H não vê a chave. O Worker vê, mas ele já é de confiança: é ele que entrega as fingerprints que protegem o QUIC.
+4. **A conexão de repasse.** H abre com A e com B uma **segunda conexão QUIC**, com ALPN próprio (`squadview-voice-relay/1`), no mesmo socket e para o mesmo endereço da conexão de voz que já existe. O caminho no NAT já está aberto. Cada membro autoriza a fingerprint de quem está na voz com ele, então a conexão de repasse passa no TLS.
+5. **O pacote.** Na conexão de repasse vai `membro: 8 bytes | assinatura: 8 bytes | datagrama de áudio de sempre`. A manda a H o pacote com o **destino** B, assinado com HMAC-SHA256 (truncado em 8 bytes) sobre `A | B | áudio`. H troca o destino pela **origem** A e copia o resto como está, sem decodificar e sem passar pelo mixer. A assinatura cobre a direção e o número de sequência que está no áudio: H não consegue inventar uma voz de A, mandá-la para outra pessoa nem reaproveitar um pacote no sentido contrário.
+6. **Quem recebe.** B confere a assinatura com a chave do par e só aceita pacotes de A vindos de H, a ponte combinada. Esses pacotes entram no mixer como a voz de A: o volume, o silenciar, o "falando" e o efeito de fala de A funcionam igual. Na lista da sala, A aparece ligado na voz, com um ícone e a dica "Voz pela conexão de H".
+7. **Quando cai.** Se H sair da sala, ou perder a voz com A ou com B, ele avisa a outra ponta com um pacote só com o membro (`membro: 8 bytes`, sem assinatura nem áudio) e a conexão de repasse fecha. A pede outra ponte depois de 2 s, a **outro** membro (o mesmo ficaria caindo, por exemplo com uma ponta num app antigo). Sem ninguém, a falha chega à interface. Se a conexão direta entre A e B abrir depois, ela substitui o repasse.
 
 Ordem das camadas para a voz: **direto (IPv4 e IPv6) → TURN, se configurado → repasse por um membro da sala.**
 
@@ -34,9 +35,9 @@ Junto, a mensagem de falha diz a causa de verdade. Sem repassador configurado, e
 - Quem repassa gasta um pouco de upload e de CPU (cópia de pacotes, sem decodificar). O limite de 6 pares mantém isso abaixo de ~400 kbps. Não mexe na thread de áudio nem na de mídia: o repasse roda na tarefa de rede que já lê os datagramas.
 - A voz repassada chega com o atraso de um salto a mais: o ping de A até H somado ao de H até B. Em salas de amigos na mesma cidade, isso dá dezenas de ms.
 - Se todos estiverem atrás de CGNAT, ninguém consegue repassar. Aí só o IPv6 ou um TURN resolvem, e a mensagem de falha diz isso.
-- **Confiança:** H já ouve A e B (está na mesma sala), então não vê nada novo. Mas H poderia mandar a B um áudio falso com a origem A. B só aceita origens anunciadas por H e só durante o repasse, o que limita o falso aos pares que H repassa. Como a sala é de amigos que se convidam, aceitamos esse risco. Assinar cada pacote custaria CPU e banda por pacote.
+- **Confiança:** H já ouve A e B (está na mesma sala), então não vê nada novo. A assinatura impede que H invente ou desvie a voz de alguém. O que H ainda pode fazer é parar de repassar ou atrasar os pacotes, como qualquer caminho na rede. O custo é um HMAC por pacote (no máximo 50 por segundo) e 16 bytes a mais por pacote, nada perto do que a voz já gasta.
 - Cada trecho (A–H e H–B) continua cifrado pelo QUIC.
-- **Compatibilidade:** apps antigos ignoram as mensagens novas. Um H antigo não responde, e A tenta o próximo. Um B antigo não aceita o ALPN de repasse, e H responde `voice-relay-deny` a A.
+- **Compatibilidade:** apps antigos ignoram as mensagens novas. Um H antigo não responde, e A tenta o próximo em 4 s. Um B antigo não aceita o ALPN de repasse: a conexão de H com B não abre, H avisa A que a voz de B parou, e A tenta outro membro.
 - A [ADR 0014](0014-conexao-em-camadas.md) deixa de ter "a voz fica com o direto e o repassador": a voz ganha a camada do meio.
 
 ## Alternativas consideradas

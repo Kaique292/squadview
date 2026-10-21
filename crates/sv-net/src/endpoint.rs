@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::cert::fingerprint;
 use crate::cert::{Allowed, AllowedClients, ExpectFingerprint, Identity, provider};
 use crate::turn::{TurnError, TurnServer, TurnSocket};
-use crate::{ALPN, DM_ALPN, VOICE_ALPN, stun};
+use crate::{ALPN, DM_ALPN, VOICE_ALPN, VOICE_RELAY_ALPN, stun};
 
 /// Quanto tempo tentar conectar antes de desistir.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -88,6 +88,8 @@ pub enum Purpose {
     Voice,
     /// Mensagens e arquivos entre dois amigos (ADR 0017).
     Dm,
+    /// A voz de quem não alcançamos, repassada por um membro da sala (ADR 0020).
+    VoiceRelay,
 }
 
 impl Purpose {
@@ -96,6 +98,7 @@ impl Purpose {
             Self::Stream => ALPN,
             Self::Voice => VOICE_ALPN,
             Self::Dm => DM_ALPN,
+            Self::VoiceRelay => VOICE_RELAY_ALPN,
         }
     }
 }
@@ -455,7 +458,12 @@ fn server_config(identity: &Identity, allowed: &Allowed, relayed: bool) -> io::R
         .with_single_cert(vec![identity.cert.clone()], identity.key())
         .map_err(io::Error::other)?;
     // Os dois propósitos; o app 0.1.0 só conhece o primeiro.
-    tls.alpn_protocols = vec![ALPN.to_vec(), VOICE_ALPN.to_vec(), DM_ALPN.to_vec()];
+    tls.alpn_protocols = vec![
+        ALPN.to_vec(),
+        VOICE_ALPN.to_vec(),
+        DM_ALPN.to_vec(),
+        VOICE_RELAY_ALPN.to_vec(),
+    ];
     let crypto = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
     config.transport_config(transport(relayed));
@@ -486,6 +494,7 @@ fn purpose_of(conn: &Connection) -> Purpose {
     match protocol.as_deref() {
         Some(p) if p == VOICE_ALPN => Purpose::Voice,
         Some(p) if p == DM_ALPN => Purpose::Dm,
+        Some(p) if p == VOICE_RELAY_ALPN => Purpose::VoiceRelay,
         _ => Purpose::Stream,
     }
 }

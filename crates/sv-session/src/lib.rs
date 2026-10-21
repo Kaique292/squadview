@@ -17,6 +17,7 @@ mod system;
 mod viewer;
 mod voice;
 mod voice_mesh;
+mod voice_relay;
 
 pub use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
 
