@@ -1,10 +1,12 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, LogOut, Plus, Settings, Trash2, UserPlus, Volume2 } from "lucide-react";
 import { useState } from "react";
-import { useAccountStore } from "../account/account-store";
+import { avatarUrl, useAccountStore } from "../account/account-store";
 import { NameDialog } from "../room/NameDialog";
 import { Elapsed, MenuItem, RoomMemberList } from "../room/RoomSidebar";
 import { useRoomStore } from "../room/room-store";
+import { Avatar } from "../ui/Avatar";
+import { LiveBadge } from "../ui/LiveBadge";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
 import { useOverlayMenu } from "../ui/overlay";
@@ -122,10 +124,12 @@ export function ServerSidebar(props: { server: Server }) {
                   <span className="min-w-0 flex-1 truncate font-medium">{room.name}</span>
                   {here && joinedAt && <Elapsed since={joinedAt} />}
                 </button>
-                {here && members > 0 && (
+                {here && members > 0 ? (
                   <div className="py-0.5">
                     <RoomMemberList />
                   </div>
+                ) : (
+                  <RoomOccupants server={server} roomId={room.id} />
                 )}
               </li>
             );
@@ -163,5 +167,29 @@ function ConfirmDelete(props: { server: Server; open: boolean; onOpenChange: (op
       canSave={(name) => name.trim() === props.server.name}
       onSave={() => void act(props.server.id, { kind: "delete" })}
     />
+  );
+}
+
+/**
+ * Quem está numa sala do servidor em que **não** estamos (ADR 0018): foto, nome e AO VIVO, vindos
+ * da lista de membros. Na sala em que estamos aparece a lista da própria sala, mais completa.
+ */
+function RoomOccupants(props: { server: Server; roomId: string }) {
+  const people = useServersStore((s) => s.presence[props.server.id]?.[props.roomId]);
+  if (!people?.length) return null;
+  return (
+    <ul aria-label="Quem está na sala" className="flex flex-col gap-0.5 py-0.5 pl-6">
+      {people.map((p) => {
+        const member = props.server.members.find((m) => m.id === p.id);
+        if (!member) return null;
+        return (
+          <li key={p.id} className="flex items-center gap-2 rounded-md px-2 py-1 text-text-muted">
+            <Avatar name={member.name} size={24} src={member.avatar ? avatarUrl(member, 64) : undefined} />
+            <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
+            {p.live && <LiveBadge size="sm" />}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

@@ -6,6 +6,7 @@ import { listenToFriendsEvents, useFriendsStore } from "../friends/friends-store
 import { listenToRoomEvents, useRoomStore, useServerInviteStore } from "../room/room-store";
 import { useToastStore } from "../ui/toast-store";
 import {
+  clearServers,
   parseServerInvite,
   type Server,
   serverInitials,
@@ -279,6 +280,36 @@ describe("servidores na barra de salas", () => {
     await waitFor(() =>
       expect(actions()).toContainEqual({ type: "server-action", server: "0000000000000001", op: { kind: "delete" } }),
     );
+  });
+
+  it("mostra quem está em cada sala do servidor, mesmo com a gente fora dela (ADR 0018)", () => {
+    render(<App />);
+    emit("friends-event", { type: "servers", servers: [server()] });
+    act(() => useServersStore.getState().select("0000000000000001"));
+    const salas = screen.getByRole("list", { name: "Salas do servidor" });
+    expect(within(salas).queryByRole("list", { name: "Quem está na sala" })).toBeNull();
+
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: { "00000001": [], "00000002": [{ id: BETO, live: true }] },
+    });
+    const ranked = within(salas).getByRole("button", { name: "Ranked" }).closest("li")!;
+    const quem = within(ranked).getByRole("list", { name: "Quem está na sala" });
+    expect(within(quem).getByText("Beto")).toBeInTheDocument();
+    expect(within(quem).getByText("Ao vivo")).toHaveClass("uppercase");
+    const geral = within(salas).getByRole("button", { name: "Geral" }).closest("li")!;
+    expect(within(geral).queryByRole("list", { name: "Quem está na sala" })).toBeNull();
+
+    // Quem não é (mais) membro não aparece; sair da conta limpa tudo.
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: { "00000002": [{ id: "123456789012345678", live: false }] },
+    });
+    expect(within(ranked).queryByText("Beto")).toBeNull();
+    act(() => clearServers());
+    expect(useServersStore.getState().presence).toEqual({});
   });
 
   it("saiu ou foi tirado: o servidor some da barra com aviso; erros do servidor viram texto", async () => {
