@@ -3,6 +3,7 @@
 mod crash;
 mod diagnostics;
 mod discord;
+mod dm;
 mod friends;
 mod invite;
 mod presence;
@@ -89,6 +90,7 @@ fn manage_states<R: tauri::Runtime>(builder: tauri::Builder<R>, presence: presen
         .manage(room::RoomState::default())
         .manage(invite::PendingInvite::default())
         .manage(friends::Friends::default())
+        .manage(dm::Dms::default())
         .manage(tray::Tray::default())
         .manage(presence)
 }
@@ -154,6 +156,13 @@ pub fn run() {
             discord::discord_login,
             discord::discord_profile,
             discord::discord_logout,
+            dm::dm_conversations,
+            dm::dm_messages,
+            dm::dm_online,
+            dm::dm_send_text,
+            dm::dm_send_file,
+            dm::dm_download,
+            dm::dm_clear,
             friends::friends_action,
             friends::friends_status,
             invite::take_pending_invite,

@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::diagnostics::Diagnostics;
 
 /// Partes que dá para limpar, na ordem em que aparecem na tela.
-pub const PARTS: [&str; 2] = ["web", "logs"];
+pub const PARTS: [&str; 4] = ["web", "logs", "attachments", "conversations"];
 
 /// Pastas do cache da interface (WebView2) que contam como "imagens e arquivos baixados".
 const WEB_CACHE_DIRS: [&str; 3] = ["Cache", "Code Cache", "GPUCache"];
@@ -19,7 +19,8 @@ const WEB_CACHE_DIRS: [&str; 3] = ["Cache", "Code Cache", "GPUCache"];
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StoragePart {
-    /// `web` (fotos do Discord e o que a interface baixou) ou `logs` (registros de desempenho).
+    /// `web` (fotos do Discord e o que a interface baixou), `logs` (registros de desempenho),
+    /// `attachments` (anexos guardados pelo app) ou `conversations` (histórico das conversas).
     id: &'static str,
     bytes: u64,
 }
@@ -67,11 +68,20 @@ fn usage<R: Runtime>(app: &AppHandle<R>) -> Vec<StoragePart> {
         .dir()
         .map(|d| logs_size(d, diagnostics.current().as_deref()))
         .unwrap_or(0);
+    let size = |dir: Option<PathBuf>| dir.as_deref().map(dir_size).unwrap_or(0);
     vec![
         StoragePart { id: "web", bytes: web },
         StoragePart {
             id: "logs",
             bytes: logs,
+        },
+        StoragePart {
+            id: "attachments",
+            bytes: size(crate::dm::attachments_dir(app)),
+        },
+        StoragePart {
+            id: "conversations",
+            bytes: size(crate::dm::conversations_dir(app)),
         },
     ]
 }
@@ -117,6 +127,15 @@ async fn clear<R: Runtime, F: std::future::Future<Output = Result<(), String>>>(
         if let Some(dir) = diagnostics.dir() {
             clear_logs(dir, diagnostics.current().as_deref());
         }
+    }
+    // Anexos: só as cópias do app e o que baixamos sem escolher pasta (o que a pessoa salvou fora fica).
+    if (all || part == "attachments")
+        && let Some(dir) = crate::dm::attachments_dir(app)
+    {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    if all || part == "conversations" {
+        crate::dm::clear_history(app, None);
     }
     if all || part == "web" {
         web().await?;

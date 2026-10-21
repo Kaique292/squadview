@@ -1,6 +1,6 @@
 # 0017. Mensagens privadas direto entre os dois PCs
 
-- **Status:** proposta
+- **Status:** aceita
 - **Data:** 2026-10-21
 
 ## Contexto

@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::cert::fingerprint;
 use crate::cert::{Allowed, AllowedClients, ExpectFingerprint, Identity, provider};
 use crate::turn::{TurnError, TurnServer, TurnSocket};
-use crate::{ALPN, VOICE_ALPN, stun};
+use crate::{ALPN, DM_ALPN, VOICE_ALPN, stun};
 
 /// Quanto tempo tentar conectar antes de desistir.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -81,11 +81,13 @@ impl std::fmt::Display for ConnectError {
 
 impl std::error::Error for ConnectError {}
 
-/// Para que serve uma conexão: assistir uma transmissão ou a voz da sala.
+/// Para que serve uma conexão: assistir uma transmissão, a voz da sala ou uma conversa privada.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
     Stream,
     Voice,
+    /// Mensagens e arquivos entre dois amigos (ADR 0017).
+    Dm,
 }
 
 impl Purpose {
@@ -93,6 +95,7 @@ impl Purpose {
         match self {
             Self::Stream => ALPN,
             Self::Voice => VOICE_ALPN,
+            Self::Dm => DM_ALPN,
         }
     }
 }
@@ -452,7 +455,7 @@ fn server_config(identity: &Identity, allowed: &Allowed, relayed: bool) -> io::R
         .with_single_cert(vec![identity.cert.clone()], identity.key())
         .map_err(io::Error::other)?;
     // Os dois propósitos; o app 0.1.0 só conhece o primeiro.
-    tls.alpn_protocols = vec![ALPN.to_vec(), VOICE_ALPN.to_vec()];
+    tls.alpn_protocols = vec![ALPN.to_vec(), VOICE_ALPN.to_vec(), DM_ALPN.to_vec()];
     let crypto = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
     config.transport_config(transport(relayed));
@@ -480,10 +483,10 @@ fn purpose_of(conn: &Connection) -> Purpose {
         .handshake_data()
         .and_then(|d| d.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
         .and_then(|d| d.protocol);
-    if protocol.as_deref() == Some(VOICE_ALPN) {
-        Purpose::Voice
-    } else {
-        Purpose::Stream
+    match protocol.as_deref() {
+        Some(p) if p == VOICE_ALPN => Purpose::Voice,
+        Some(p) if p == DM_ALPN => Purpose::Dm,
+        _ => Purpose::Stream,
     }
 }
 
