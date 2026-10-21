@@ -32,9 +32,10 @@ export function ServerRail(props: { hidden: boolean }) {
   const linkInvite = useServerInviteStore((s) => s.invite);
 
   return (
+    // Como no Discord, a lista de servidores rola sem mostrar barra nenhuma.
     <nav
       aria-label="Salas"
-      className={`${props.hidden ? "hidden" : "flex"} col-1 row-2 min-h-0 flex-col items-center gap-2 overflow-y-auto pt-1 pb-3`}
+      className={`${props.hidden ? "hidden" : "flex"} col-1 row-2 min-h-0 flex-col items-center gap-2 overflow-y-auto pt-1 pb-3 [scrollbar-width:none]`}
     >
       <RailItem
         label="Amigos"

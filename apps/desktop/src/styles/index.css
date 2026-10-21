@@ -7,6 +7,13 @@
  * Desativado (`disabled` ou `aria-disabled`) fica com a setinha.
  */
 @layer base {
+  /* Onde ainda sobrar rolagem nativa (menus curtos, estatísticas da live), ela fica fina e na cor
+     da barra do app, sem as setinhas do Windows. Listas e painéis usam o `ScrollArea`. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-0) transparent;
+  }
+
   button:not(:disabled, [aria-disabled="true"]),
   [role="button"]:not([aria-disabled="true"]),
   [role="tab"]:not([aria-disabled="true"]),
