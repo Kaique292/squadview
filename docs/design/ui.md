@@ -58,6 +58,7 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 
 - Primitivos acessíveis do **Radix UI** (Dialog, DropdownMenu, Tooltip, Slider, Switch) estilizados com Tailwind.
 - Ícones **lucide-react**, 16–22 px.
+- **Checkbox:** sempre `apps/desktop/src/ui/Checkbox.tsx`. Use `Checkbox` (com rótulo) em formulários e modais, e `CheckMark` (só a caixa) dentro dos `CheckboxItem` dos menus. Nunca `<input type="checkbox">` nativo nem caixa desenhada à mão. Ao marcar, a caixa enche com um pulo e o ✓ se desenha; ao desmarcar, o ✓ se apaga e a caixa esvazia.
 - Raio: 4 px (botões pequenos), 8 px (botões), 12 px (cards), 16 px (ícones de sala).
 - Animações de 120–200 ms com `ease-out`; nada que roube GPU enquanto alguém joga.
 
