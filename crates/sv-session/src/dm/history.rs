@@ -38,6 +38,9 @@ pub struct Attachment {
     pub path: Option<String>,
     /// Quanto já foi baixado (ou enviado), em bytes.
     pub done: u64,
+    /// O arquivo não existe mais no PC de quem mandou (apagou ou moveu): não dá para baixar.
+    #[serde(default)]
+    pub gone: bool,
 }
 
 /// Uma mensagem da conversa.
