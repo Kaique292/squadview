@@ -132,6 +132,20 @@ describe("chat de voz", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_leave"));
   });
 
+  it("a barra da chamada junta os botões em grupos, com o desligar à parte", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const controles = screen.getByRole("navigation", { name: "Controles da voz" });
+    const audio = within(controles).getByRole("group", { name: "Áudio" });
+    expect(within(audio).getByRole("button", { name: "Silenciar microfone" })).toBeInTheDocument();
+    expect(within(audio).getByRole("button", { name: "Ensurdecer" })).toBeInTheDocument();
+    const tela = within(controles).getByRole("group", { name: "Tela e convite" });
+    expect(within(tela).getByRole("button", { name: "Transmitir minha tela" })).toBeInTheDocument();
+    expect(within(tela).getByRole("button", { name: "Convidar pessoas" })).toBeInTheDocument();
+    expect(within(audio).queryByRole("button", { name: "Sair da sala" })).not.toBeInTheDocument();
+    expect(within(tela).queryByRole("button", { name: "Sair da sala" })).not.toBeInTheDocument();
+  });
+
   it("ensurdecido aparece com o microfone e o fone cortados", () => {
     render(<App />);
     emit("room-members", [ME, { ...ANA, live: false, muted: true, deafened: true }]);

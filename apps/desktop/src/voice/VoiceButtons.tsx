@@ -95,17 +95,16 @@ function SplitButton(props: {
   onOpenMenu: () => void;
   children: ReactNode;
 }) {
+  // O grande fica dentro de um grupo da barra da chamada: sem fundo próprio, só no hover.
   const tone = props.off
     ? "text-live hover:bg-live/25"
     : props.large
-      ? "bg-surface-3 text-text hover:bg-surface-hover"
+      ? "text-text hover:bg-surface-hover"
       : "text-text-muted hover:bg-surface-hover hover:text-text";
   const height = props.large ? "h-10" : "h-8";
   const onOpenChange = useOverlayMenu((open) => open && props.onOpenMenu());
   return (
-    <div
-      className={`flex items-center rounded-md transition-colors ${props.off ? "bg-live/15" : props.large ? "bg-surface-3" : ""}`}
-    >
+    <div className={`flex items-center rounded-md transition-colors ${props.off ? "bg-live/15" : ""}`}>
       <Tooltip label={props.label} side="top">
         <button
           type="button"
@@ -122,10 +121,12 @@ function SplitButton(props: {
           <button
             type="button"
             aria-label={props.menuLabel}
-            className={`group grid ${height} w-5 place-items-center rounded-r-md transition-colors ${
+            className={`group grid ${height} ${props.large ? "w-6" : "w-5"} place-items-center rounded-r-md transition-colors ${
               props.off
                 ? "text-live hover:bg-live/25 data-[state=open]:bg-live/25"
-                : "text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
+                : props.large
+                  ? "bg-white/[0.03] text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
+                  : "text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
             }`}
           >
             <ChevronDown size={14} className="transition-transform duration-200 group-data-[state=open]:rotate-180" />
