@@ -660,7 +660,7 @@ impl Inner {
                         // assiste para repassar; se era um ajudante, tenta o próximo.
                         Err(e) => {
                             let reason = if direct {
-                                connect_failure(&e, inner.peer.nat())
+                                connect_failure(&e, inner.peer.nat(), relay.is_some())
                             } else {
                                 lock(&inner.pending_relay)
                                     .as_ref()
@@ -737,7 +737,7 @@ impl Inner {
                         }
                         Err(e) => (inner.on_update)(RoomUpdate::VoiceFailed {
                             member_id: from,
-                            reason: connect_failure(&e, inner.peer.nat()),
+                            reason: connect_failure(&e, inner.peer.nat(), relay.is_some()),
                         }),
                     }
                 });
@@ -764,8 +764,16 @@ impl Inner {
 }
 
 /// Explica por que não deu para conectar. Se o nosso NAT é simétrico, a causa é quase certa.
-fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping) -> String {
+/// `relay_tried`: o outro lado mandou um endereço no repassador TURN e nem por ele fechou. Sem
+/// repassador configurado, a mensagem não fala de um repassador que não existe.
+fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping, relay_tried: bool) -> String {
     match (error, nat) {
+        (sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric) if !relay_tried => {
+            "não deu para conectar: a sua internet troca de porta a cada conexão (NAT simétrico, comum \
+             em CGNAT de operadora e em 4G) e a do outro lado também não deixou a conexão direta \
+             fechar. Ligar o IPv6 no roteador costuma resolver; ou tente por outra rede, como o celular."
+                .into()
+        }
         (sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric) => {
             "não deu para conectar: a sua internet troca de porta a cada conexão (NAT simétrico, comum \
              em CGNAT de operadora e em 4G) e o repassador da sala não respondeu. Tente de novo em \
@@ -975,9 +983,21 @@ mod tests {
 
     #[test]
     fn nat_simetrico_explica_a_causa_sem_espacos_sobrando() {
-        let msg = connect_failure(&sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric);
+        let msg = connect_failure(&sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric, true);
         assert!(msg.contains("NAT simétrico, comum em CGNAT"), "{msg}");
+        assert!(msg.contains("o repassador da sala não respondeu"), "{msg}");
         assert!(msg.contains("roteador de casa ou o celular"), "{msg}");
+        assert!(!msg.contains("  "), "espaços duplicados na mensagem: {msg:?}");
+    }
+
+    #[test]
+    fn sem_repassador_a_mensagem_nao_fala_de_repassador() {
+        // Sala sem TURN configurado (o caso do Lobo e do Nino): antes, a mensagem dizia que "o
+        // repassador da sala não respondeu", sem existir repassador.
+        let msg = connect_failure(&sv_net::ConnectError::Unreachable, sv_net::NatMapping::Symmetric, false);
+        assert!(msg.contains("NAT simétrico, comum em CGNAT"), "{msg}");
+        assert!(!msg.contains("repassador"), "{msg}");
+        assert!(msg.contains("IPv6"), "{msg}");
         assert!(!msg.contains("  "), "espaços duplicados na mensagem: {msg:?}");
     }
 
@@ -985,11 +1005,11 @@ mod tests {
     fn outras_falhas_de_conexao_usam_a_mensagem_da_rede() {
         let unreachable = sv_net::ConnectError::Unreachable;
         for nat in [sv_net::NatMapping::Unknown, sv_net::NatMapping::EndpointIndependent] {
-            assert_eq!(connect_failure(&unreachable, nat), unreachable.to_string());
+            assert_eq!(connect_failure(&unreachable, nat, false), unreachable.to_string());
         }
         let other = sv_net::ConnectError::Other("certificado".into());
         assert_eq!(
-            connect_failure(&other, sv_net::NatMapping::Symmetric),
+            connect_failure(&other, sv_net::NatMapping::Symmetric, true),
             "erro na conexão: certificado"
         );
     }
