@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/Kaique292/squadview/compare/v0.7.0...v0.8.0) (2026-10-21)
+
+
+### ✨ Novidades
+
+* **signal:** presença nas salas do servidor e entrada direta para membros ([#61](https://github.com/Kaique292/squadview/issues/61)) ([be1ff9e](https://github.com/Kaique292/squadview/commit/be1ff9e50e89e2abed10bac780079bc5130edb49))
+* **ui:** fundos em degradê, menu do servidor no botão direito e correções da live ([#60](https://github.com/Kaique292/squadview/issues/60)) ([2cb6f07](https://github.com/Kaique292/squadview/commit/2cb6f073081f0888ab216108a5f1b7c890555f2a))
+
+
+### 🐛 Correções
+
+* **net:** mensagem pendente tenta de novo quando o amigo fica online ([#62](https://github.com/Kaique292/squadview/issues/62)) ([a4ace95](https://github.com/Kaique292/squadview/commit/a4ace95574fe723d7525cd396ecf0c62b58afe08))
+
+
+### 📝 Documentação
+
+* README e site da versão 0.8 ([#63](https://github.com/Kaique292/squadview/issues/63)) ([14c3b20](https://github.com/Kaique292/squadview/commit/14c3b20843ac9f9de0753ee96ef91fbd6c4221ef))
+
 ## [0.7.0](https://github.com/Kaique292/squadview/compare/v0.6.0...v0.7.0) (2026-10-21)
 
 
