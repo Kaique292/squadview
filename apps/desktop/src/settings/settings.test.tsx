@@ -68,3 +68,16 @@ describe("configurações de aparência", () => {
     expect(screen.getByRole("switch", { name: "Mostrar a sala no meu perfil" })).toBeInTheDocument();
   });
 });
+
+describe("lista de categorias", () => {
+  it("rola com a barra do app, não com a do Windows, e a versão fica fixa embaixo", () => {
+    openSettings();
+    const nav = screen.getByRole("navigation", { name: "Categorias" });
+    expect(nav.className).not.toMatch(/overflow-(y-)?auto/);
+    const viewport = nav.querySelector("[data-radix-scroll-area-viewport]");
+    expect(viewport).not.toBeNull();
+    expect(within(viewport as HTMLElement).getByRole("button", { name: "Aparência" })).toBeInTheDocument();
+    expect(within(viewport as HTMLElement).queryByText(/^SquadView /)).not.toBeInTheDocument();
+    expect(within(nav).getByText(/^SquadView /)).toBeInTheDocument();
+  });
+});
