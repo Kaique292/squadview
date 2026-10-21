@@ -76,7 +76,8 @@ export function usePresenceSync() {
   const code = useRoomStore((s) => s.code);
   const joinedAt = useRoomStore((s) => s.joinedAt);
   const members = useRoomStore((s) => s.members.length);
-  const watching = useRoomStore((s) => s.watching?.name ?? null);
+  // A primeira live que assistimos (com várias, o Discord mostra só uma).
+  const watching = useRoomStore((s) => Object.values(s.watching)[0]?.member.name ?? null);
   const live = useStreamStore((s) => s.status === "live");
 
   useEffect(() => {

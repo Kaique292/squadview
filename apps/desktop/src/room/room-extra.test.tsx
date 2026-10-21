@@ -24,7 +24,18 @@ vi.mock("@tauri-apps/api/event", () => ({ listen }));
 const ME: Member = { id: "aaaaaaaaaaaaaaaa", name: "Kaique", live: false };
 const ANA: Member = { id: "bbbbbbbbbbbbbbbb", name: "Ana", live: true };
 const BETO: Member = { id: "cccccccccccccccc", name: "Beto", live: false };
-const STATS = { fps: 60, latencyMs: 40, bitrateKbps: 8000, rttMs: 0, audioActive: true } as StreamStats;
+const STATS = {
+  fps: 60,
+  latencyMs: 40,
+  latencyP95Ms: 60,
+  bitrateKbps: 8000,
+  rttMs: 0,
+  dropped: 0,
+  audioActive: true,
+  audioLevel: 0.5,
+  audioKbps: 128,
+  audioLost: 0,
+} as StreamStats;
 
 let offs: (() => void)[] = [];
 
@@ -51,10 +62,8 @@ beforeEach(async () => {
     members: [],
     joining: false,
     joinError: null,
-    pendingWatch: null,
-    watching: null,
-    watchStats: null,
-    watchListening: true,
+    pendingWatch: [],
+    watching: {},
   });
   useToastStore.setState({ toasts: [] });
   useStreamStore.setState({
@@ -62,6 +71,8 @@ beforeEach(async () => {
     stats: null,
     notice: null,
     fullscreen: false,
+    fullscreenOf: null,
+    pip: null,
     listening: false,
     quality: DEFAULT_QUALITY,
   });
@@ -76,11 +87,11 @@ describe("tela inicial", () => {
     await listenToFriendsEvents();
     render(<App />);
     expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
-    act(() => useRoomStore.setState({ pendingWatch: ANA.id }));
+    act(() => useRoomStore.setState({ pendingWatch: [ANA.id] }));
     expect(useFriendsStore.getState().open).toBe(false);
     expect(screen.queryByRole("region", { name: "Amigos" })).not.toBeInTheDocument();
     useFriendsStore.setState({ open: true });
-    act(() => useRoomStore.setState({ code: null, pendingWatch: null }));
+    act(() => useRoomStore.setState({ code: null, pendingWatch: [] }));
     act(() => useRoomStore.setState({ code: "F5B6S9" }));
     expect(useFriendsStore.getState().open).toBe(false);
   });
@@ -270,33 +281,76 @@ describe("menu de um membro", () => {
 });
 
 describe("assistindo um amigo", () => {
-  it("dois cliques no vídeo e o botão alternam a tela cheia, e mostra o ping", async () => {
+  it("dois cliques na live e o menu alternam a tela cheia, só com ela na tela", async () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
     emit("watch-started", ANA);
-    emit("watch-stats", { ...STATS, rttMs: 23 });
-    expect(screen.getByText(/ping 23 ms/)).toBeInTheDocument();
-    fireEvent.doubleClick(screen.getByTestId("area-do-video"));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /live de Ana/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Sair da tela cheia" }));
+    expect(useStreamStore.getState().fullscreenOf).toBe(ANA.id);
+    // Em tela cheia, só a live dela (sem a grade nem as pessoas).
+    expect(screen.getByRole("region", { name: "Live de Ana" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Canal de voz" })).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Sair da tela cheia/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false }));
+    expect(screen.getByRole("region", { name: "Canal de voz" })).toBeInTheDocument();
   });
 
-  it("quem assistimos muda de estado na sala e a tela acompanha", () => {
+  it("os detalhes mostram o que chega, com o ping, e fecham quando a live acaba", async () => {
+    render(<App />);
+    emit("room-members", [ME, { ...BETO, watchingAll: [ANA.id] }, ANA]);
+    emit("watch-started", ANA);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Detalhes da transmissão/ }));
+    const detalhes = await screen.findByRole("dialog", { name: "Live de Ana" });
+    expect(detalhes).toHaveTextContent("Medindo…");
+    expect(within(detalhes).getByRole("group", { name: "1 pessoa assistindo" })).toBeInTheDocument();
+    emit("watch-stats", { memberId: ANA.id, stats: { ...STATS, rttMs: 23, width: 1920, height: 1080 } });
+    expect(within(detalhes).getByRole("figure", { name: "Ping" })).toHaveTextContent("23 ms");
+    expect(detalhes).toHaveTextContent("1920×1080");
+    emit("watch-stats", { memberId: ANA.id, stats: { ...STATS, audioActive: false, audioError: null, dropped: 3 } });
+    expect(detalhes).toHaveTextContent("Esta live está sem som.");
+    expect(detalhes).toHaveTextContent("3 quadros descartados");
+    expect(within(detalhes).getByRole("figure", { name: "Ping" })).toHaveTextContent("–");
+
+    emit("watch-ended", { memberId: ANA.id, reason: "A transmissão terminou." });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Live de Ana" })).not.toBeInTheDocument());
+  });
+
+  it("os detalhes fecham pelo X", async () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("watch-started", ANA);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Detalhes da transmissão/ }));
+    const detalhes = await screen.findByRole("dialog", { name: "Live de Ana" });
+    fireEvent.keyDown(detalhes, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Live de Ana" })).not.toBeInTheDocument());
+  });
+
+  it("quem assistimos muda de estado na sala e o quadro acompanha", () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
     emit("watch-started", ANA);
     emit("room-members", [ME, { ...ANA, name: "Ana Paula" }]);
-    expect(useRoomStore.getState().watching?.name).toBe("Ana Paula");
-    expect(screen.getByRole("region", { name: "Assistindo Ana Paula" })).toBeInTheDocument();
+    expect(useRoomStore.getState().watching[ANA.id].member.name).toBe("Ana Paula");
+    expect(screen.getByRole("button", { name: /live de Ana Paula/ })).toBeInTheDocument();
+    // Saiu da sala: o quadro fica até o Rust avisar que a live acabou.
+    emit("room-members", [ME]);
+    expect(useRoomStore.getState().watching[ANA.id].member.name).toBe("Ana Paula");
   });
 
-  it("se o som do vídeo não puder ser desligado, o botão volta como estava", async () => {
+  it("se o som da live não puder ser desligado, volta como estava", async () => {
     invoke.mockImplementation((cmd: string) =>
       cmd === "set_watch_listening" ? Promise.reject(new Error("falhou")) : Promise.resolve(undefined),
     );
-    await useRoomStore.getState().setWatchListening(false);
-    expect(useRoomStore.getState().watchListening).toBe(true);
+    emit("watch-started", ANA);
+    await useRoomStore.getState().setWatchListening(ANA.id, false);
+    expect(useRoomStore.getState().watching[ANA.id].listening).toBe(true);
+    // De uma live que já fechou, não há o que mudar.
+    await useRoomStore.getState().setWatchListening(BETO.id, false);
+    expect(useRoomStore.getState().watching[BETO.id]).toBeUndefined();
   });
 });
 

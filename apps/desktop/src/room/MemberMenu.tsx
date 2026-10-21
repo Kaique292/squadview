@@ -2,7 +2,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Eye, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useFriendsStore } from "../friends/friends-store";
-import { useOverlayMenu } from "../ui/overlay";
+import { stopInsideMenu, useOverlayMenu } from "../ui/overlay";
 import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
 
 const DEFAULT_PEER = { volume: 100, muted: false };
@@ -28,6 +28,8 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
         <ContextMenu.Portal>
           <ContextMenu.Content
             aria-label={`Opções de ${member.name}`}
+            // Em portal, mas filho do quadro no React: o clique num item não põe a pessoa em foco.
+            onClick={stopInsideMenu}
             className="z-50 w-60 rounded-lg bg-surface-float p-1.5 shadow-2xl shadow-black/50 data-[state=closed]:animate-overlay-out data-[state=open]:animate-menu-in"
           >
             <ContextMenu.Label className="truncate px-2 py-1.5 text-xs font-semibold tracking-wide text-text-faint uppercase">

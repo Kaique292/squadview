@@ -27,12 +27,14 @@ pub const FULLSCREEN_EVENT: &str = "video-fullscreen";
 pub const POINTER_EVENT: &str = "video-pointer";
 
 /// Repassa o mouse do vídeo para a interface. `false`: o evento não é de mouse.
-pub fn emit_pointer<R: Runtime>(app: &AppHandle<R>, event: WindowEvent) -> bool {
+///
+/// `source`: de qual vídeo veio (`None`: a nossa prévia; o id: a live de quem assistimos).
+pub fn emit_pointer<R: Runtime>(app: &AppHandle<R>, source: Option<&str>, event: WindowEvent) -> bool {
     let payload = match event {
-        WindowEvent::Click { x, y } => json!({ "kind": "click", "x": x, "y": y }),
-        WindowEvent::ContextMenu { x, y } => json!({ "kind": "menu", "x": x, "y": y }),
-        WindowEvent::PointerEnter => json!({ "kind": "enter" }),
-        WindowEvent::PointerLeave => json!({ "kind": "leave" }),
+        WindowEvent::Click { x, y } => json!({ "kind": "click", "x": x, "y": y, "source": source }),
+        WindowEvent::ContextMenu { x, y } => json!({ "kind": "menu", "x": x, "y": y, "source": source }),
+        WindowEvent::PointerEnter => json!({ "kind": "enter", "source": source }),
+        WindowEvent::PointerLeave => json!({ "kind": "leave", "source": source }),
         WindowEvent::ToggleFullscreen | WindowEvent::ExitFullscreen | WindowEvent::ExitPip => return false,
     };
     let _ = app.emit(POINTER_EVENT, payload);
@@ -126,10 +128,14 @@ pub const VIDEO_EXIT_EVENT: &str = "video-exit";
 const EXIT_HANDOFF: Duration = Duration::from_millis(160);
 
 /// Manda a foto do último quadro para a interface e dá tempo de ela aparecer. Chame fora da
-/// thread principal, logo antes de fechar o vídeo.
-pub(crate) fn hand_off_exit<R: Runtime>(app: &AppHandle<R>, photo: Option<sv_capture::Thumbnail>) {
+/// thread principal, logo antes de fechar o vídeo. `source`: de qual vídeo (`None`: a prévia).
+pub(crate) fn hand_off_exit<R: Runtime>(
+    app: &AppHandle<R>,
+    source: Option<&str>,
+    photo: Option<sv_capture::Thumbnail>,
+) {
     if let Some(url) = photo.as_ref().and_then(jpeg_data_url) {
-        let _ = app.emit(VIDEO_EXIT_EVENT, url);
+        let _ = app.emit(VIDEO_EXIT_EVENT, json!({ "image": url, "source": source }));
         std::thread::sleep(EXIT_HANDOFF);
     }
 }
@@ -230,7 +236,7 @@ pub async fn stop_preview<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
             running.preview.take()
         };
         let Some(preview) = stopped else { return };
-        hand_off_exit(&app, preview.snapshot());
+        hand_off_exit(&app, None, preview.snapshot());
         // Fecha vídeo, áudio, encoder e captura, sem segurar nenhum lock.
         drop(preview);
         crate::room::stream_changed(&app, None);
@@ -271,7 +277,7 @@ fn launch<R: Runtime>(
     // Dois cliques, F11 ou Esc dentro do vídeo: quem muda o layout é a interface.
     let event_app = app.clone();
     preview.on_video_event(move |event| {
-        if emit_pointer(&event_app, event) {
+        if emit_pointer(&event_app, None, event) {
             return;
         }
         let kind = match event {
@@ -280,7 +286,7 @@ fn launch<R: Runtime>(
             // A prévia nunca entra em picture in picture (só o stream de um amigo).
             _ => return,
         };
-        let _ = event_app.emit(FULLSCREEN_EVENT, kind);
+        let _ = event_app.emit(FULLSCREEN_EVENT, json!({ "kind": kind, "source": null }));
     });
     layout(app).apply(&preview);
     // Na sala, os amigos passam a ver "AO VIVO" e podem pedir para assistir.
@@ -313,17 +319,6 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) -> Layout {
         .clone()
 }
 
-/// Começamos ou paramos de assistir um amigo: a área do vídeo passa a ser dele (a nossa prévia
-/// sai da tela, mas a transmissão continua para quem estiver nos assistindo).
-pub fn set_watching<R: Runtime>(app: &AppHandle<R>, watching: bool) {
-    let state = app.state::<PreviewState>();
-    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    running.layout.watching = watching;
-    if let Some(p) = running.preview.as_ref() {
-        running.layout.apply(p);
-    }
-}
-
 /// O vídeo abre dentro da janela principal do app, como no Discord.
 pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, String> {
     let window = app
@@ -340,15 +335,16 @@ pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, Stri
 pub struct Layout {
     pub bounds: Bounds,
     pub hidden: bool,
-    /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali.
+    /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali. Vale
+    /// para todos os vídeos (cada um ignora os que não caem sobre ele).
     pub holes: Vec<sv_session::Hole>,
-    /// Estamos assistindo um amigo: a área é dele, a prévia fica fora da tela.
-    pub watching: bool,
 }
 
 impl Layout {
+    /// Na nossa prévia. A posição de cada live assistida vai à parte (`room::set_watch_bounds`):
+    /// a nossa live e as dos amigos ficam lado a lado na sala (ADR 0019).
     fn apply(&self, preview: &LocalPreview) {
-        preview.set_video_bounds(if self.watching { Bounds::default() } else { self.bounds });
+        preview.set_video_bounds(self.bounds);
         preview.set_video_hidden(self.hidden);
         preview.set_video_holes(self.holes.clone());
     }
@@ -807,13 +803,12 @@ mod tests {
         let state = || t.app.state::<PreviewState>();
         set_video_bounds(t.handle().clone(), state(), 10, 20, 640, 360);
         set_video_hidden(t.handle().clone(), state(), true);
-        set_watching(t.handle(), true);
         let l = layout(t.handle());
         assert_eq!(
             (l.bounds.x, l.bounds.y, l.bounds.width, l.bounds.height),
             (10, 20, 640, 360)
         );
-        assert!(l.hidden && l.watching);
+        assert!(l.hidden);
         set_preview_listening(state(), true);
         assert!(state().0.lock().unwrap().listening);
         // Sem sala e sem prévia, recomeçar para a sala só limpa o destino.
@@ -845,7 +840,6 @@ mod tests {
             Ok(()) => {
                 assert!(!idle(&t));
                 set_preview_listening(t.app.state::<PreviewState>(), true);
-                set_watching(t.handle(), true);
                 set_video_bounds(t.handle().clone(), t.app.state::<PreviewState>(), 0, 0, 320, 180);
                 set_video_hidden(t.handle().clone(), t.app.state::<PreviewState>(), false);
                 // Trocar a prévia por outra para a anterior antes.
@@ -868,16 +862,20 @@ mod tests {
     fn foto_de_saida_vai_para_a_interface() {
         let t = test_app();
         let exits = t.events(VIDEO_EXIT_EVENT);
-        hand_off_exit(t.handle(), None);
+        hand_off_exit(t.handle(), None, None);
         hand_off_exit(
             t.handle(),
+            Some("0123456789abcdef"),
             Some(sv_capture::Thumbnail {
                 width: 1,
                 height: 1,
                 rgb: vec![0, 0, 0],
             }),
         );
-        exits.wait("foto", |v| v.as_str().is_some_and(|s| s.starts_with("data:image/jpeg")));
+        // A foto vai com de qual vídeo ela é (várias lives ao mesmo tempo, ADR 0019).
+        exits.wait("foto", |v| {
+            v["source"] == "0123456789abcdef" && v["image"].as_str().is_some_and(|s| s.starts_with("data:image/jpeg"))
+        });
     }
 
     #[test]

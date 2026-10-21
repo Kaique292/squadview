@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanName, MAX_SIGNAL_PAYLOAD_BYTES, parseClientMessage } from "./protocol";
+import { cleanName, MAX_SIGNAL_PAYLOAD_BYTES, MAX_WATCHING, parseClientMessage } from "./protocol";
 
 const PEER = "0123456789abcdef";
 
@@ -87,6 +87,7 @@ describe("mensagens do cliente", () => {
       muted: false,
       deafened: false,
       watching: null,
+      watchingAll: [],
       effect: null,
     });
     expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
@@ -95,6 +96,7 @@ describe("mensagens do cliente", () => {
       muted: true,
       deafened: true,
       watching: null,
+      watchingAll: [],
       effect: null,
     });
     // Quem estamos assistindo (para quem transmite ver quem assiste).
@@ -110,6 +112,20 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"leave"}')).toEqual({ type: "leave" });
   });
 
+  it("lê todas as lives que o membro assiste, e o watching de antes vira a primeira (ADR 0019)", () => {
+    const OUTRO = PEER.replace(/.$/, PEER.endsWith("a") ? "b" : "a");
+    expect(
+      parseClientMessage(JSON.stringify({ type: "status", live: false, watchingAll: [PEER, OUTRO, PEER] })),
+    ).toMatchObject({ watching: PEER, watchingAll: [PEER, OUTRO] });
+    // App antigo: só o watching.
+    expect(parseClientMessage(`{"type":"status","live":false,"watching":"${PEER}"}`)).toMatchObject({
+      watching: PEER,
+      watchingAll: [PEER],
+    });
+    const muitas = Array.from({ length: MAX_WATCHING + 1 }, () => PEER);
+    expect(parseClientMessage(JSON.stringify({ type: "status", live: false, watchingAll: muitas }))).toBeNull();
+  });
+
   it("recusa JSON quebrado, tipos desconhecidos e campos errados", () => {
     expect(parseClientMessage("{")).toBeNull();
     expect(parseClientMessage("[]")).toBeNull();
@@ -122,6 +138,8 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"status","live":true,"muted":"sim"}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":true,"watching":"não é um id"}')).toBeNull();
     expect(parseClientMessage('{"type":"status","live":true,"watching":7}')).toBeNull();
+    expect(parseClientMessage('{"type":"status","live":true,"watchingAll":"não é lista"}')).toBeNull();
+    expect(parseClientMessage('{"type":"status","live":true,"watchingAll":["não é um id"]}')).toBeNull();
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();

@@ -54,7 +54,7 @@ beforeEach(async () => {
   useAccountStore.setState({
     profile: { id: "999999999999999999", username: "kaique", globalName: "Kaique", avatar: null },
   });
-  useRoomStore.setState({ code: null, roomName: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, roomName: null, members: [], watching: {} });
   useFriendsStore.setState({
     status: "signed-out",
     open: false,
