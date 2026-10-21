@@ -170,6 +170,23 @@ describe("mensagens privadas", () => {
     expect(within(chat).queryByText("Conectado direto")).not.toBeInTheDocument();
   });
 
+  it("fecha a conversa mesmo com o scrollIntoView do Chromium novo, que devolve uma Promise", async () => {
+    Element.prototype.scrollIntoView = vi.fn(() => Promise.resolve()) as unknown as Element["scrollIntoView"];
+    try {
+      answers.dm_messages = [msg({ id: "1", text: "oi" })];
+      const chat = await openBeto();
+      await within(chat).findByText("oi");
+      fireEvent.click(
+        within(screen.getByRole("complementary", { name: "Mensagens diretas" })).getByRole("button", {
+          name: "Amigos",
+        }),
+      );
+      expect(await screen.findByRole("region", { name: "Amigos" })).toBeInTheDocument();
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("não deixando mandar, avisa e não limpa a caixa", async () => {
     answers.dm_send_text = new Error("mensagem vazia");
     const chat = await openBeto();
