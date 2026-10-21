@@ -258,6 +258,8 @@ fn launch<R: Runtime>(
         let kind = match event {
             WindowEvent::ToggleFullscreen => "toggle",
             WindowEvent::ExitFullscreen => "exit",
+            // A prévia nunca entra em picture in picture (só o stream de um amigo).
+            WindowEvent::ExitPip => return,
         };
         let _ = event_app.emit(FULLSCREEN_EVENT, kind);
     });

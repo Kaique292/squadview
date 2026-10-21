@@ -175,6 +175,7 @@ pub fn run() {
             room::room_answer_join,
             room::room_watch,
             room::room_stop_watching,
+            room::room_set_pip,
             room::set_watch_listening,
             room::set_watch_volume,
             storage::storage_usage,

@@ -12,6 +12,8 @@ use crate::preview::{self, FULLSCREEN_EVENT};
 
 /// Lista de membros (nós primeiro).
 pub const MEMBERS_EVENT: &str = "room-members";
+/// O picture in picture pediu para voltar ao app (`false`).
+pub const PIP_EVENT: &str = "video-pip";
 /// Estado da ligação com a sala: "reconnecting", "connected" (voltou) ou "lost" (saímos).
 pub const ROOM_CONNECTION_EVENT: &str = "room-connection";
 /// Nome da sala (texto, ou `null` sem nome) quando alguém renomeia.
@@ -313,6 +315,22 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
     }
 }
 
+/// Solta o vídeo de quem estamos assistindo numa janela pequena, sempre no topo (picture in
+/// picture), ou devolve ao app.
+#[tauri::command]
+pub fn room_set_pip(state: State<'_, RoomState>, pip: bool) -> Result<(), String> {
+    let running = lock(&state);
+    match running.watching.as_ref() {
+        Some(w) => {
+            w.view.set_video_pip(pip);
+            Ok(())
+        }
+        // Voltar sem estar assistindo não tem o que fazer (o vídeo já fechou).
+        None if !pip => Ok(()),
+        None => Err("Assista a alguém primeiro.".to_owned()),
+    }
+}
+
 /// Repassa a posição do vídeo para quem estamos assistindo.
 pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, layout: &preview::Layout) -> bool {
     let state = app.state::<RoomState>();
@@ -479,6 +497,11 @@ fn start_watching<R: Runtime>(
         let kind = match event {
             WindowEvent::ToggleFullscreen => "toggle",
             WindowEvent::ExitFullscreen => "exit",
+            // Dois cliques, Esc ou fechar no picture in picture: a interface traz o vídeo de volta.
+            WindowEvent::ExitPip => {
+                let _ = event_app.emit(PIP_EVENT, false);
+                return;
+            }
         };
         let _ = event_app.emit(FULLSCREEN_EVENT, kind);
     });
@@ -560,6 +583,9 @@ mod tests {
         assert_eq!(room_set_name(state(), "Ana".into()).unwrap_err(), entre);
         assert_eq!(room_answer_join(state(), "aa".into(), true).unwrap_err(), entre);
         assert_eq!(room_watch(state(), "aa".into()).unwrap_err(), entre);
+        // Picture in picture sem estar assistindo: pedir avisa; voltar não faz nada.
+        assert_eq!(room_set_pip(state(), true).unwrap_err(), "Assista a alguém primeiro.");
+        assert!(room_set_pip(state(), false).is_ok());
         // Sem sala e sem ninguém assistido, não acontece nada (nem cai).
         assert!(room_set_profile(state(), "Ana".into(), None).is_ok());
         assert!(room_set_effect(state(), None).is_ok());

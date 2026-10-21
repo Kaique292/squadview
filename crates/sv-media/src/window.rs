@@ -6,16 +6,21 @@
 //!   com [`WindowControl::set_bounds`].
 //! - **solta**: uma janela própria, com título (usada pelo exemplo de terminal).
 //!
+//! A embutida também vira **picture in picture** ([`WindowControl::set_pip`]): a mesma janela se
+//! solta do app e fica pequena, sempre no topo, num canto da tela. Nada muda no desenho (o swap
+//! chain é o mesmo): só o pai e o estilo da janela.
+//!
 //! A janela vive na própria thread (fila de mensagens do Windows). O [`Renderer`] desenha a partir
 //! da thread do vídeo: converte a textura NV12 direto no back buffer, centralizada e sem distorcer.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Once, mpsc};
 use std::thread::JoinHandle;
 
 use sv_gpu::{Converter, Gpu, GpuFrame, Size, fit_inside};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
+use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_UNSPECIFIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
 };
@@ -32,12 +37,14 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_F11};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GWL_STYLE, GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOP,
-    IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SET_WINDOW_POS_FLAGS, SW_SHOW,
-    SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_DESTROY,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    DispatchMessageW, GWL_EXSTYLE, GWL_STYLE, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW,
+    GetWindowRect, HTCAPTION, HTCLIENT, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, LoadCursorW, MINMAXINFO,
+    MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SET_WINDOW_POS_FLAGS, SW_SHOW, SWP_ASYNCWINDOWPOS,
+    SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_STYLE, WM_APP, WM_CLOSE,
+    WM_DESTROY, WM_ERASEBKGND, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_NCHITTEST,
+    WM_NCLBUTTONDBLCLK, WM_SIZE, WM_SIZING, WMSZ_BOTTOM, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
 };
 use windows::core::{HSTRING, Result, w};
 
@@ -58,7 +65,16 @@ pub enum WindowEvent {
     ToggleFullscreen,
     /// Esc.
     ExitFullscreen,
+    /// No picture in picture: dois cliques, Esc ou fechar. Quem decide voltar é o app.
+    ExitPip,
 }
+
+/// Mensagem para entrar (`wparam` 1) ou sair (0) do picture in picture, tratada na thread da janela.
+const WM_APP_PIP: u32 = WM_APP + 1;
+/// Menor tamanho do picture in picture (pixels físicos).
+const PIP_MIN: (i32, i32) = (240, 135);
+/// Distância do canto da tela ao abrir o picture in picture pela primeira vez.
+const PIP_MARGIN: i32 = 24;
 
 type OnEvent = Box<dyn Fn(WindowEvent) + Send + Sync>;
 
@@ -72,6 +88,37 @@ struct Shared {
     /// Posição da janela solta antes de entrar em tela cheia.
     restore: Mutex<Option<RECT>>,
     on_event: Mutex<Option<OnEvent>>,
+    /// Em picture in picture agora: a posição pedida pela interface fica de lado.
+    pip: AtomicBool,
+    /// Janela do app (o pai) enquanto a embutida está solta em picture in picture.
+    pip_parent: AtomicIsize,
+    /// Onde o picture in picture estava (volta no mesmo lugar e tamanho).
+    pip_rect: Mutex<Option<RECT>>,
+    /// Tamanho do vídeo, para o picture in picture redimensionar sem barras pretas.
+    video_width: AtomicU32,
+    video_height: AtomicU32,
+    /// Fechando de verdade (o app descartou a janela): no picture in picture, fechar só volta.
+    dropping: AtomicBool,
+    /// O último lugar pedido pela interface: reaplicado ao voltar do picture in picture.
+    layout: Mutex<EmbeddedLayout>,
+}
+
+/// O que a interface pediu para a janela embutida (posição, visível e recortes).
+#[derive(Debug)]
+struct EmbeddedLayout {
+    bounds: Bounds,
+    visible: bool,
+    holes: Vec<Bounds>,
+}
+
+impl Default for EmbeddedLayout {
+    fn default() -> Self {
+        Self {
+            bounds: Bounds::default(),
+            visible: true,
+            holes: Vec::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Shared {
@@ -83,6 +130,10 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
+    fn layout(&self) -> std::sync::MutexGuard<'_, EmbeddedLayout> {
+        self.layout.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn emit(&self, event: WindowEvent) {
         if let Some(cb) = self.on_event.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             cb(event);
@@ -109,12 +160,14 @@ pub struct WindowControl {
 impl WindowControl {
     /// Move e redimensiona a área do vídeo. Tamanho zero esconde.
     pub fn set_bounds(&self, b: Bounds) {
+        self.shared.layout().bounds = b;
         let show = show_flag(b.width > 0 && b.height > 0);
         self.position(b.x, b.y, b.width as i32, b.height as i32, show);
     }
 
     /// Esconde (ex.: um modal abriu por cima) ou mostra de novo, na última posição.
     pub fn set_visible(&self, visible: bool) {
+        self.shared.layout().visible = visible;
         self.position(0, 0, 0, 0, show_flag(visible) | SWP_NOMOVE | SWP_NOSIZE);
     }
 
@@ -122,37 +175,39 @@ impl WindowControl {
     /// interface aparece por cima (menus, dicas, avisos) sem precisar esconder o vídeo inteiro.
     /// Vazio: o vídeo volta a ocupar a área toda. Não mexe no desenho (o swap chain continua igual).
     pub fn set_holes(&self, holes: &[Bounds]) {
-        if self.shared.closed.load(Ordering::Relaxed) {
+        holes.clone_into(&mut self.shared.layout().holes);
+        if self.shared.closed.load(Ordering::Relaxed) || self.shared.pip.load(Ordering::Relaxed) {
             return;
         }
-        let hwnd = HWND(self.hwnd as *mut _);
-        // SAFETY: HWND vivo (não fechado). As regiões criadas aqui são apagadas aqui, menos a final,
-        // que passa a ser da janela (o Windows apaga quando trocar ou fechar).
+        // SAFETY: HWND vivo (não fechado).
+        unsafe { apply_holes(HWND(self.hwnd as *mut _), holes) };
+    }
+
+    /// Solta o vídeo embutido numa janela pequena, sempre no topo (`true`), ou devolve ao app.
+    /// Enquanto solto, [`Self::set_bounds`], [`Self::set_visible`] e [`Self::set_holes`] só ficam
+    /// guardados; ao voltar, a janela vai para o último lugar que a interface pediu.
+    pub fn set_pip(&self, pip: bool) {
+        if self.shared.closed.load(Ordering::Relaxed) || !self.shared.embedded.load(Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: HWND vivo; a troca de pai e estilo acontece na thread da janela.
         unsafe {
-            if holes.is_empty() {
-                let _ = SetWindowRgn(hwnd, None, true);
-                return;
-            }
-            // Retângulo grande o bastante para qualquer tamanho: a região não depende do tamanho.
-            let region = CreateRectRgn(0, 0, i16::MAX as i32, i16::MAX as i32);
-            for h in holes {
-                let hole = CreateRectRgn(h.x, h.y, h.x + h.width as i32, h.y + h.height as i32);
-                let _ = CombineRgn(Some(region), Some(region), Some(hole), RGN_DIFF);
-                let _ = DeleteObject(HGDIOBJ(hole.0));
-            }
-            if SetWindowRgn(hwnd, Some(region), true) == 0 {
-                let _ = DeleteObject(HGDIOBJ(region.0));
-            }
+            let _ = PostMessageW(
+                Some(HWND(self.hwnd as *mut _)),
+                WM_APP_PIP,
+                WPARAM(usize::from(pip)),
+                LPARAM(0),
+            );
         }
     }
 
-    /// Recebe os eventos de tela cheia (substitui o callback anterior).
+    /// Recebe os eventos de tela cheia e de picture in picture (substitui o callback anterior).
     pub fn on_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
         *self.shared.on_event.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(cb));
     }
 
     fn position(&self, x: i32, y: i32, w: i32, h: i32, flags: SET_WINDOW_POS_FLAGS) {
-        if self.shared.closed.load(Ordering::Relaxed) {
+        if self.shared.closed.load(Ordering::Relaxed) || self.shared.pip.load(Ordering::Relaxed) {
             return;
         }
         // SAFETY: HWND vivo (não fechado). Assíncrono: não espera a thread da janela. HWND_TOP
@@ -246,6 +301,7 @@ impl VideoWindow {
 
 impl Drop for VideoWindow {
     fn drop(&mut self) {
+        self.shared.dropping.store(true, Ordering::Relaxed);
         if !self.is_closed() {
             // SAFETY: o HWND ainda existe (não foi fechado); a mensagem é tratada na thread dele.
             unsafe {
@@ -279,6 +335,9 @@ impl Renderer {
         if self.shared.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
+        // Para o picture in picture manter a proporção do vídeo (só dois números, sem alocar).
+        self.shared.video_width.store(frame.size.width, Ordering::Relaxed);
+        self.shared.video_height.store(frame.size.height, Ordering::Relaxed);
         let window = Size::new(
             self.shared.width.load(Ordering::Relaxed),
             self.shared.height.load(Ordering::Relaxed),
@@ -423,12 +482,31 @@ enum Action {
     ExitFullscreen,
     Close,
     Destroyed,
+    /// Entra ou sai do picture in picture.
+    Pip,
+    /// No picture in picture: pede ao app para voltar.
+    ExitPip,
+    /// No picture in picture: arrastar por qualquer ponto do vídeo move a janela.
+    DragAnywhere,
+    /// No picture in picture: redimensionar mantendo a proporção do vídeo.
+    KeepAspect,
+    /// No picture in picture: tamanho mínimo.
+    MinSize,
     /// O padrão do Windows.
     Default,
 }
 
-fn action(msg: u32, key: usize, embedded: bool) -> Action {
+fn action(msg: u32, key: usize, embedded: bool, pip: bool) -> Action {
     match msg {
+        WM_APP_PIP => Action::Pip,
+        WM_NCHITTEST if pip => Action::DragAnywhere,
+        WM_SIZING if pip => Action::KeepAspect,
+        WM_GETMINMAXINFO if pip => Action::MinSize,
+        // Arrastando pelo vídeo, os dois cliques chegam como clique na "barra de título".
+        WM_NCLBUTTONDBLCLK | WM_LBUTTONDBLCLK if pip => Action::ExitPip,
+        WM_KEYDOWN if pip && key == VK_ESCAPE.0 as usize => Action::ExitPip,
+        WM_KEYDOWN if pip && key == VK_F11.0 as usize => Action::Default,
+        WM_CLOSE if pip => Action::ExitPip,
         WM_SIZE => Action::StoreSize,
         WM_ERASEBKGND => Action::SkipErase,
         WM_LBUTTONDOWN if embedded => Action::Focus,
@@ -446,7 +524,14 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     unsafe {
         let shared = (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Shared).as_ref();
         let embedded = shared.is_some_and(|s| s.embedded.load(Ordering::Relaxed));
-        match action(msg, wparam.0, embedded) {
+        let pip = shared.is_some_and(|s| s.pip.load(Ordering::Relaxed));
+        // O app está fechando a janela de vez: no picture in picture também fecha.
+        let dropping = shared.is_some_and(|s| s.dropping.load(Ordering::Relaxed));
+        let act = match action(msg, wparam.0, embedded, pip) {
+            Action::ExitPip if msg == WM_CLOSE && dropping => Action::Close,
+            other => other,
+        };
+        match act {
             Action::StoreSize => {
                 if let Some(shared) = shared {
                     store_client_size(hwnd, shared);
@@ -474,6 +559,41 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
+            Action::Pip => {
+                if let Some(shared) = shared {
+                    set_pip(hwnd, shared, wparam.0 != 0);
+                }
+                LRESULT(0)
+            }
+            Action::ExitPip => {
+                if let Some(shared) = shared {
+                    shared.emit(WindowEvent::ExitPip);
+                }
+                LRESULT(0)
+            }
+            Action::DragAnywhere => {
+                let hit = DefWindowProcW(hwnd, msg, wparam, lparam);
+                if hit.0 == HTCLIENT as isize {
+                    LRESULT(HTCAPTION as isize)
+                } else {
+                    hit
+                }
+            }
+            Action::KeepAspect => {
+                if let (Some(shared), Some(rect)) = (shared, (lparam.0 as *mut RECT).as_mut()) {
+                    keep_aspect(hwnd, shared, wparam.0 as u32, rect);
+                }
+                LRESULT(1)
+            }
+            Action::MinSize => {
+                if let Some(info) = (lparam.0 as *mut MINMAXINFO).as_mut() {
+                    info.ptMinTrackSize = POINT {
+                        x: PIP_MIN.0,
+                        y: PIP_MIN.1,
+                    };
+                }
+                LRESULT(0)
+            }
             Action::Destroyed => {
                 if let Some(shared) = shared {
                     shared.closed.store(true, Ordering::Relaxed);
@@ -498,6 +618,177 @@ unsafe fn store_client_size(hwnd: HWND, shared: &Shared) {
         shared
             .height
             .store((rect.bottom - rect.top).max(0) as u32, Ordering::Relaxed);
+    }
+}
+
+/// Recorta `holes` da janela (vazio: a janela inteira volta a aparecer).
+///
+/// # Safety
+/// `hwnd` precisa ser uma janela viva. As regiões criadas aqui são apagadas aqui, menos a final,
+/// que passa a ser da janela (o Windows apaga quando trocar ou fechar).
+unsafe fn apply_holes(hwnd: HWND, holes: &[Bounds]) {
+    // SAFETY: garantido pelo chamador.
+    unsafe {
+        if holes.is_empty() {
+            let _ = SetWindowRgn(hwnd, None, true);
+            return;
+        }
+        // Retângulo grande o bastante para qualquer tamanho: a região não depende do tamanho.
+        let region = CreateRectRgn(0, 0, i16::MAX as i32, i16::MAX as i32);
+        for h in holes {
+            let hole = CreateRectRgn(h.x, h.y, h.x + h.width as i32, h.y + h.height as i32);
+            let _ = CombineRgn(Some(region), Some(region), Some(hole), RGN_DIFF);
+            let _ = DeleteObject(HGDIOBJ(hole.0));
+        }
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+        }
+    }
+}
+
+/// Proporção do vídeo (largura / altura), 16:9 enquanto nenhum quadro chegou.
+fn video_aspect(shared: &Shared) -> f64 {
+    let (w, h) = (
+        shared.video_width.load(Ordering::Relaxed),
+        shared.video_height.load(Ordering::Relaxed),
+    );
+    if w == 0 || h == 0 {
+        16.0 / 9.0
+    } else {
+        f64::from(w) / f64::from(h)
+    }
+}
+
+/// Onde o picture in picture abre da primeira vez: no canto de baixo à direita da tela do app,
+/// com um quarto da largura dela (entre 320 e 640 px), na proporção do vídeo.
+fn default_pip_rect(work: RECT, aspect: f64) -> RECT {
+    let width = ((work.right - work.left) / 4).clamp(320, 640);
+    let height = (f64::from(width) / aspect).round() as i32;
+    RECT {
+        left: work.right - width - PIP_MARGIN,
+        top: work.bottom - height - PIP_MARGIN,
+        right: work.right - PIP_MARGIN,
+        bottom: work.bottom - PIP_MARGIN,
+    }
+}
+
+/// Ajusta o retângulo que o usuário está arrastando para a área do vídeo manter a proporção:
+/// puxando pelo topo ou por baixo muda a largura; pelos lados ou cantos, a altura.
+fn fit_sizing(rect: &mut RECT, edge: u32, aspect: f64, frame: (i32, i32)) {
+    let client_w = (rect.right - rect.left - frame.0).max(1);
+    let client_h = (rect.bottom - rect.top - frame.1).max(1);
+    if edge == WMSZ_TOP || edge == WMSZ_BOTTOM {
+        rect.right = rect.left + (f64::from(client_h) * aspect).round() as i32 + frame.0;
+    } else {
+        let height = (f64::from(client_w) / aspect).round() as i32 + frame.1;
+        if edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT {
+            rect.top = rect.bottom - height;
+        } else {
+            rect.bottom = rect.top + height;
+        }
+    }
+}
+
+/// # Safety
+/// Chamar só na thread da janela, com `hwnd` vivo.
+unsafe fn keep_aspect(hwnd: HWND, shared: &Shared, edge: u32, rect: &mut RECT) {
+    let (mut outer, mut inner) = (RECT::default(), RECT::default());
+    // SAFETY: garantido pelo chamador.
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut outer);
+        let _ = GetClientRect(hwnd, &mut inner);
+    }
+    let frame = (
+        (outer.right - outer.left) - (inner.right - inner.left),
+        (outer.bottom - outer.top) - (inner.bottom - inner.top),
+    );
+    fit_sizing(rect, edge, video_aspect(shared), frame);
+}
+
+/// Solta a janela embutida do app (pequena, sempre no topo, fora da barra de tarefas) ou devolve
+/// ao app, no último lugar que a interface pediu.
+///
+/// # Safety
+/// Chamar só na thread da janela, com `hwnd` vivo.
+unsafe fn set_pip(hwnd: HWND, shared: &Shared, pip: bool) {
+    if pip == shared.pip.load(Ordering::Relaxed) || !shared.embedded.load(Ordering::Relaxed) {
+        return;
+    }
+    // SAFETY: garantido pelo chamador.
+    unsafe {
+        if pip {
+            let Ok(parent) = GetParent(hwnd) else {
+                return;
+            };
+            shared.pip_parent.store(parent.0 as isize, Ordering::Relaxed);
+            shared.pip.store(true, Ordering::Relaxed);
+            let saved = *shared.pip_rect.lock().unwrap_or_else(|e| e.into_inner());
+            let rect = saved.unwrap_or_else(|| {
+                let mut info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                let _ = GetMonitorInfoW(MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST), &mut info);
+                default_pip_rect(info.rcWork, video_aspect(shared))
+            });
+            // Sem os recortes dos menus do app: aqui não há nada por cima.
+            let _ = SetWindowRgn(hwnd, None, false);
+            let _ = SetParent(hwnd, None);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_POPUP | WS_THICKFRAME | WS_CLIPSIBLINGS).0 as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (WS_EX_TOPMOST | WS_EX_TOOLWINDOW).0 as isize);
+            // Cantos arredondados no Windows 11 (no 10, a chamada só não faz nada).
+            let corners = DWMWCP_ROUND;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&raw const corners).cast(),
+                std::mem::size_of_val(&corners) as u32,
+            );
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+            );
+        } else {
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                *shared.pip_rect.lock().unwrap_or_else(|e| e.into_inner()) = Some(rect);
+            }
+            let parent = HWND(shared.pip_parent.load(Ordering::Relaxed) as *mut _);
+            // O "sempre no topo" só sai pelo SetWindowPos, e enquanto ainda é janela de nível superior.
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_NOTOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+            SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_CHILD | WS_CLIPSIBLINGS).0 as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, 0);
+            let _ = SetParent(hwnd, Some(parent));
+            // Volta para o último lugar que a interface pediu (o que ela mandou durante o picture
+            // in picture ficou guardado), já com os recortes dos menus.
+            shared.pip.store(false, Ordering::Relaxed);
+            let layout = shared.layout();
+            let b = layout.bounds;
+            let show = show_flag(layout.visible && b.width > 0 && b.height > 0);
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOP),
+                b.x,
+                b.y,
+                b.width as i32,
+                b.height as i32,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | show,
+            );
+            apply_holes(hwnd, &layout.holes);
+        }
     }
 }
 
@@ -610,27 +901,179 @@ mod tests {
         let f11 = VK_F11.0 as usize;
         let esc = VK_ESCAPE.0 as usize;
         let letra_a = 0x41;
-        assert_eq!(action(WM_SIZE, 0, false), Action::StoreSize);
-        assert_eq!(action(WM_ERASEBKGND, 0, true), Action::SkipErase);
-        assert_eq!(action(WM_LBUTTONDOWN, 0, true), Action::Focus);
+        assert_eq!(action(WM_SIZE, 0, false, false), Action::StoreSize);
+        assert_eq!(action(WM_ERASEBKGND, 0, true, false), Action::SkipErase);
+        assert_eq!(action(WM_LBUTTONDOWN, 0, true, false), Action::Focus);
         assert_eq!(
-            action(WM_LBUTTONDOWN, 0, false),
+            action(WM_LBUTTONDOWN, 0, false, false),
             Action::Default,
             "solta: clique normal"
         );
-        assert_eq!(action(WM_KEYDOWN, f11, false), Action::ToggleFullscreen);
-        assert_eq!(action(WM_KEYDOWN, f11, true), Action::ToggleFullscreen);
-        assert_eq!(action(WM_KEYDOWN, esc, true), Action::ExitFullscreen);
+        assert_eq!(action(WM_KEYDOWN, f11, false, false), Action::ToggleFullscreen);
+        assert_eq!(action(WM_KEYDOWN, f11, true, false), Action::ToggleFullscreen);
+        assert_eq!(action(WM_KEYDOWN, esc, true, false), Action::ExitFullscreen);
         assert_eq!(
-            action(WM_KEYDOWN, esc, false),
+            action(WM_KEYDOWN, esc, false, false),
             Action::Default,
             "solta: Esc não faz nada"
         );
-        assert_eq!(action(WM_KEYDOWN, letra_a, true), Action::Default);
-        assert_eq!(action(WM_LBUTTONDBLCLK, 0, false), Action::ToggleFullscreen);
-        assert_eq!(action(WM_CLOSE, 0, false), Action::Close);
-        assert_eq!(action(WM_DESTROY, 0, false), Action::Destroyed);
-        assert_eq!(action(0x0200, 0, false), Action::Default);
+        assert_eq!(action(WM_KEYDOWN, letra_a, true, false), Action::Default);
+        assert_eq!(action(WM_LBUTTONDBLCLK, 0, false, false), Action::ToggleFullscreen);
+        assert_eq!(action(WM_CLOSE, 0, false, false), Action::Close);
+        assert_eq!(action(WM_DESTROY, 0, false, false), Action::Destroyed);
+        assert_eq!(action(0x0200, 0, false, false), Action::Default);
+    }
+
+    #[test]
+    fn no_picture_in_picture_arrastar_redimensionar_e_voltar_viram_acoes() {
+        let esc = VK_ESCAPE.0 as usize;
+        let f11 = VK_F11.0 as usize;
+        assert_eq!(action(WM_APP_PIP, 1, true, false), Action::Pip);
+        assert_eq!(action(WM_NCHITTEST, 0, true, true), Action::DragAnywhere);
+        assert_eq!(action(WM_NCHITTEST, 0, true, false), Action::Default);
+        assert_eq!(action(WM_SIZING, 0, true, true), Action::KeepAspect);
+        assert_eq!(action(WM_GETMINMAXINFO, 0, true, true), Action::MinSize);
+        assert_eq!(action(WM_NCLBUTTONDBLCLK, 0, true, true), Action::ExitPip);
+        assert_eq!(action(WM_LBUTTONDBLCLK, 0, true, true), Action::ExitPip);
+        assert_eq!(action(WM_KEYDOWN, esc, true, true), Action::ExitPip);
+        assert_eq!(
+            action(WM_KEYDOWN, f11, true, true),
+            Action::Default,
+            "F11 não abre tela cheia no PiP"
+        );
+        assert_eq!(
+            action(WM_CLOSE, 0, true, true),
+            Action::ExitPip,
+            "fechar o PiP só volta"
+        );
+    }
+
+    #[test]
+    fn picture_in_picture_abre_no_canto_e_redimensiona_na_proporcao() {
+        let work = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1040,
+        };
+        let r = default_pip_rect(work, 16.0 / 9.0);
+        assert_eq!((r.right - r.left, r.bottom - r.top), (480, 270));
+        assert_eq!((r.right, r.bottom), (1920 - PIP_MARGIN, 1040 - PIP_MARGIN));
+        // Tela pequena: no mínimo 320 de largura; vídeo 4:3 fica mais alto.
+        let small = RECT {
+            right: 1000,
+            bottom: 700,
+            ..work
+        };
+        let r = default_pip_rect(small, 4.0 / 3.0);
+        assert_eq!((r.right - r.left, r.bottom - r.top), (320, 240));
+
+        // Bordas de 16×16 px (o redimensionável): a área do vídeo fica em 16:9.
+        let frame = (16, 16);
+        let mut pelo_lado = RECT {
+            left: 0,
+            top: 0,
+            right: 656,
+            bottom: 999,
+        };
+        fit_sizing(&mut pelo_lado, 2, 16.0 / 9.0, frame);
+        assert_eq!(pelo_lado.bottom - pelo_lado.top - 16, 360);
+        let mut pelo_topo = RECT {
+            left: 0,
+            top: 100,
+            right: 999,
+            bottom: 476,
+        };
+        fit_sizing(&mut pelo_topo, WMSZ_TOP, 16.0 / 9.0, frame);
+        assert_eq!(pelo_topo.right - pelo_topo.left - 16, 640);
+        let mut canto_de_cima = RECT {
+            left: 0,
+            top: 0,
+            right: 336,
+            bottom: 500,
+        };
+        fit_sizing(&mut canto_de_cima, WMSZ_TOPLEFT, 16.0 / 9.0, frame);
+        assert_eq!(
+            (canto_de_cima.bottom, canto_de_cima.bottom - canto_de_cima.top - 16),
+            (500, 180)
+        );
+    }
+
+    #[test]
+    fn video_embutido_entra_e_sai_do_picture_in_picture() {
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW as long;
+        let app = solta("SquadView (app, PiP)");
+        let video = VideoWindow::open(WindowTarget::Embedded { parent: app.hwnd }, Size::new(1920, 1080))
+            .expect("abrir o vídeo embutido");
+        let control = video.control();
+        let lugar = Bounds {
+            x: 10,
+            y: 20,
+            width: 320,
+            height: 180,
+        };
+        control.set_bounds(lugar);
+        assert!(eventually(|| visible(&video)));
+        let hwnd = HWND(video.hwnd as *mut _);
+        // SAFETY: janelas vivas durante o teste.
+        let parent = || unsafe { GetParent(hwnd).map(|p| p.0 as isize).unwrap_or(0) };
+        let ex = || unsafe { long(hwnd, GWL_EXSTYLE) } as u32;
+        assert_eq!(parent(), app.hwnd);
+
+        control.set_pip(true);
+        assert!(eventually(|| parent() == 0), "não se soltou do app");
+        assert!(eventually(|| ex() & WS_EX_TOPMOST.0 != 0), "não ficou sempre no topo");
+        assert!(visible(&video));
+        assert!(eventually(
+            || video.shared.width.load(Ordering::Relaxed) >= PIP_MIN.0 as u32
+        ));
+        // No PiP, a interface mexendo no layout não move nem esconde o vídeo.
+        let novo = Bounds {
+            x: 30,
+            y: 40,
+            width: 400,
+            height: 225,
+        };
+        control.set_bounds(novo);
+        control.set_visible(false);
+        control.set_visible(true);
+        assert!(visible(&video));
+
+        // Fechar o PiP (ou dois cliques, Esc) só avisa o app; ele decide voltar.
+        let (tx, rx) = mpsc::channel();
+        control.on_event(move |e| {
+            let _ = tx.send(e);
+        });
+        post(&video, WM_CLOSE, 0);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), WindowEvent::ExitPip);
+        assert!(!video.is_closed());
+
+        control.set_pip(false);
+        assert!(eventually(|| parent() == app.hwnd), "não voltou para o app");
+        assert_eq!(ex() & WS_EX_TOPMOST.0, 0);
+        // Volta no último lugar pedido durante o PiP.
+        assert!(eventually(
+            || video.shared.width.load(Ordering::Relaxed) == 400 && video.shared.height.load(Ordering::Relaxed) == 225
+        ));
+        assert!(eventually(|| visible(&video)));
+        // O lugar do PiP fica guardado para a próxima vez.
+        assert!(video.shared.pip_rect.lock().unwrap().is_some());
+
+        // Descartar a janela no meio do PiP fecha de verdade.
+        control.set_pip(true);
+        assert!(eventually(|| parent() == 0));
+        let start = Instant::now();
+        drop(video);
+        assert!(start.elapsed() < Duration::from_secs(2), "fechar no PiP travou");
+        drop(app);
+    }
+
+    #[test]
+    fn janela_solta_nao_entra_em_picture_in_picture() {
+        let window = solta("SquadView (solta, PiP)");
+        window.control().set_pip(true);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!window.shared.pip.load(Ordering::Relaxed));
     }
 
     #[test]
