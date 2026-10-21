@@ -1,4 +1,4 @@
-import { ImageOff, Loader2, Maximize2, Minimize2, X } from "lucide-react";
+import { ImageOff, Loader2, Maximize2, Minimize2, PictureInPicture2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { BarButton } from "../stream/StreamView";
 import { useStreamStore } from "../stream/stream-store";
@@ -34,22 +34,40 @@ function useImageArriving(fps: number | undefined): boolean {
 /** Assistindo um amigo: o vídeo dele dentro do app, com uma barra embaixo. */
 export function WatchView(props: { member: Member }) {
   const { watchStats: stats, stopWatching } = useRoomStore();
-  const { fullscreen, setFullscreen } = useStreamStore();
+  const { fullscreen, setFullscreen, pip, setPip } = useStreamStore();
   const slot = useVideoSlot();
   const arriving = useImageArriving(stats?.fps);
   const name = props.member.name;
+  // Parou de assistir (o vídeo fechou junto com a janelinha): o próximo começa dentro do app.
+  useEffect(() => () => useStreamStore.setState({ pip: false }), []);
 
   return (
     <section aria-label={`Assistindo ${props.member.name}`} className="flex h-full w-full flex-col gap-3">
       <div
         ref={slot}
         data-testid="area-do-video"
-        onDoubleClick={() => void setFullscreen(!fullscreen)}
+        onDoubleClick={() => void (pip ? setPip(false) : setFullscreen(!fullscreen))}
         className="relative min-h-0 flex-1 overflow-hidden rounded-card bg-black"
       >
-        {/* Fica por baixo do vídeo nativo: só aparece enquanto não há imagem. */}
+        {/* Fica por baixo do vídeo nativo: só aparece enquanto não há imagem (ou ele está solto). */}
         <div role="status" className="absolute inset-0 grid place-items-center p-6 text-center">
-          {arriving ? (
+          {pip ? (
+            <div className="flex max-w-sm flex-col items-center gap-3">
+              <PictureInPicture2 size={36} className="text-text-faint" />
+              <p className="font-semibold">Assistindo {name} em picture in picture</p>
+              <p className="text-sm text-text-muted">
+                A janelinha fica por cima de tudo. Arraste para mover, puxe a borda para mudar o tamanho e dê dois
+                cliques nela para voltar.
+              </p>
+              <button
+                type="button"
+                onClick={() => void setPip(false)}
+                className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand/85"
+              >
+                Trazer de volta
+              </button>
+            </div>
+          ) : arriving ? (
             <p className="flex items-center gap-2 text-sm text-text-faint">
               <Loader2 size={16} className="animate-spin" />
               {stats ? `Esperando a imagem de ${name}…` : `Conectado. Esperando a imagem de ${name}…`}
@@ -81,6 +99,13 @@ export function WatchView(props: { member: Member }) {
           </span>
           <VolumeControl />
           <BarButton
+            label={pip ? "Trazer o vídeo de volta" : "Picture in picture"}
+            active={pip}
+            onClick={() => void setPip(!pip)}
+          >
+            <PictureInPicture2 size={18} />
+          </BarButton>
+          <BarButton
             label={fullscreen ? "Sair da tela cheia" : "Tela cheia"}
             onClick={() => void setFullscreen(!fullscreen)}
           >
@@ -90,6 +115,7 @@ export function WatchView(props: { member: Member }) {
             type="button"
             onClick={() => {
               void setFullscreen(false);
+              void setPip(false);
               void stopWatching();
             }}
             className="ml-1 flex items-center gap-1.5 rounded-md bg-surface-3 px-3 py-1.5 text-sm font-medium hover:bg-surface-hover"

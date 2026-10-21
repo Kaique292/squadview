@@ -1,3 +1,6 @@
+import type { SpeakingEffect } from "../voice/speaking-effect";
+import { VoiceAura } from "./VoiceAura";
+
 const COLORS = ["#f0b232", "#23a55a", "#3ba0ff", "#e06c9f", "#6e4ff6", "#f23f43"];
 
 /** Cor fixa por nome (a mesma em todo lugar: lateral, grade da sala, painel). */
@@ -7,26 +10,32 @@ export function avatarColor(name: string): string {
 }
 
 /**
- * Avatar redondo: a foto (do Discord) ou a inicial na cor do nome. Anel verde quando a pessoa
- * está falando, vermelho quando está ao vivo, e o ponto de status no canto.
+ * Avatar redondo: a foto (do Discord) ou a inicial na cor do nome. Quando a pessoa está falando,
+ * o efeito de fala que ela escolheu (ou o anel verde padrão); anel vermelho quando está ao vivo, e
+ * o ponto de status no canto.
  */
 export function Avatar(props: {
   name: string;
   size: number;
   live?: boolean;
   speaking?: boolean;
+  /** Efeito de fala escolhido pela pessoa (`null`: o anel verde padrão). */
+  effect?: SpeakingEffect | null;
   status?: "online" | "offline";
   /** Cor da borda do ponto de status (o fundo onde o avatar está). */
   statusBorder?: string;
   src?: string;
 }) {
-  const ring = props.speaking
-    ? "ring-2 ring-online ring-offset-2 ring-offset-transparent"
-    : props.live
-      ? "ring-2 ring-live"
-      : "";
+  const ring =
+    props.speaking && !props.effect
+      ? "ring-2 ring-online ring-offset-2 ring-offset-transparent"
+      : props.live
+        ? "ring-2 ring-live"
+        : "";
   return (
-    <span aria-hidden className="relative shrink-0">
+    // `isolate`: o efeito fica atrás da foto sem ir para trás do que está em volta.
+    <span aria-hidden className="relative isolate shrink-0">
+      {props.effect && <VoiceAura effect={props.effect} size={props.size} active={!!props.speaking} />}
       {props.src ? (
         <img
           src={props.src}

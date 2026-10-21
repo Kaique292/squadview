@@ -53,7 +53,8 @@ describe("criar e entrar em sala", () => {
   it("cria uma sala com o nome e mostra o código para mandar para a galera", async () => {
     invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "room_join" ? { code: "B8RJ2Q" } : undefined));
     render(<App />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Criar sala" })[1]);
+    // O "+" da barra de salas agora adiciona servidores: a sala rápida é o botão da lateral.
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     const dialog = await screen.findByRole("dialog");
     const submit = screen.getAllByRole("button", { name: "Criar sala" }).find((b) => dialog.contains(b))!;
     expect(submit).toBeDisabled();
@@ -71,7 +72,8 @@ describe("criar e entrar em sala", () => {
 
     emit("room-members", [ME]);
     expect(sidebarButton(/Sala B8RJ2Q/)).toBeInTheDocument();
-    expect(screen.getByText(/Mande o código da sala para a galera entrar/)).toBeInTheDocument();
+    // Sem a dica "Mande o código da sala…" embaixo de quem está sozinho na sala.
+    expect(screen.queryByText(/Mande o código da sala/)).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Sucesso" })).toHaveTextContent("Você está na sala");
     expect(savedName()).toBe("Kaique");
   });
@@ -309,7 +311,8 @@ describe("nome da sala e apelido", () => {
     );
     useRoomStore.setState({ code: null, members: [] });
     render(<App />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Criar sala" })[1]);
+    // O "+" da barra de salas agora adiciona servidores: a sala rápida é o botão da lateral.
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     await screen.findByRole("dialog");
     fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Kaique" } });
     fireEvent.change(screen.getByPlaceholderText("Sala de Kaique"), { target: { value: "Galera do LoL" } });

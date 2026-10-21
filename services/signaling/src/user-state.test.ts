@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { type ServerSnapshot, ServerState } from "./server-state";
 import type { Profile } from "./session";
 import {
   type JoinResult,
@@ -45,6 +46,41 @@ class World {
   /** Salas que receberam pedido de entrada: código → quem pediu. */
   asked: { code: string; from: Profile }[] = [];
   roomIsEmpty = false;
+  /** Servidores, como os Durable Objects `Server` (ids sorteados em ordem). */
+  servers = new Map<string, ServerState>();
+  private nextServer = 1;
+  serverDown = false;
+  /** Credenciais do repassador (`null`: sem provedor configurado). */
+  turnCredentials: { urls: string[]; username: string; credential: string } | null = null;
+
+  server(id: string) {
+    let s = this.servers.get(id);
+    if (!s) {
+      const store = new Map<string, unknown>();
+      let n = 0;
+      s = new ServerState(
+        {
+          get: (k) => structuredClone(store.get(k)) as never,
+          put: (k, v) => store.set(k, structuredClone(v)),
+          delete: (k) => store.delete(k),
+        },
+        Date.now,
+        {
+          roomId: () => (++n).toString(16).padStart(8, "0"),
+          roomCode: () => `SALA${String.fromCharCode(64 + ++n)}${String.fromCharCode(64 + n)}`.slice(0, 6),
+          secret: () => `Convite${String(++n).padStart(5, "0")}`,
+        },
+      );
+      this.servers.set(id, s);
+    }
+    return s;
+  }
+
+  /** O que o Durable Object `Server` faz depois de um pedido: avisa os outros membros. */
+  private notify(id: string, except: string, snapshot: ServerSnapshot | null, removed: string[]) {
+    for (const m of snapshot?.members ?? []) if (m.id !== except) this.person(m.id).state.onServerChanged(snapshot!);
+    for (const r of removed) if (r !== except) this.person(r).state.onServerRemoved(id);
+  }
 
   person(id: string) {
     let p = this.people.get(id);
@@ -92,6 +128,25 @@ class World {
         if (this.roomIsEmpty) return false;
         this.asked.push({ code, from });
         return true;
+      },
+      newServerId: () => (this.nextServer++).toString(16).padStart(16, "0"),
+      serverCreate: async (id, name, owner) => this.server(id).create(id, name, owner),
+      serverAct: async (id, actor, op) => {
+        if (this.serverDown) throw new Error("fora do ar");
+        const before = this.server(id).snapshot()?.id;
+        const result = this.server(id).act(actor, op);
+        if (result.ok && before) this.notify(before, actor.id, result.snapshot, result.removed);
+        return result;
+      },
+      serverSnapshot: async (id) => {
+        if (this.serverDown) throw new Error("fora do ar");
+        return this.server(id).snapshot();
+      },
+      dmSignal: async (to, from, payload) => this.person(to).state.onDmSignal(from, payload),
+      turn: async () => this.turnCredentials,
+      serverRefresh: async (id, profile) => {
+        const s = this.server(id);
+        if (s.refreshProfile(profile)) this.notify(id, profile.id, s.snapshot(), []);
       },
     };
   }
@@ -269,5 +324,235 @@ describe("entrar na sala de um amigo", () => {
     expect(beto.last("invited")).toMatchObject({ from: { id: ANA }, code: "ABCDEF", room: "Galera" });
     world.person(BETO).state.onInvited({ id: CAIO, name: "Caio", avatar: null }, "ABCDEF", null);
     expect(beto.sent.filter((m) => m.type === "invited")).toHaveLength(1);
+  });
+});
+
+describe("servidores", () => {
+  const S1 = "0000000000000001";
+  type Msg<T extends UserServerMessage["type"]> = Extract<UserServerMessage, { type: T }>;
+  const lastServer = (c: FakeConn) => (c.last("server") as Msg<"server">)?.server;
+  const action = (server: string, op: unknown) => ({ type: "server-action", server, op });
+
+  /** Ana cria um servidor e chama o Beto pelo convite. */
+  async function anaComBeto() {
+    const ana = await world.connect(ANA, "Ana");
+    const beto = await world.connect(BETO, "Beto");
+    await send(world, ANA, ana, { type: "server-create", name: "Turma do bairro" });
+    await send(world, ANA, ana, action(S1, { kind: "invite" }));
+    const { invite } = ana.last("server-invite") as Msg<"server-invite">;
+    await send(world, BETO, beto, { type: "server-join", invite });
+    return { ana, beto };
+  }
+
+  it("lê os pedidos de servidor e recusa os inválidos", () => {
+    expect(parseUserMessage(JSON.stringify({ type: "server-create", name: " Turma " }))).toEqual({
+      type: "server-create",
+      name: "Turma",
+    });
+    expect(parseUserMessage(JSON.stringify(action(S1, { kind: "room-create", name: "Jogos" })))).toEqual({
+      type: "server-action",
+      server: S1,
+      op: { kind: "room-create", name: "Jogos" },
+    });
+    const icon = "data:image/webp;base64,UklGRiQAAABXRUJQ";
+    expect(parseUserMessage(JSON.stringify(action(S1, { kind: "update", icon })))).toMatchObject({
+      op: { kind: "update", icon },
+    });
+    for (const bad of [
+      { type: "server-create", name: "" },
+      { type: "server-join", invite: "nao-e-convite" },
+      action("xyz", { kind: "invite" }),
+      action(S1, { kind: "update" }),
+      action(S1, { kind: "update", icon: "javascript:alert(1)" }),
+      action(S1, { kind: "update", icon: `data:image/png;base64,${"A".repeat(13000)}` }),
+      action(S1, { kind: "role", member: BETO, role: "owner" }),
+      action(S1, { kind: "room-delete", room: "sala" }),
+      action(S1, { kind: "apagar-tudo" }),
+    ]) {
+      expect(parseUserMessage(JSON.stringify(bad)), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it("cria o servidor com uma sala Geral, e quem cria é o dono", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    expect(ana.last("servers")).toEqual({ type: "servers", servers: [] });
+    await send(world, ANA, ana, { type: "server-create", name: "Turma do bairro" });
+    const server = lastServer(ana);
+    expect(server).toMatchObject({ id: S1, name: "Turma do bairro", icon: null });
+    expect(server.rooms).toEqual([{ id: expect.any(String), name: "Geral", code: expect.any(String) }]);
+    expect(server.members).toEqual([{ id: ANA, name: "Ana", avatar: null, role: "owner" }]);
+  });
+
+  it("convite traz gente nova, e todos os membros ficam sabendo", async () => {
+    const { ana, beto } = await anaComBeto();
+    expect(lastServer(beto).members.map((m) => [m.name, m.role])).toEqual([
+      ["Ana", "owner"],
+      ["Beto", "member"],
+    ]);
+    expect(lastServer(ana).members).toHaveLength(2);
+    // Ao conectar de novo, o Beto já recebe o servidor.
+    const outra = await world.connect(BETO, "Beto");
+    expect((outra.last("servers") as Msg<"servers">).servers.map((s) => s.id)).toEqual([S1]);
+  });
+
+  it("convite errado ou vencido não deixa entrar", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    const beto = await world.connect(BETO, "Beto");
+    await send(world, ANA, ana, { type: "server-create", name: "Turma" });
+    await send(world, BETO, beto, { type: "server-join", invite: `${S1}.ConviteErrad` });
+    expect(beto.last("error")).toEqual({ type: "error", code: "invite-invalid" });
+    expect(beto.last("server")).toBeUndefined();
+  });
+
+  it("só dono e administradores mexem no servidor; o dono promove", async () => {
+    const { ana, beto } = await anaComBeto();
+    await send(world, BETO, beto, action(S1, { kind: "room-create", name: "Jogos" }));
+    expect(beto.last("error")).toEqual({ type: "error", code: "not-allowed" });
+
+    await send(world, ANA, ana, action(S1, { kind: "role", member: BETO, role: "admin" }));
+    expect(lastServer(beto).members.find((m) => m.id === BETO)?.role).toBe("admin");
+    await send(world, BETO, beto, action(S1, { kind: "room-create", name: "Jogos" }));
+    await send(world, BETO, beto, action(S1, { kind: "update", name: "Turma nova" }));
+    expect(lastServer(ana)).toMatchObject({ name: "Turma nova" });
+    expect(lastServer(ana).rooms.map((r) => r.name)).toEqual(["Geral", "Jogos"]);
+    // Administrador não tira o dono nem promove ninguém.
+    await send(world, BETO, beto, action(S1, { kind: "kick", member: ANA }));
+    expect(beto.last("error")).toEqual({ type: "error", code: "not-allowed" });
+
+    const jogos = lastServer(ana).rooms[1];
+    await send(world, ANA, ana, action(S1, { kind: "room-rename", room: jogos.id, name: "Ranked" }));
+    expect(lastServer(beto).rooms[1]).toEqual({ ...jogos, name: "Ranked" });
+    await send(world, ANA, ana, action(S1, { kind: "room-delete", room: jogos.id }));
+    expect(lastServer(beto).rooms).toHaveLength(1);
+  });
+
+  it("tirar alguém faz o servidor sumir da lista dele", async () => {
+    const { ana, beto } = await anaComBeto();
+    await send(world, ANA, ana, action(S1, { kind: "kick", member: BETO }));
+    expect(beto.last("server-removed")).toEqual({ type: "server-removed", id: S1 });
+    expect(lastServer(ana).members).toHaveLength(1);
+    const outra = await world.connect(BETO, "Beto");
+    expect(outra.last("servers")).toEqual({ type: "servers", servers: [] });
+    // Fora do servidor, não dá para pedir nada a ele.
+    await send(world, BETO, outra, action(S1, { kind: "invite" }));
+    expect(outra.last("error")).toEqual({ type: "error", code: "not-member" });
+  });
+
+  it("membro sai sozinho; o dono não sai, apaga, e todos perdem o servidor", async () => {
+    const { ana, beto } = await anaComBeto();
+    await send(world, ANA, ana, action(S1, { kind: "leave" }));
+    expect(ana.last("error")).toEqual({ type: "error", code: "owner-cannot-leave" });
+
+    await send(world, ANA, ana, action(S1, { kind: "delete" }));
+    expect(ana.last("server-removed")).toEqual({ type: "server-removed", id: S1 });
+    expect(beto.last("server-removed")).toEqual({ type: "server-removed", id: S1 });
+  });
+
+  it("nome e foto novos aparecem para os outros membros", async () => {
+    const { beto } = await anaComBeto();
+    const ana = world.person(ANA).conns[0];
+    await send(world, ANA, ana, { type: "profile", name: "Aninha", avatar: null });
+    expect(lastServer(beto).members.find((m) => m.id === ANA)?.name).toBe("Aninha");
+  });
+
+  it("servidor fora do ar não derruba a conexão nem some da lista", async () => {
+    const { beto } = await anaComBeto();
+    world.serverDown = true;
+    await send(world, BETO, beto, action(S1, { kind: "invite" }));
+    expect(beto.last("error")).toEqual({ type: "error", code: "not-member" });
+    expect(beto.closedWith).toBeNull();
+    const outra = await world.connect(BETO, "Beto");
+    expect(outra.last("servers")).toEqual({ type: "servers", servers: [] });
+    world.serverDown = false;
+    const depois = await world.connect(BETO, "Beto");
+    expect((depois.last("servers") as Msg<"servers">).servers).toHaveLength(1);
+  });
+
+  it(`no máximo ${20} servidores por pessoa`, async () => {
+    const ana = await world.connect(ANA, "Ana");
+    for (let i = 0; i < 20; i++) await send(world, ANA, ana, { type: "server-create", name: `S${i}` });
+    await send(world, ANA, ana, { type: "server-create", name: "Mais um" });
+    expect(ana.last("error")).toEqual({ type: "error", code: "too-many" });
+  });
+});
+
+describe("mensagens privadas: sinal da conexão direta", () => {
+  type Msg<T extends UserServerMessage["type"]> = Extract<UserServerMessage, { type: T }>;
+  const OFFER = { kind: "dm-offer", candidates: ["203.0.113.7:51000"], fingerprint: "ab".repeat(32) };
+
+  it("lê o sinal e o pedido de TURN, e recusa o que não segue o contrato", () => {
+    expect(parseUserMessage(JSON.stringify({ type: "dm-signal", to: BETO, payload: OFFER }))).toEqual({
+      type: "dm-signal",
+      to: BETO,
+      payload: OFFER,
+    });
+    expect(parseUserMessage(JSON.stringify({ type: "turn-request" }))).toEqual({ type: "turn-request" });
+    for (const bad of [
+      { type: "dm-signal", to: "nao-e-id", payload: OFFER },
+      { type: "dm-signal", to: BETO, payload: "texto" },
+      { type: "dm-signal", to: BETO, payload: [1, 2] },
+      { type: "dm-signal", to: BETO, payload: { grande: "x".repeat(9000) } },
+    ]) {
+      expect(parseUserMessage(JSON.stringify(bad)), JSON.stringify(bad).slice(0, 60)).toBeNull();
+    }
+  });
+
+  it("entrega o sinal só ao amigo, em todas as conexões dele, com quem mandou", async () => {
+    const { ana } = await friends(world);
+    const outraDoBeto = await world.connect(BETO, "Beto");
+    await send(world, ANA, ana, { type: "dm-signal", to: BETO, payload: OFFER });
+    for (const conn of world.person(BETO).conns) {
+      expect(conn.last("dm-signal")).toEqual({ type: "dm-signal", from: ANA, payload: OFFER });
+    }
+    expect(outraDoBeto.last("dm-signal")).toBeDefined();
+    expect(ana.last("dm-unreachable")).toBeUndefined();
+  });
+
+  it("amigo offline: avisa quem mandou, sem guardar nada", async () => {
+    const { ana, beto } = await friends(world);
+    await world.disconnect(BETO, beto);
+    await send(world, ANA, ana, { type: "dm-signal", to: BETO, payload: OFFER });
+    expect(ana.last("dm-unreachable")).toEqual({ type: "dm-unreachable", id: BETO });
+    // Ao voltar, o Beto não recebe sinal velho.
+    const volta = await world.connect(BETO, "Beto");
+    expect(volta.last("dm-signal")).toBeUndefined();
+  });
+
+  it("quem não é amigo não manda nem recebe sinal", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    const caio = await world.connect(CAIO, "Caio");
+    await send(world, ANA, ana, { type: "dm-signal", to: CAIO, payload: OFFER });
+    expect(ana.last("error")).toEqual({ type: "error", code: "unknown-person" });
+    expect(caio.last("dm-signal")).toBeUndefined();
+    // Mesmo chegando por outro caminho, o registro do Caio recusa (não são amigos).
+    expect(world.person(CAIO).state.onDmSignal(ANA, OFFER)).toBe(false);
+  });
+
+  it("registro do amigo fora do ar conta como offline", async () => {
+    const { ana } = await friends(world);
+    const peers = world.peers();
+    const quebrado = new UserState(
+      ANA,
+      () => world.person(ANA).conns,
+      { get: () => undefined, put: () => {} },
+      { ...peers, dmSignal: async () => Promise.reject(new Error("fora do ar")) },
+    );
+    quebrado["friends"] = () => ({ [BETO]: { id: BETO, name: "Beto", avatar: null, direct: false } });
+    await quebrado.message(ana, JSON.stringify({ type: "dm-signal", to: BETO, payload: OFFER }));
+    expect(ana.last("dm-unreachable")).toEqual({ type: "dm-unreachable", id: BETO });
+  });
+
+  it("manda as credenciais do repassador quando pedidas (e nada sem provedor)", async () => {
+    const ana = await world.connect(ANA, "Ana");
+    await send(world, ANA, ana, { type: "turn-request" });
+    expect(ana.last("turn")).toBeUndefined();
+    world.turnCredentials = { urls: ["turn:turn.exemplo:3478"], username: "u", credential: "c" };
+    await send(world, ANA, ana, { type: "turn-request" });
+    expect(ana.last("turn") as Msg<"turn">).toEqual({
+      type: "turn",
+      urls: ["turn:turn.exemplo:3478"],
+      username: "u",
+      credential: "c",
+    });
   });
 });

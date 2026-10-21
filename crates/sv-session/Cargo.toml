@@ -20,7 +20,7 @@ sv-encode.workspace = true
 sv-gpu.workspace = true
 sv-media.workspace = true
 sv-net.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "io-util"] }
 windows.workspace = true
 
 [lints]

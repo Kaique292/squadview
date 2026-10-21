@@ -134,7 +134,10 @@ pub fn session(secret: &str, id: &str) -> String {
     format!("{payload}.{}", URL_SAFE_NO_PAD.encode(sig.as_ref()))
 }
 
-/// Id do Discord novo (o Worker local guarda o estado entre execuções).
+/// Id do Discord novo (o Worker local guarda o estado entre execuções). Com o contador, como em
+/// [`test_identifier`]: dois testes em paralelo no mesmo horário do relógio não dividem a conta.
 pub fn fresh_discord_id() -> String {
-    format!("3{:017}", unique() % 100_000_000_000_000_000)
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed) % 1000;
+    format!("3{:014}{n:03}", unique() % 100_000_000_000_000)
 }

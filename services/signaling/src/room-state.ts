@@ -132,7 +132,14 @@ export class RoomState {
 
     switch (msg.type) {
       case "status": {
-        const member = { ...me, live: msg.live, muted: msg.muted, deafened: msg.deafened, watching: msg.watching };
+        const member = {
+          ...me,
+          live: msg.live,
+          muted: msg.muted,
+          deafened: msg.deafened,
+          watching: msg.watching,
+          effect: msg.effect,
+        };
         conn.setAttachment({ ...attachment, member });
         this.broadcast({ type: "member-updated", member }, conn);
         return;

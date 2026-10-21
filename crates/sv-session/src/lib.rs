@@ -5,6 +5,7 @@
 //! - [`LocalPreview`]: os dois ligados no mesmo PC, para medir antes de usar a rede.
 
 mod audio;
+pub mod dm;
 mod log;
 mod preview;
 mod remote;
@@ -28,7 +29,7 @@ pub use remote::{RelaySource, RemoteView};
 pub use room::{JoinAs, Room, RoomUpdate, WatchPath};
 pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};
-pub use sv_net::{DiscordUser, JoinRequester, Member};
+pub use sv_net::{DiscordUser, JoinRequester, Member, SpeakingEffect};
 pub use system::{SystemLoad, SystemMonitor};
 pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
 pub use voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};

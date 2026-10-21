@@ -3,7 +3,9 @@ import {
   Activity,
   Bell,
   Gamepad2,
+  HardDrive,
   Loader2,
+  MessageCircle,
   LogOut,
   Monitor,
   Mic,
@@ -26,11 +28,14 @@ import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 import { DiagnosticsSection } from "./DiagnosticsSection";
+import { MessagesSection } from "./MessagesSection";
 import { usePresenceSettings } from "./presence-store";
+import { StorageSection } from "./StorageSection";
 import { VoiceSection } from "./VoiceSection";
 import { WindowsSection } from "./WindowsSection";
 
-type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho";
+type Page =
+  "conta" | "voz" | "sons" | "mensagens" | "discord" | "aparencia" | "windows" | "desempenho" | "armazenamento";
 
 interface Item {
   id: Page;
@@ -55,11 +60,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         id: "voz",
         label: "Voz e vídeo",
         icon: <Mic size={18} />,
-        keywords: "microfone saída fone volume ruído isolamento áudio",
+        keywords: "microfone saída fone volume ruído isolamento áudio efeito fala anel cor",
         parts: [
           { id: "voz-dispositivos", label: "Voz" },
           { id: "voz-teste", label: "Teste do microfone" },
           { id: "voz-processamento", label: "Processamento de voz" },
+          { id: "voz-efeito", label: "Efeito de fala" },
         ],
       },
       {
@@ -67,6 +73,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         label: "Sons",
         icon: <Bell size={18} />,
         keywords: "aviso notificação mudo surdo entrar sair alerta",
+      },
+      {
+        id: "mensagens",
+        label: "Mensagens",
+        icon: <MessageCircle size={18} />,
+        keywords: "conversa anexo arquivo cópia privada",
       },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
       {
@@ -76,6 +88,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         keywords: "bandeja fechar minimizar relógio segundo plano iniciar",
       },
       { id: "desempenho", label: "Desempenho", icon: <Activity size={18} />, keywords: "registro fps gpu diagnóstico" },
+      {
+        id: "armazenamento",
+        label: "Armazenamento",
+        icon: <HardDrive size={18} />,
+        keywords: "cache limpar espaço disco imagens registros",
+      },
     ],
   },
   {
@@ -95,10 +113,12 @@ const TITLES: Record<Page, string> = {
   conta: "Minha conta",
   voz: "Voz e vídeo",
   sons: "Sons",
+  mensagens: "Mensagens",
   discord: "Status no Discord",
   aparencia: "Aparência",
   windows: "Configurações do Windows",
   desempenho: "Desempenho",
+  armazenamento: "Armazenamento",
 };
 
 /**
@@ -154,10 +174,12 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
                 {page === "conta" && <AccountSection />}
                 {page === "voz" && <VoiceSection />}
                 {page === "sons" && <SoundsSection />}
+                {page === "mensagens" && <MessagesSection />}
                 {page === "discord" && <PresenceSection />}
                 {page === "aparencia" && <AppearanceSection />}
                 {page === "windows" && <WindowsSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
+                {page === "armazenamento" && <StorageSection />}
               </div>
             </ScrollArea>
           </div>
@@ -171,6 +193,8 @@ function Sidebar(props: { page: Page; part: string | null; onPage: (p: Page, par
   const profile = useAccountStore((s) => s.profile);
   const logout = useAccountStore((s) => s.logout);
   const [query, setQuery] = useState("");
+  // Subitens da seção aberta recolhidos pelo usuário.
+  const [collapsed, setCollapsed] = useState(false);
   const name = profile ? displayName(profile) : "Você";
 
   const q = query.trim().toLocaleLowerCase("pt-BR");
@@ -225,12 +249,27 @@ function Sidebar(props: { page: Page; part: string | null; onPage: (p: Page, par
           <p className="px-2 pb-1 text-xs font-medium text-text-muted">{group.title}</p>
           {group.items.map((item) => {
             const active = props.page === item.id;
+            const expanded = active && !collapsed;
+            const current = item.parts
+              ? Math.max(
+                  0,
+                  item.parts.findIndex((pt) => pt.id === props.part),
+                )
+              : 0;
             return (
               <div key={item.id} className="mb-0.5">
                 <button
                   type="button"
                   aria-current={active ? "page" : undefined}
-                  onClick={() => props.onPage(item.id)}
+                  aria-expanded={item.parts ? expanded : undefined}
+                  onClick={() => {
+                    // Clicar de novo na seção aberta recolhe (ou reabre) os subitens.
+                    if (active && item.parts) setCollapsed((c) => !c);
+                    else {
+                      setCollapsed(false);
+                      props.onPage(item.id);
+                    }
+                  }}
                   className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-medium transition-colors ${
                     active ? "bg-surface-hover text-text" : "text-text-muted hover:bg-surface-hover/60 hover:text-text"
                   }`}
@@ -238,23 +277,41 @@ function Sidebar(props: { page: Page; part: string | null; onPage: (p: Page, par
                   {item.icon}
                   {item.label}
                 </button>
-                {active && item.parts && (
-                  <div className="my-1 ml-[17px] flex flex-col border-l border-white/10">
-                    {item.parts.map((pt, i) => {
-                      const on = props.part ? props.part === pt.id : i === 0;
-                      return (
-                        <button
-                          key={pt.id}
-                          type="button"
-                          onClick={() => props.onPage(item.id, pt.id)}
-                          className={`-ml-px border-l-2 py-1 pl-4 text-left text-sm transition-colors ${
-                            on ? "border-text text-text" : "border-transparent text-text-muted hover:text-text"
-                          }`}
-                        >
-                          {pt.label}
-                        </button>
-                      );
-                    })}
+                {item.parts && (
+                  // A altura anima de 0 até o conteúdo (grid 0fr → 1fr), abrindo e fechando.
+                  <div
+                    aria-hidden={!expanded}
+                    inert={!expanded}
+                    className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                      expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="relative my-1 ml-[17px] flex flex-col border-l border-white/10">
+                        {/* A barra desliza até o subitem escolhido (todos têm a mesma altura). */}
+                        <span
+                          aria-hidden
+                          className="absolute top-0 -left-px w-0.5 bg-text transition-transform duration-200 ease-out"
+                          style={{
+                            height: `${100 / item.parts.length}%`,
+                            transform: `translateY(${current * 100}%)`,
+                          }}
+                        />
+                        {item.parts.map((pt, i) => (
+                          <button
+                            key={pt.id}
+                            type="button"
+                            aria-current={active && i === current ? "location" : undefined}
+                            onClick={() => props.onPage(item.id, pt.id)}
+                            className={`py-1 pl-4 text-left text-sm transition-colors ${
+                              i === current ? "text-text" : "text-text-muted hover:text-text"
+                            }`}
+                          >
+                            {pt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

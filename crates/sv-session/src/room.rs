@@ -14,7 +14,8 @@ use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
 use sv_net::{
-    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, VideoFrame, stun,
+    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, SpeakingEffect,
+    VideoFrame, stun,
 };
 use tokio::runtime::Runtime;
 
@@ -260,6 +261,7 @@ impl Room {
                     discord,
                     verified: false,
                     watching: None,
+                    effect: None,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -424,6 +426,18 @@ impl Room {
         self.inner.publish_members();
     }
 
+    /// Troca o nosso efeito de fala (`None`: o anel padrão): a sala inteira passa a vê-lo.
+    pub fn set_effect(&self, effect: Option<SpeakingEffect>) {
+        let mut me = lock(&self.inner.me);
+        if me.effect == effect {
+            return;
+        }
+        me.effect = effect;
+        drop(me);
+        self.inner.send_status();
+        self.inner.publish_members();
+    }
+
     /// Começamos (`Some`) ou paramos (`None`) de assistir alguém: a sala fica sabendo, para quem
     /// transmite ver quantos e quem assistem (inclusive quem recebe repassado por outro membro).
     pub fn set_watching(&self, member_id: Option<&str>) {
@@ -459,10 +473,16 @@ impl Drop for Room {
 }
 
 impl Inner {
-    /// Manda para a sala o nosso estado (ao vivo, mudo, surdo).
+    /// Manda para a sala o nosso estado (ao vivo, mudo, surdo, quem assistimos e o efeito de fala).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
-        lock(&self.client).set_status(me.live, me.muted, me.deafened, me.watching.as_deref());
+        lock(&self.client).set_status(
+            me.live,
+            me.muted,
+            me.deafened,
+            me.watching.as_deref(),
+            me.effect.as_ref(),
+        );
     }
 
     /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
@@ -510,6 +530,7 @@ impl Inner {
             discord: None,
             verified: false,
             watching: None,
+            effect: None,
         })
     }
 
@@ -991,6 +1012,7 @@ mod tests {
             discord: None,
             verified: false,
             watching: None,
+            effect: None,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![
             (RoomUpdate::Members(vec![member.clone()]), "Members(["),

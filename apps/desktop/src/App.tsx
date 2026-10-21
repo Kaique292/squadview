@@ -1,8 +1,14 @@
+import { ChatView } from "./dm/ChatView";
+import { DmSidebar } from "./dm/DmSidebar";
+import { useDmStore } from "./dm/dm-store";
 import { FriendNotices } from "./friends/FriendNotices";
 import { FriendsPage } from "./friends/FriendsPage";
 import { useFriendsStore } from "./friends/friends-store";
 import { RoomDialog } from "./room/RoomDialog";
 import { RoomSidebar, UserDock } from "./room/RoomSidebar";
+import { ServerHome } from "./servers/ServerHome";
+import { ServerSidebar } from "./servers/ServerSidebar";
+import { useServersStore } from "./servers/servers-store";
 import { ServerRail } from "./room/ServerRail";
 import { WatchView } from "./room/WatchView";
 import { roomTitle, useRoomStore } from "./room/room-store";
@@ -24,9 +30,13 @@ export function App() {
   const watching = useRoomStore((s) => s.watching);
   const code = useRoomStore((s) => s.code);
   const roomName = useRoomStore((s) => s.roomName);
-  // Amigos é a página inicial, como no Discord: fora de uma sala (sem assistir nem transmitir),
-  // é ela que aparece; dentro, abre pelo ícone do SquadView na barra de salas.
-  const friendsOpen = (useFriendsStore((s) => s.open) || (!code && !watching && !live)) && !fullscreen;
+  // O servidor aberto na lateral (pela barra de salas ou por entrar numa sala dele).
+  const server = useServersStore((s) => s.servers.find((x) => x.id === s.selected) ?? null);
+  // Amigos é a página inicial, como no Discord: fora de uma sala (sem assistir nem transmitir) e
+  // sem servidor aberto, é ela que aparece; dentro, abre pelo ícone do SquadView na barra de salas.
+  const friendsOpen = (useFriendsStore((s) => s.open) || (!code && !watching && !live && !server)) && !fullscreen;
+  // Na página de amigos, a conversa privada aberta (ADR 0017).
+  const chat = useDmStore((s) => s.open);
   usePresenceSync();
 
   return (
@@ -47,7 +57,15 @@ export function App() {
       {!fullscreen && (
         <div aria-hidden className="col-2 row-[2/4] rounded-tl-lg border-t border-l border-white/[0.06] bg-glass-1" />
       )}
-      <RoomSidebar hidden={fullscreen} className="col-2 row-2" />
+      {friendsOpen ? (
+        <DmSidebar className="col-2 row-2" />
+      ) : server ? (
+        <aside className={`${fullscreen ? "hidden" : "flex"} col-2 row-2 min-h-0 flex-col`}>
+          <ServerSidebar server={server} />
+        </aside>
+      ) : (
+        <RoomSidebar hidden={fullscreen} className="col-2 row-2" />
+      )}
       <UserDock hidden={fullscreen} className="col-[1/3] row-3" />
 
       <div
@@ -66,7 +84,13 @@ export function App() {
           }`}
         >
           {friendsOpen ? (
-            <FriendsPage />
+            chat ? (
+              <ChatView key={chat} friend={chat} />
+            ) : (
+              <FriendsPage />
+            )
+          ) : server && !code ? (
+            <ServerHome server={server} />
           ) : watching ? (
             <WatchView member={watching} />
           ) : live ? (

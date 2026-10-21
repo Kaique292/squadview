@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::json;
-use sv_session::{DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, WindowEvent};
+use sv_session::{DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, SpeakingEffect, WindowEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
@@ -12,6 +12,8 @@ use crate::preview::{self, FULLSCREEN_EVENT};
 
 /// Lista de membros (nós primeiro).
 pub const MEMBERS_EVENT: &str = "room-members";
+/// O picture in picture pediu para voltar ao app (`false`).
+pub const PIP_EVENT: &str = "video-pip";
 /// Estado da ligação com a sala: "reconnecting", "connected" (voltou) ou "lost" (saímos).
 pub const ROOM_CONNECTION_EVENT: &str = "room-connection";
 /// Nome da sala (texto, ou `null` sem nome) quando alguém renomeia.
@@ -94,6 +96,7 @@ pub async fn room_join<R: Runtime>(
     discord: Option<DiscordUser>,
     room_name: Option<String>,
     voice: Option<crate::voice::VoicePrefs>,
+    effect: Option<SpeakingEffect>,
 ) -> Result<RoomInfo, String> {
     let code = match code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         Some(c) => sv_net::signaling::normalize_room_code(c).ok_or("Código inválido: são 6 letras e números.")?,
@@ -126,6 +129,8 @@ pub async fn room_join<R: Runtime>(
                 joined.set_deafened(true);
             }
         }
+        // E com o efeito de fala escolhido nas configurações (ADR 0015).
+        joined.set_effect(effect.as_ref().and_then(clean_effect));
         Ok::<_, String>(joined)
     })
     .await
@@ -189,6 +194,21 @@ pub fn room_set_profile(state: State<'_, RoomState>, name: String, discord: Opti
         room.set_profile(&name, discord.and_then(clean_discord));
     }
     Ok(())
+}
+
+/// Trocou o efeito de fala nas configurações (`None`: o anel padrão): a sala inteira passa a vê-lo.
+#[tauri::command]
+pub fn room_set_effect(state: State<'_, RoomState>, effect: Option<SpeakingEffect>) -> Result<(), String> {
+    // Fora de uma sala não há o que avisar: o efeito vai junto ao entrar.
+    if let Some(room) = lock(&state).room.as_ref() {
+        room.set_effect(effect.as_ref().and_then(clean_effect));
+    }
+    Ok(())
+}
+
+/// Só os efeitos que conhecemos e com a cor no formato; o resto vira o anel padrão.
+fn clean_effect(effect: &SpeakingEffect) -> Option<SpeakingEffect> {
+    SpeakingEffect::cleaned(&effect.kind, &effect.color)
 }
 
 /// Entramos com o Discord já dentro da sala: a sala confere a sessão (vira conferido para os
@@ -292,6 +312,22 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
             Some(k) => room.stream_started(k),
             None => room.stream_stopped(),
         }
+    }
+}
+
+/// Solta o vídeo de quem estamos assistindo numa janela pequena, sempre no topo (picture in
+/// picture), ou devolve ao app.
+#[tauri::command]
+pub fn room_set_pip(state: State<'_, RoomState>, pip: bool) -> Result<(), String> {
+    let running = lock(&state);
+    match running.watching.as_ref() {
+        Some(w) => {
+            w.view.set_video_pip(pip);
+            Ok(())
+        }
+        // Voltar sem estar assistindo não tem o que fazer (o vídeo já fechou).
+        None if !pip => Ok(()),
+        None => Err("Assista a alguém primeiro.".to_owned()),
     }
 }
 
@@ -461,6 +497,11 @@ fn start_watching<R: Runtime>(
         let kind = match event {
             WindowEvent::ToggleFullscreen => "toggle",
             WindowEvent::ExitFullscreen => "exit",
+            // Dois cliques, Esc ou fechar no picture in picture: a interface traz o vídeo de volta.
+            WindowEvent::ExitPip => {
+                let _ = event_app.emit(PIP_EVENT, false);
+                return;
+            }
         };
         let _ = event_app.emit(FULLSCREEN_EVENT, kind);
     });
@@ -496,6 +537,7 @@ mod tests {
             name.into(),
             None,
             Some("Galera".into()),
+            None,
             None,
         ))
     }
@@ -541,8 +583,12 @@ mod tests {
         assert_eq!(room_set_name(state(), "Ana".into()).unwrap_err(), entre);
         assert_eq!(room_answer_join(state(), "aa".into(), true).unwrap_err(), entre);
         assert_eq!(room_watch(state(), "aa".into()).unwrap_err(), entre);
+        // Picture in picture sem estar assistindo: pedir avisa; voltar não faz nada.
+        assert_eq!(room_set_pip(state(), true).unwrap_err(), "Assista a alguém primeiro.");
+        assert!(room_set_pip(state(), false).is_ok());
         // Sem sala e sem ninguém assistido, não acontece nada (nem cai).
         assert!(room_set_profile(state(), "Ana".into(), None).is_ok());
+        assert!(room_set_effect(state(), None).is_ok());
         set_watch_listening(state(), false);
         set_watch_volume(state(), 1.5);
         assert!(tap(t.handle()).is_none());
@@ -605,6 +651,27 @@ mod tests {
         beto_members.wait("foto do Discord", |v| {
             v.as_array()
                 .is_some_and(|a| a.iter().any(|m| m["discord"]["id"] == "123456789012345678"))
+        });
+        // O efeito de fala escolhido chega ao outro; um inválido vira o anel padrão.
+        let ondas = SpeakingEffect {
+            kind: "waves".into(),
+            color: "#FF8800".into(),
+        };
+        room_set_effect(ana.app.state::<RoomState>(), Some(ondas)).unwrap();
+        beto_members.wait("efeito de fala", |v| {
+            v.as_array().is_some_and(|a| {
+                a.iter()
+                    .any(|m| m["name"] == "Ana" && m["effect"] == json!({"kind": "waves", "color": "#ff8800"}))
+            })
+        });
+        let invalido = SpeakingEffect {
+            kind: "fogo".into(),
+            color: "#ff8800".into(),
+        };
+        room_set_effect(ana.app.state::<RoomState>(), Some(invalido)).unwrap();
+        beto_members.wait("efeito padrão", |v| {
+            v.as_array()
+                .is_some_and(|a| a.iter().any(|m| m["name"] == "Ana" && m["effect"].is_null()))
         });
         // Responder um pedido que não existe não faz nada.
         room_answer_join(ana.app.state::<RoomState>(), "0000000000000000".into(), true).unwrap();

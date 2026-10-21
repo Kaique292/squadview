@@ -21,14 +21,14 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Cliente → servidor
 
-| Mensagem                                                       | Quando                                                                                                                                                                                                                                                            |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria).                                               |
-| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                                                                  |
-| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                                                                       |
-| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem). `watching` (opcional, `null` se faltar) é o id de quem estamos assistindo: quem transmite vê quantos e quem assistem. |
-| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                                                                        |
-| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                                                                        |
+| Mensagem                                                       | Quando                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"join","name":"Ana","protocol":1,"room":"Galera"}`    | Primeira mensagem. `name`: 1 a 32 caracteres, sem caracteres de controle (espaços nas pontas são removidos). `room` (opcional, mesmas regras): nome da sala, que só vale para quem entra na sala vazia (quem cria).                                                                                                                                                                                                                                                                                   |
+| `{"type":"room","name":"Squad"}`                               | Renomeia a sala (qualquer membro). Todos recebem `room-updated`.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `{"type":"rename","name":"K.A","discord":{...}}`               | Troca o próprio apelido e, se vier `discord`, a conta do Discord (`null`: desvinculou). Os outros recebem `member-updated`.                                                                                                                                                                                                                                                                                                                                                                           |
+| `{"type":"status","live":true,"muted":false,"deafened":false}` | Começou ou parou de transmitir, silenciou o microfone ou ensurdeceu (chat de voz). `muted` e `deafened` são opcionais (falsos se faltarem). `watching` (opcional, `null` se faltar) é o id de quem estamos assistindo: quem transmite vê quantos e quem assistem. `effect` (opcional) é o efeito de fala escolhido, `{"kind":"dots"\|"waves"\|"equalizer"\|"rays","color":"#rrggbb"}`; ausente, nulo, fora do formato ou desconhecido vira `null` (o anel padrão), sem derrubar a conexão (ADR 0015). |
+| `{"type":"signal","to":"<peerId>","payload":{...}}`            | Mensagem para um membro. `payload` precisa ser um objeto JSON de até 8 KB.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `{"type":"leave"}`                                             | Saída limpa. O servidor fecha a conexão com o código 1000.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ### Servidor → cliente
 
@@ -102,6 +102,46 @@ Registro → app:
 | `{"type":"invited","from":{...},"code":"B8RJ2Q","room":"Galera"}`        | Um amigo chamou para a sala                                                                                 |
 | `{"type":"session","session":"..."}`                                     | Sessão renovada                                                                                             |
 | `{"type":"error","code":"..."}`                                          | `invalid-message` (fecha, 4400), `rate-limited` (fecha, 4429), `unknown-person`, `too-many`, `not-in-room`  |
+
+### Servidores (ADR 0016)
+
+Pela mesma conexão `/me`. O registro confere quem pede e repassa ao Durable Object `Server`, que avisa o registro dos outros membros. Limites: 20 servidores por pessoa, 100 membros e 20 salas por servidor, 20 convites ativos (valem 7 dias), ícone em data URL `image/webp|png|jpeg` até 12 KB.
+
+App → registro:
+
+| Mensagem                                                       | O que faz                                                   |
+| -------------------------------------------------------------- | ----------------------------------------------------------- |
+| `{"type":"server-create","name":"Turma"}`                      | Cria o servidor (quem cria é o dono), já com a sala "Geral" |
+| `{"type":"server-join","invite":"<id 16 hex>.<segredo 12>"}`   | Entra pelo convite                                          |
+| `{"type":"server-action","server":"<id>","op":{"kind":"..."}}` | Pedido a um servidor nosso (abaixo)                         |
+
+`op`: `update` (`name` e/ou `icon`, `null` tira o ícone), `delete` (só o dono), `leave` (o dono não sai), `invite` (qualquer membro), `room-create` (`name`), `room-rename` (`room`, `name`), `room-delete` (`room`; a última sala fica), `kick` (`member`: administrador tira membros, só o dono tira administradores) e `role` (`member`, `role`: `admin` ou `member`, só o dono). Mexer no servidor (nome, ícone, salas) é do dono e dos administradores.
+
+Registro → app:
+
+| Mensagem                                                            | Quando                                                                                                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"servers","servers":[...]}`                                | Ao conectar: todos os nossos (`id`, `name`, `icon`, `rooms`, `members`)                                                          |
+| `{"type":"server","server":{...}}`                                  | Entramos, criamos ou alguém mudou um servidor nosso                                                                              |
+| `{"type":"server-removed","id":"..."}`                              | Saímos, fomos tirados ou o servidor foi apagado                                                                                  |
+| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta `squadview://servidor/<convite>`)                                                                    |
+| `{"type":"error","code":"..."}`                                     | `not-member`, `not-allowed`, `unknown-room`, `unknown-member`, `invite-invalid`, `server-full`, `too-many`, `owner-cannot-leave` |
+
+O Worker antigo não conhece essas mensagens e fecha a conexão de amigos (4400): publique o Worker antes do app.
+
+### Mensagens privadas (ADR 0017)
+
+O conteúdo das conversas vai direto entre os dois PCs (QUIC); o registro só repassa o sinal para eles se conectarem e não guarda nada.
+
+| Direção        | Mensagem                                                           | O que faz                                                                                 |
+| -------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| App → registro | `{"type":"dm-signal","to":"<discord id>","payload":{...}}`         | Repassa o sinal ao amigo (`payload` objeto, até 8 KB). Só entre amigos (`unknown-person`) |
+| Registro → app | `{"type":"dm-signal","from":"<discord id>","payload":{...}}`       | Chegou o sinal de um amigo, em todas as nossas conexões                                   |
+| Registro → app | `{"type":"dm-unreachable","id":"<discord id>"}`                    | O amigo não está online: a mensagem espera no nosso PC                                    |
+| App → registro | `{"type":"turn-request"}`                                          | Pede credenciais do repassador TURN para a conversa direta                                |
+| Registro → app | `{"type":"turn","urls":[...],"username":"...","credential":"..."}` | As credenciais (nada vem sem provedor configurado)                                        |
+
+Também precisam do Worker publicado antes do app.
 
 ## Erros
 

@@ -4,8 +4,9 @@ import { Select } from "../ui/Select";
 import { Switch } from "../ui/Switch";
 import { VolumeSlider } from "../voice/VoiceButtons";
 import { type AudioDevice, useVoiceStore } from "../voice/voice-store";
+import { SpeakingEffectSection } from "./SpeakingEffectSection";
 
-/** Voz: microfone, saída, volumes, nível e isolamento de voz (como "Voz e vídeo" do Discord). */
+/** Voz: microfone, saída, volumes, nível, isolamento de voz e o efeito de fala (como "Voz e vídeo" do Discord). */
 export function VoiceSection() {
   const { prefs, setPrefs, devices, loadDevices, level } = useVoiceStore();
   const speaking = useVoiceStore((s) => !!s.speaking.me);
@@ -91,6 +92,7 @@ export function VoiceSection() {
           Use fone de ouvido: com caixa de som, a galera pode ouvir o próprio eco (o cancelamento de eco chega numa
           próxima versão).
         </p>
+        <SpeakingEffectSection />
       </div>
     </section>
   );

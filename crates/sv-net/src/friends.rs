@@ -27,16 +27,110 @@ pub struct RoomStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum FriendAction {
-    Profile { name: String, avatar: Option<String> },
-    Status { room: Option<RoomStatus>, live: bool },
-    FriendRequest { id: String },
-    FriendAccept { id: String },
-    FriendDecline { id: String },
-    FriendCancel { id: String },
-    Unfriend { id: String },
-    SetDirect { id: String, direct: bool },
-    Join { id: String },
-    Invite { id: String },
+    Profile {
+        name: String,
+        avatar: Option<String>,
+    },
+    Status {
+        room: Option<RoomStatus>,
+        live: bool,
+    },
+    FriendRequest {
+        id: String,
+    },
+    FriendAccept {
+        id: String,
+    },
+    FriendDecline {
+        id: String,
+    },
+    FriendCancel {
+        id: String,
+    },
+    Unfriend {
+        id: String,
+    },
+    SetDirect {
+        id: String,
+        direct: bool,
+    },
+    Join {
+        id: String,
+    },
+    Invite {
+        id: String,
+    },
+    /// Cria um servidor (ADR 0016): quem cria é o dono.
+    ServerCreate {
+        name: String,
+    },
+    /// Entra num servidor pelo convite (`<id>.<segredo>`).
+    ServerJoin {
+        invite: String,
+    },
+    /// Um pedido a um servidor nosso.
+    ServerAction {
+        server: String,
+        op: ServerOp,
+    },
+    /// Sinal da conversa direta para o amigo `to` (ADR 0017); o conteúdo nunca vai por aqui.
+    DmSignal {
+        to: String,
+        payload: serde_json::Value,
+    },
+    /// Credenciais do repassador TURN para a conversa direta.
+    TurnRequest,
+}
+
+/// Pedido a um servidor. Espelha `ServerOp` do Worker (que confere de novo quem pode o quê).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ServerOp {
+    /// Nome e/ou ícone (data URL de 96 px; `Some(None)` tira o ícone).
+    Update {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
+        icon: Option<Option<String>>,
+    },
+    Delete,
+    Leave,
+    RoomCreate {
+        name: String,
+    },
+    RoomRename {
+        room: String,
+        name: String,
+    },
+    RoomDelete {
+        room: String,
+    },
+    Invite,
+    Kick {
+        member: String,
+    },
+    Role {
+        member: String,
+        role: ServerRole,
+    },
+}
+
+/// Campo presente (mesmo `null`) vira `Some`; ausente fica no `default` (`None`): assim "tirar o
+/// ícone" (`null`) não se confunde com "não mexer no ícone" (sem o campo).
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// Papel que o dono dá a um membro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerRole {
+    Admin,
+    Member,
 }
 
 /// O que chega do registro.
@@ -168,6 +262,64 @@ mod tests {
         let from_ui: FriendAction = serde_json::from_str(r#"{"type":"friend-request","id":"2"}"#).unwrap();
         assert_eq!(from_ui, FriendAction::FriendRequest { id: "2".into() });
         assert!(serde_json::from_str::<FriendAction>(r#"{"type":"outra"}"#).is_err());
+    }
+
+    #[test]
+    fn pedidos_de_servidor_seguem_o_contrato_do_worker() {
+        let json = |a: &FriendAction| serde_json::to_string(a).unwrap();
+        let action = |op| FriendAction::ServerAction {
+            server: "0123456789abcdef".into(),
+            op,
+        };
+        assert_eq!(
+            json(&FriendAction::ServerCreate { name: "Turma".into() }),
+            r#"{"type":"server-create","name":"Turma"}"#
+        );
+        assert_eq!(
+            json(&action(ServerOp::RoomCreate { name: "Jogos".into() })),
+            r#"{"type":"server-action","server":"0123456789abcdef","op":{"kind":"room-create","name":"Jogos"}}"#
+        );
+        assert_eq!(
+            json(&action(ServerOp::Role {
+                member: "1".into(),
+                role: ServerRole::Admin
+            })),
+            r#"{"type":"server-action","server":"0123456789abcdef","op":{"kind":"role","member":"1","role":"admin"}}"#
+        );
+        // Ícone: ausente não mexe, `null` tira, texto troca.
+        let update = |s: &str| serde_json::from_str::<ServerOp>(s).unwrap();
+        assert_eq!(
+            update(r#"{"kind":"update","name":"X"}"#),
+            ServerOp::Update {
+                name: Some("X".into()),
+                icon: None
+            }
+        );
+        assert_eq!(
+            update(r#"{"kind":"update","icon":null}"#),
+            ServerOp::Update {
+                name: None,
+                icon: Some(None)
+            }
+        );
+        let tirar = ServerOp::Update {
+            name: None,
+            icon: Some(None),
+        };
+        assert_eq!(
+            serde_json::to_string(&tirar).unwrap(),
+            r#"{"kind":"update","icon":null}"#
+        );
+        assert_eq!(
+            json(&FriendAction::DmSignal {
+                to: "1".into(),
+                payload: serde_json::json!({"kind": "dm-offer"})
+            }),
+            r#"{"type":"dm-signal","to":"1","payload":{"kind":"dm-offer"}}"#
+        );
+        assert_eq!(json(&FriendAction::TurnRequest), r#"{"type":"turn-request"}"#);
+        // Papel de dono não existe para dar a ninguém.
+        assert!(serde_json::from_str::<ServerOp>(r#"{"kind":"role","member":"1","role":"owner"}"#).is_err());
     }
 
     #[test]

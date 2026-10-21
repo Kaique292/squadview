@@ -191,6 +191,7 @@ pub fn stop<R: Runtime>(app: &AppHandle<R>) {
         task.abort();
     }
     drop(client);
+    crate::dm::stop(app);
     set_status(app, Status::SignedOut);
 }
 
@@ -210,8 +211,11 @@ async fn run<R: Runtime>(app: AppHandle<R>) {
                 set_status(&app, Status::Online);
                 while let Some(event) = events.recv().await {
                     match event {
+                        // O sinal das conversas vai para o motor delas, não para a interface.
                         FriendsEvent::Message(value) => {
-                            let _ = app.emit(FRIENDS_EVENT, value);
+                            if !crate::dm::on_registry_message(&app, &value) {
+                                let _ = app.emit(FRIENDS_EVENT, value);
+                            }
                         }
                         FriendsEvent::Session(fresh) => save_session(&app, Some(&fresh)),
                         FriendsEvent::Disconnected => break,
@@ -232,6 +236,13 @@ async fn run<R: Runtime>(app: AppHandle<R>) {
         attempt += 1;
         tokio::time::sleep(Duration::from_secs(delay)).await;
     }
+}
+
+/// Manda uma ação pelo registro (as conversas usam para o sinal). `false` sem conexão agora.
+pub fn send_action<R: Runtime>(app: &AppHandle<R>, action: &FriendAction) -> bool {
+    let state = app.state::<Friends>();
+    let running = lock(&state);
+    running.client.as_ref().map(|c| c.send(action)).is_some()
 }
 
 /// Uma ação da interface (pedir amizade, entrar na sala de um amigo, avisar a sala atual...).

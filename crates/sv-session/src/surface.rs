@@ -15,14 +15,18 @@ pub(crate) struct Surface {
     pub hidden: bool,
     /// Onde a interface está por cima do vídeo agora (pixels físicos, relativos à janela do app).
     pub holes: Vec<Bounds>,
+    /// Solto da janela do app, pequeno e sempre no topo (picture in picture).
+    pub pip: bool,
     pub on_event: Option<OnWindowEvent>,
 }
 
 impl Surface {
     pub fn apply(&self) {
         if let Some(c) = &self.control {
+            // Primeiro o lugar dentro do app (fica guardado enquanto o vídeo está solto), depois o PiP.
             c.set_bounds(if self.hidden { Bounds::default() } else { self.bounds });
             c.set_holes(&local_holes(self.bounds, &self.holes));
+            c.set_pip(self.pip);
         }
     }
 }

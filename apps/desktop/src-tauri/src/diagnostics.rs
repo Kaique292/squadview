@@ -60,8 +60,14 @@ impl Diagnostics {
         }
     }
 
-    fn dir(&self) -> Option<&Path> {
+    /// Pasta dos registros (a limpeza de armazenamento também usa).
+    pub(crate) fn dir(&self) -> Option<&Path> {
         self.paths.get().and_then(|p| p.dir.as_deref())
+    }
+
+    /// Arquivo do registro desta sessão, que a limpeza não pode apagar.
+    pub(crate) fn current(&self) -> Option<PathBuf> {
+        self.lock().as_ref().map(|l| l.path().to_path_buf())
     }
 
     fn settings(&self) -> Option<&Path> {

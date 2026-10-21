@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { avatarUrl, type DiscordProfile, displayName, useAccountStore } from "../account/account-store";
 import type { StreamStats } from "../stream/stream-store";
 import { toast } from "../ui/toast-store";
+import { useSpeakingEffectStore } from "../voice/speaking-effect";
 import { toRust, useVoiceStore } from "../voice/voice-store";
 
 /** Espelha `sv_net::Member`. */
@@ -21,6 +22,8 @@ export interface Member {
   verified?: boolean;
   /** Quem este membro está assistindo (id). Ausente em apps até o 0.4.0. */
   watching?: string | null;
+  /** Efeito de fala escolhido (ADR 0015). Ausente em apps até o 0.5.0; use `useMemberEffect`. */
+  effect?: unknown;
 }
 
 /** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */
@@ -164,6 +167,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         discord: discordOf(useAccountStore.getState().profile),
         roomName,
         voice,
+        effect: useSpeakingEffectStore.getState().effect,
       });
       saveName(name.trim());
       set({
@@ -368,5 +372,11 @@ export async function rejoinAfterUpdate() {
 /** Pega o convite guardado pelo Rust (se houver) e pede confirmação para entrar. */
 async function takePendingInvite() {
   const code = await invoke<string | null>("take_pending_invite").catch(() => null);
-  if (code) useRoomStore.getState().setInvite(code);
+  if (!code) return;
+  // Convite de servidor (`servidor:<convite>`): abre o "Entrar num servidor" já preenchido.
+  if (code.startsWith("servidor:")) useServerInviteStore.setState({ invite: code.slice("servidor:".length) });
+  else useRoomStore.getState().setInvite(code);
 }
+
+/** Convite de servidor recebido por link, esperando a pessoa confirmar. */
+export const useServerInviteStore = create<{ invite: string | null }>(() => ({ invite: null }));

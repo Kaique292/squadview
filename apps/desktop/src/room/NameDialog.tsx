@@ -9,6 +9,12 @@ interface NameDialogProps {
   label: string;
   initial: string;
   onSave: (name: string) => void;
+  /** Texto do botão (padrão: "Salvar"). */
+  confirm?: string;
+  /** Botão vermelho (apagar algo). */
+  danger?: boolean;
+  /** Só libera o botão quando o texto passa (ex.: digitar o nome para apagar). */
+  canSave?: (name: string) => boolean;
 }
 
 /** Modal com um campo só, para dar nome a algo (a sala, o nosso apelido). Até 32 caracteres. */
@@ -26,9 +32,11 @@ export function NameDialog(props: NameDialogProps) {
           <button
             type="submit"
             form="name-form"
-            className="rounded-md bg-brand px-5 py-2 text-sm font-semibold transition-colors hover:bg-brand-hover disabled:opacity-50"
+            className={`rounded-md px-5 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${
+              props.danger ? "bg-live text-white hover:bg-live/85" : "bg-brand hover:bg-brand-hover"
+            }`}
           >
-            Salvar
+            {props.confirm ?? "Salvar"}
           </button>
         </>
       }
@@ -45,7 +53,7 @@ function NameForm(props: NameDialogProps) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!clean) return;
+    if (!clean || (props.canSave && !props.canSave(clean))) return;
     if (clean !== props.initial) props.onSave(clean);
     props.onOpenChange(false);
   }

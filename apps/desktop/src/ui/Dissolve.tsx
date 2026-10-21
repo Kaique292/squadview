@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
 import {
   DUST_MS,
-  GLOW_MS,
+  GRAIN,
   HOLD_MS,
-  MARGIN,
   type Rect,
+  canvasBox,
   fitInside,
   gridStep,
+  imageAlpha,
   makeParticles,
   particleAt,
   useDissolveStore,
@@ -39,17 +40,20 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
     image.onerror = () => done(id);
     image.onload = () => {
       if (cancelled) return;
+      // Tudo é desenhado em pixels físicos e inteiros, para a foto não ser reamostrada (borrada)
+      // com a escala do Windows (125%, 150%).
       const dpr = window.devicePixelRatio || 1;
-      el.width = Math.round((rect.width + MARGIN) * dpr);
-      el.height = Math.round((rect.height + MARGIN) * dpr);
+      const { margin, pixelWidth, pixelHeight } = canvasBox(rect, dpr);
+      el.width = pixelWidth;
+      el.height = pixelHeight;
 
       // A foto ocupa a área do vídeo do mesmo jeito que o vídeo nativo: inteira, centralizada.
       const area = fitInside(image.naturalWidth, image.naturalHeight, rect.width, rect.height);
-      const w = Math.max(1, Math.round(area.width));
-      const h = Math.max(1, Math.round(area.height));
-      const ox = area.x;
+      const w = Math.max(1, Math.round(area.width * dpr));
+      const h = Math.max(1, Math.round(area.height * dpr));
+      const ox = Math.round(area.x * dpr);
       // Em cima fica a margem livre para a poeira voar.
-      const oy = MARGIN + area.y;
+      const oy = margin + Math.round(area.y * dpr);
 
       // Pixels da foto no tamanho em que ela aparece, para tirar a cor de cada partícula.
       const sample = document.createElement("canvas");
@@ -61,12 +65,11 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
       const step = gridStep(w, h);
       const particles = makeParticles(sctx.getImageData(0, 0, w, h).data, w, h, step);
 
-      ctx.scale(dpr, dpr);
       const start = performance.now();
       const draw = (now: number) => {
         if (cancelled) return;
         const elapsed = now - start - HOLD_MS;
-        ctx.clearRect(0, 0, rect.width + MARGIN, rect.height + MARGIN);
+        ctx.clearRect(0, 0, el.width, el.height);
         ctx.globalAlpha = 1;
         if (elapsed < 0) {
           // Parada, igual ao último quadro: quando o vídeo nativo fechar, a troca não aparece.
@@ -74,34 +77,29 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
           frame = requestAnimationFrame(draw);
           return;
         }
-        if (elapsed < GLOW_MS) {
-          // Brilho: a imagem inteira, um pouco mais clara, com a borda acesa.
-          const k = Math.sin((elapsed / GLOW_MS) * Math.PI);
-          ctx.filter = `brightness(${1 + 0.25 * k})`;
+        const t = elapsed / DUST_MS;
+        if (t >= 1) return done(id);
+        // A imagem inteira escurece e some suave enquanto a poeira se solta dela (sem buracos em
+        // blocos nem moldura, que pareciam pixels bugados e um print da tela).
+        const fade = imageAlpha(t);
+        if (fade > 0) {
+          ctx.globalAlpha = fade;
+          ctx.filter = `brightness(${0.6 + 0.4 * fade})`;
           ctx.drawImage(image, ox, oy, w, h);
           ctx.filter = "none";
-          ctx.strokeStyle = `rgba(255,255,255,${0.75 * k})`;
-          ctx.lineWidth = 3;
-          ctx.strokeRect(ox + 1.5, oy + 1.5, w - 3, h - 3);
-          frame = requestAnimationFrame(draw);
-          return;
         }
-        const t = (elapsed - GLOW_MS) / DUST_MS;
-        if (t >= 1) return done(id);
-        // O que ainda não voou continua nítido: desenha a foto e apaga os blocos que já saíram.
-        ctx.drawImage(image, ox, oy, w, h);
-        for (const p of particles) {
-          if (particleAt(p, t) !== "waiting") ctx.clearRect(ox + p.x, oy + p.y, step, step);
-        }
-        // A poeira mantém a cor da imagem, como no iOS.
+        // Grãos finos com as cores da imagem, somando luz onde se juntam (o brilho da poeira do
+        // iOS). O voo é em px da interface.
+        const grain = GRAIN * dpr;
+        ctx.globalCompositeOperation = "lighter";
         for (const p of particles) {
           const s = particleAt(p, t);
           if (typeof s === "string") continue;
-          const size = step * s.scale;
           ctx.globalAlpha = s.alpha;
           ctx.fillStyle = p.color;
-          ctx.fillRect(ox + s.x, oy + s.y, size, size);
+          ctx.fillRect(ox + p.x + (s.x - p.x) * dpr, oy + p.y + (s.y - p.y) * dpr, grain, grain);
         }
+        ctx.globalCompositeOperation = "source-over";
         frame = requestAnimationFrame(draw);
       };
       frame = requestAnimationFrame(draw);
@@ -113,18 +111,14 @@ function DissolveCanvas(props: { id: number; src: string; rect: Rect }) {
     };
   }, [id, src, rect, done]);
 
+  const box = canvasBox(rect, window.devicePixelRatio || 1);
   return (
     <canvas
       ref={canvas}
       aria-hidden
       data-testid="animacao-de-saida"
       className="pointer-events-none fixed z-30"
-      style={{
-        left: rect.x,
-        top: rect.y - MARGIN,
-        width: rect.width + MARGIN,
-        height: rect.height + MARGIN,
-      }}
+      style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
     />
   );
 }

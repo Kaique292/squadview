@@ -89,6 +89,9 @@ interface StreamState {
   /** O stream ocupa a tela inteira (a janela do app em tela cheia, sem as barras laterais). */
   fullscreen: boolean;
   setFullscreen: (fullscreen: boolean) => Promise<void>;
+  /** O vídeo de quem assistimos está solto numa janela pequena, sempre no topo. */
+  pip: boolean;
+  setPip: (pip: boolean) => Promise<void>;
   stop: () => Promise<void>;
 }
 
@@ -141,6 +144,19 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       await invoke("set_fullscreen", { fullscreen });
     } catch {
       set({ fullscreen: !fullscreen });
+    }
+  },
+
+  pip: false,
+  async setPip(pip) {
+    if (get().pip === pip) return;
+    // Tela cheia e picture in picture não combinam: soltar o vídeo sai da tela cheia antes.
+    if (pip) await get().setFullscreen(false);
+    set({ pip });
+    try {
+      await invoke("room_set_pip", { pip });
+    } catch {
+      set({ pip: !pip });
     }
   },
 
@@ -199,6 +215,8 @@ export async function listenToStreamEvents() {
     const { fullscreen, setFullscreen } = useStreamStore.getState();
     void setFullscreen(e.payload === "toggle" ? !fullscreen : false);
   });
+  // Dois cliques, Esc ou fechar na janelinha do picture in picture: o vídeo volta para o app.
+  const unlistenPip = await listen<boolean>("video-pip", (e) => void useStreamStore.getState().setPip(e.payload));
   // Esc com o foco na interface também sai da tela cheia.
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && useStreamStore.getState().fullscreen) void useStreamStore.getState().setFullscreen(false);
@@ -219,6 +237,7 @@ export async function listenToStreamEvents() {
     unlistenExit();
     unlistenNotice();
     unlistenFullscreen();
+    unlistenPip();
     window.removeEventListener("keydown", onKey);
   };
 }

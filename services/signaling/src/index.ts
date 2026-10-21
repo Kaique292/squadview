@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { generateRoomCode } from "./room-code";
 import { type Attachment, type Connection, randomPeerId, RoomState, type VerifiedProfile } from "./room-state";
 import { bearer, route } from "./router";
+import { type ServerOp, type ServerResult, type ServerSnapshot, ServerState } from "./server-state";
 import { exchangeDiscordToken, type Profile, signSession, verifySession } from "./session";
 import { TurnCache, type TurnEnv, turnProvider } from "./turn";
 import {
@@ -16,6 +17,7 @@ import {
 interface Env extends TurnEnv {
   ROOMS: DurableObjectNamespace<Room>;
   USERS: DurableObjectNamespace<User>;
+  SERVERS: DurableObjectNamespace<Server>;
   /** Segredo das sessões (`wrangler secret put SESSION_SECRET`). Sem ele, só as salas funcionam. */
   SESSION_SECRET?: string;
 }
@@ -223,10 +225,82 @@ export class User extends DurableObject<Env> {
   onMet(other: Profile): void {
     this.state.onMet(other);
   }
+  onServerChanged(server: ServerSnapshot): void {
+    this.state.onServerChanged(server);
+  }
+  onServerRemoved(id: string): void {
+    this.state.onServerRemoved(id);
+  }
+  onDmSignal(from: string, payload: Record<string, unknown>): boolean {
+    return this.state.onDmSignal(from, payload);
+  }
+}
+
+/**
+ * Um servidor (ADR 0016): nome, ícone, membros, salas e convites. Só é chamado pelo registro de
+ * quem pede (que já conferiu a sessão) e avisa o registro dos outros membros quando algo muda.
+ */
+export class Server extends DurableObject<Env> {
+  private get state(): ServerState {
+    return new ServerState({
+      get: (key) => this.ctx.storage.kv.get(key),
+      put: (key, value) => this.ctx.storage.kv.put(key, value),
+      delete: (key) => void this.ctx.storage.kv.delete(key),
+    });
+  }
+
+  create(id: string, name: string, owner: Profile): ServerSnapshot {
+    return this.state.create(id, name, owner);
+  }
+
+  snapshot(): ServerSnapshot | null {
+    return this.state.snapshot();
+  }
+
+  act(actor: Profile, op: ServerOp): ServerResult {
+    const id = this.state.snapshot()?.id;
+    const result = this.state.act(actor, op);
+    if (result.ok && id) this.notify(id, actor.id, result.snapshot, result.removed);
+    return result;
+  }
+
+  refresh(profile: Profile): void {
+    const snapshot = this.state.snapshot();
+    if (snapshot && this.state.refreshProfile(profile)) this.notify(snapshot.id, profile.id, this.state.snapshot(), []);
+  }
+
+  /** Avisa os outros membros (quem pediu já recebe a resposta) sem segurar a resposta. */
+  private notify(id: string, except: string, snapshot: ServerSnapshot | null, removed: string[]): void {
+    for (const m of snapshot?.members ?? []) {
+      if (m.id !== except)
+        this.ctx.waitUntil(
+          user(this.env, m.id)
+            .onServerChanged(snapshot!)
+            .catch(() => {}),
+        );
+    }
+    for (const r of removed) {
+      if (r !== except)
+        this.ctx.waitUntil(
+          user(this.env, r)
+            .onServerRemoved(id)
+            .catch(() => {}),
+        );
+    }
+  }
 }
 
 function user(env: Env, id: string): DurableObjectStub<User> {
   return env.USERS.get(env.USERS.idFromName(id));
+}
+
+function server(env: Env, id: string): DurableObjectStub<Server> {
+  return env.SERVERS.get(env.SERVERS.idFromName(id));
+}
+
+/** Id de servidor: 16 hex sorteados. */
+function newServerId(): string {
+  return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** As chamadas de um registro para os outros e para as salas. */
@@ -241,6 +315,13 @@ function peers(env: Env): Peers {
     requestJoin: async (friend, from) => user(env, friend).onRequestJoin(from),
     invited: async (to, from, code, room) => user(env, to).onInvited(from, code, room),
     askRoom: async (code, from) => env.ROOMS.get(env.ROOMS.idFromName(code)).requestJoin(from),
+    newServerId,
+    serverCreate: async (id, name, owner) => server(env, id).create(id, name, owner),
+    serverAct: async (id, actor, op) => server(env, id).act(actor, op),
+    serverSnapshot: async (id) => server(env, id).snapshot(),
+    serverRefresh: async (id, profile) => server(env, id).refresh(profile),
+    dmSignal: async (to, from, payload) => user(env, to).onDmSignal(from, payload),
+    turn: async () => (await turnProvider(env)?.()) ?? null,
   };
 }
 

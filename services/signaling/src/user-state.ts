@@ -1,6 +1,23 @@
-import { byteLength, MAX_MESSAGE_BYTES, RATE_LIMIT_MESSAGES, RATE_LIMIT_WINDOW_MS } from "./protocol";
+import {
+  byteLength,
+  MAX_MESSAGE_BYTES,
+  MAX_SIGNAL_PAYLOAD_BYTES,
+  RATE_LIMIT_MESSAGES,
+  RATE_LIMIT_WINDOW_MS,
+} from "./protocol";
 import { isValidRoomCode } from "./room-code";
+import {
+  cleanIcon,
+  MAX_SERVERS_PER_USER,
+  ROOM_ID,
+  SERVER_ID,
+  type ServerError,
+  type ServerOp,
+  type ServerResult,
+  type ServerSnapshot,
+} from "./server-state";
 import { cleanAvatar, cleanProfileName, type Profile } from "./session";
+import type { TurnCredentials } from "./turn";
 
 /**
  * O registro de uma pessoa (ver docs/adr/0011-amigos-e-presenca.md): amigos, pedidos, recentes
@@ -47,7 +64,14 @@ export type UserClientMessage =
   | { type: "unfriend"; id: string }
   | { type: "set-direct"; id: string; direct: boolean }
   | { type: "join"; id: string }
-  | { type: "invite"; id: string };
+  | { type: "invite"; id: string }
+  // Servidores (ADR 0016): o registro confere quem pede e repassa ao servidor.
+  | { type: "server-create"; name: string }
+  | { type: "server-join"; invite: string }
+  | { type: "server-action"; server: string; op: ServerOp }
+  // Mensagens privadas (ADR 0017): só o sinal para os dois PCs se conectarem; o conteúdo vai direto.
+  | { type: "dm-signal"; to: string; payload: Record<string, unknown> }
+  | { type: "turn-request" };
 
 export interface UserSnapshot {
   me: Profile;
@@ -64,7 +88,24 @@ export type UserServerMessage =
   | { type: "invited"; from: Profile; code: string; room: string | null }
   /** Sessão renovada, mandada a cada conexão (o app guarda no lugar da antiga). */
   | { type: "session"; session: string }
-  | { type: "error"; code: "invalid-message" | "rate-limited" | "unknown-person" | "too-many" | "not-in-room" };
+  /** Todos os nossos servidores, ao conectar. */
+  | { type: "servers"; servers: ServerSnapshot[] }
+  /** Um servidor nosso mudou (ou entramos nele). */
+  | { type: "server"; server: ServerSnapshot }
+  /** Saímos, fomos tirados ou o servidor foi apagado. */
+  | { type: "server-removed"; id: string }
+  /** Convite criado: `<id do servidor>.<segredo>`. */
+  | { type: "server-invite"; server: string; invite: string }
+  /** Sinal de um amigo para conectar a conversa direto (ADR 0017). */
+  | { type: "dm-signal"; from: string; payload: Record<string, unknown> }
+  /** O amigo não está online agora: a mensagem espera no nosso PC. */
+  | { type: "dm-unreachable"; id: string }
+  /** Credenciais do repassador TURN, pedidas para a conversa direta. */
+  | ({ type: "turn" } & TurnCredentials)
+  | {
+      type: "error";
+      code: "invalid-message" | "rate-limited" | "unknown-person" | "too-many" | "not-in-room" | ServerError;
+    };
 
 export interface UserAttachment {
   status: { room: { code: string; name: string | null } | null; live: boolean };
@@ -98,9 +139,70 @@ export interface Peers {
   invited(to: string, from: Profile, code: string, room: string | null): Promise<void>;
   /** Pede à sala `code` para mostrar o pedido aos membros. `false` se a sala está vazia. */
   askRoom(code: string, from: Profile): Promise<boolean>;
+  /** Id novo para um servidor (16 hex). */
+  newServerId(): string;
+  serverCreate(server: string, name: string, owner: Profile): Promise<ServerSnapshot>;
+  /** Um pedido ao servidor; ele mesmo avisa os outros membros (não quem pediu). */
+  serverAct(server: string, actor: Profile, op: ServerOp): Promise<ServerResult>;
+  serverSnapshot(server: string): Promise<ServerSnapshot | null>;
+  /** Nome ou foto mudou: o servidor atualiza e avisa os outros. */
+  serverRefresh(server: string, profile: Profile): Promise<void>;
+  /** Entrega o sinal da conversa ao registro do amigo. `false` se ele não está online. */
+  dmSignal(to: string, from: string, payload: Record<string, unknown>): Promise<boolean>;
+  /** Credenciais do repassador TURN (`null` sem provedor configurado). */
+  turn(): Promise<TurnCredentials | null>;
 }
 
 const DISCORD_ID = /^[0-9]{15,21}$/;
+/** Convite de servidor: `<id do servidor>.<segredo>`. */
+const INVITE = /^([0-9a-f]{16})\.([A-Za-z0-9]{12})$/;
+
+/** Lê o pedido a um servidor que já existe (`null` se não seguir o contrato). */
+function parseServerOp(op: unknown): ServerOp | null {
+  if (!isPlainObject(op)) return null;
+  switch (op.kind) {
+    case "update": {
+      const out: { kind: "update"; name?: string; icon?: string | null } = { kind: "update" };
+      if (op.name !== undefined) {
+        const name = cleanProfileName(op.name);
+        if (name === null) return null;
+        out.name = name;
+      }
+      if (op.icon !== undefined) {
+        const icon = cleanIcon(op.icon);
+        if (icon === undefined) return null;
+        out.icon = icon;
+      }
+      return out.name === undefined && out.icon === undefined ? null : out;
+    }
+    case "delete":
+    case "leave":
+    case "invite":
+      return { kind: op.kind };
+    case "room-create": {
+      const name = cleanProfileName(op.name);
+      return name === null ? null : { kind: "room-create", name };
+    }
+    case "room-rename": {
+      const name = cleanProfileName(op.name);
+      return name === null || typeof op.room !== "string" || !ROOM_ID.test(op.room)
+        ? null
+        : { kind: "room-rename", room: op.room, name };
+    }
+    case "room-delete":
+      return typeof op.room === "string" && ROOM_ID.test(op.room) ? { kind: "room-delete", room: op.room } : null;
+    case "kick":
+      return typeof op.member === "string" && DISCORD_ID.test(op.member) ? { kind: "kick", member: op.member } : null;
+    case "role":
+      return typeof op.member === "string" &&
+        DISCORD_ID.test(op.member) &&
+        (op.role === "admin" || op.role === "member")
+        ? { kind: "role", member: op.member, role: op.role }
+        : null;
+    default:
+      return null;
+  }
+}
 const CLOSE_INVALID = 4400;
 const CLOSE_RATE = 4429;
 
@@ -142,6 +244,29 @@ export function parseUserMessage(raw: string): UserClientMessage | null {
       return typeof data.id === "string" && DISCORD_ID.test(data.id) && typeof data.direct === "boolean"
         ? { type: "set-direct", id: data.id, direct: data.direct }
         : null;
+    case "server-create": {
+      const name = cleanProfileName(data.name);
+      return name === null ? null : { type: "server-create", name };
+    }
+    case "server-join":
+      return typeof data.invite === "string" && INVITE.test(data.invite)
+        ? { type: "server-join", invite: data.invite }
+        : null;
+    case "server-action": {
+      if (typeof data.server !== "string" || !SERVER_ID.test(data.server)) return null;
+      const op = parseServerOp(data.op);
+      return op ? { type: "server-action", server: data.server, op } : null;
+    }
+    case "dm-signal":
+      // O mesmo limite do `signal` da sala: endereços e a impressão digital do certificado.
+      return typeof data.to === "string" &&
+        DISCORD_ID.test(data.to) &&
+        isPlainObject(data.payload) &&
+        byteLength(JSON.stringify(data.payload)) <= MAX_SIGNAL_PAYLOAD_BYTES
+        ? { type: "dm-signal", to: data.to, payload: data.payload }
+        : null;
+    case "turn-request":
+      return { type: "turn-request" };
     default:
       return null;
   }
@@ -176,6 +301,10 @@ export class UserState {
   private presences(): Record<string, Presence> {
     return this.store.get<Record<string, Presence>>("presence") ?? {};
   }
+  /** Ids dos nossos servidores, na ordem em que entramos. */
+  private servers(): string[] {
+    return this.store.get<string[]>("servers") ?? [];
+  }
 
   private update<T>(key: string, fallback: T, change: (value: T) => void): void {
     const value = this.store.get<T>(key) ?? fallback;
@@ -197,6 +326,7 @@ export class UserState {
       ids.forEach((id, i) => (p[id] = fresh[i]));
     });
     this.sendState(conn);
+    await this.sendServers(conn);
     if (first) await this.announce();
   }
 
@@ -217,8 +347,14 @@ export class UserState {
 
     switch (msg.type) {
       case "profile": {
-        this.store.put("profile", { id: this.id, name: msg.name, avatar: msg.avatar });
+        const before = this.profile();
+        const profile = { id: this.id, name: msg.name, avatar: msg.avatar };
+        this.store.put("profile", profile);
         this.sendStateToAll();
+        // Nome ou foto novos aparecem também nos servidores.
+        if (before.name !== profile.name || before.avatar !== profile.avatar) {
+          await Promise.all(this.servers().map((s) => this.peers.serverRefresh(s, profile).catch(() => {})));
+        }
         return;
       }
       case "status": {
@@ -270,6 +406,36 @@ export class UserState {
         const room = this.currentRoom();
         if (!room) return conn.send({ type: "error", code: "not-in-room" });
         await this.peers.invited(msg.id, this.profile(), room.code, room.name).catch(() => {});
+        return;
+      }
+      case "server-create": {
+        if (this.servers().length >= MAX_SERVERS_PER_USER) return conn.send({ type: "error", code: "too-many" });
+        const id = this.peers.newServerId();
+        const server = await this.peers.serverCreate(id, msg.name, this.profile()).catch(() => null);
+        if (!server) return conn.send({ type: "error", code: "not-allowed" });
+        this.update<string[]>("servers", [], (list) => list.push(id));
+        this.broadcast({ type: "server", server });
+        return;
+      }
+      case "server-join": {
+        const [, server, secret] = INVITE.exec(msg.invite)!;
+        if (!this.servers().includes(server) && this.servers().length >= MAX_SERVERS_PER_USER) {
+          return conn.send({ type: "error", code: "too-many" });
+        }
+        return this.serverAction(conn, server, { kind: "join", secret });
+      }
+      case "server-action":
+        return this.serverAction(conn, msg.server, msg.op);
+      case "dm-signal": {
+        // Só entre amigos: quem não é amigo nem descobre se a pessoa está online.
+        if (!this.friends()[msg.to]) return conn.send({ type: "error", code: "unknown-person" });
+        const delivered = await this.peers.dmSignal(msg.to, this.id, msg.payload).catch(() => false);
+        if (!delivered) conn.send({ type: "dm-unreachable", id: msg.to });
+        return;
+      }
+      case "turn-request": {
+        const turn = await this.peers.turn().catch(() => null);
+        if (turn) conn.send({ type: "turn", ...turn });
         return;
       }
     }
@@ -352,6 +518,32 @@ export class UserState {
     this.broadcast({ type: "invited", from, code, room });
   }
 
+  /** Um servidor nosso mudou (outro membro mexeu). Se não somos mais membros, sai da lista. */
+  onServerChanged(server: ServerSnapshot): void {
+    if (!server.members.some((m) => m.id === this.id)) return this.onServerRemoved(server.id);
+    this.update<string[]>("servers", [], (list) => {
+      if (!list.includes(server.id)) list.push(server.id);
+    });
+    this.broadcast({ type: "server", server });
+  }
+
+  /**
+   * Um amigo mandou o sinal da conversa direta. Vai para todas as nossas conexões (o app que
+   * estiver aberto responde). `false` se não somos amigos ou não estamos online.
+   */
+  onDmSignal(from: string, payload: Record<string, unknown>): boolean {
+    if (!this.friends()[from] || this.connections().length === 0) return false;
+    this.broadcast({ type: "dm-signal", from, payload });
+    return true;
+  }
+
+  /** Fomos tirados do servidor, ou ele foi apagado. */
+  onServerRemoved(id: string): void {
+    if (!this.servers().includes(id)) return;
+    this.update<string[]>("servers", [], (list) => list.splice(list.indexOf(id), 1));
+    this.broadcast({ type: "server-removed", id });
+  }
+
   /** Estivemos numa sala com `other` (os dois conferidos): entra nos recentes. */
   onMet(other: Profile): void {
     if (other.id === this.id) return;
@@ -369,6 +561,35 @@ export class UserState {
   }
 
   // --- Interno ----------------------------------------------------------------------------------
+
+  /** Repassa um pedido ao servidor e mostra o resultado em todas as nossas conexões. */
+  private async serverAction(conn: UserConnection, server: string, op: ServerOp): Promise<void> {
+    if (op.kind !== "join" && !this.servers().includes(server)) {
+      return conn.send({ type: "error", code: "not-member" });
+    }
+    const result = await this.peers
+      .serverAct(server, this.profile(), op)
+      .catch((): ServerResult => ({ ok: false, error: op.kind === "join" ? "invite-invalid" : "not-member" }));
+    if (!result.ok) return conn.send({ type: "error", code: result.error });
+    if (result.invite) conn.send({ type: "server-invite", server, invite: `${server}.${result.invite}` });
+    if (!result.snapshot || result.removed.includes(this.id)) return this.onServerRemoved(server);
+    this.onServerChanged(result.snapshot);
+  }
+
+  /** Manda todos os nossos servidores; os que acabaram (ou de onde saímos) saem da lista. */
+  private async sendServers(conn: UserConnection): Promise<void> {
+    const ids = this.servers();
+    // `undefined`: não deu para perguntar agora (fica na lista para a próxima conexão).
+    const found = await Promise.all(ids.map((id) => this.peers.serverSnapshot(id).catch(() => undefined)));
+    const mine = (s: ServerSnapshot | null | undefined) => !!s && s.members.some((m) => m.id === this.id);
+    const gone = new Set(ids.filter((_, i) => found[i] !== undefined && !mine(found[i])));
+    if (gone.size)
+      this.store.put(
+        "servers",
+        ids.filter((id) => !gone.has(id)),
+      );
+    conn.send({ type: "servers", servers: found.filter((s): s is ServerSnapshot => mine(s)) });
+  }
 
   private async sendFriendRequest(conn: UserConnection, id: string): Promise<void> {
     if (id === this.id || this.friends()[id]) return;

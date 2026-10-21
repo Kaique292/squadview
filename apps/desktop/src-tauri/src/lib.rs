@@ -3,11 +3,13 @@
 mod crash;
 mod diagnostics;
 mod discord;
+mod dm;
 mod friends;
 mod invite;
 mod presence;
 mod preview;
 mod room;
+mod storage;
 #[cfg(test)]
 mod test_support;
 mod tray;
@@ -88,6 +90,7 @@ fn manage_states<R: tauri::Runtime>(builder: tauri::Builder<R>, presence: presen
         .manage(room::RoomState::default())
         .manage(invite::PendingInvite::default())
         .manage(friends::Friends::default())
+        .manage(dm::Dms::default())
         .manage(tray::Tray::default())
         .manage(presence)
 }
@@ -123,6 +126,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Fechar a janela principal manda para a bandeja (se ligado em Configurações › Windows).
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -153,6 +157,18 @@ pub fn run() {
             discord::discord_login,
             discord::discord_profile,
             discord::discord_logout,
+            dm::dm_conversations,
+            dm::dm_messages,
+            dm::dm_online,
+            dm::dm_send_text,
+            dm::dm_send_file,
+            dm::dm_download,
+            dm::dm_clear,
+            dm::dm_preview,
+            dm::dm_open,
+            dm::dm_reveal,
+            dm::dm_pick_files,
+            dm::dm_pick_save,
             friends::friends_action,
             friends::friends_status,
             invite::take_pending_invite,
@@ -170,11 +186,15 @@ pub fn run() {
             room::room_rename,
             room::room_set_name,
             room::room_set_profile,
+            room::room_set_effect,
             room::room_answer_join,
             room::room_watch,
             room::room_stop_watching,
+            room::room_set_pip,
             room::set_watch_listening,
             room::set_watch_volume,
+            storage::storage_usage,
+            storage::storage_clear,
             voice::voice_devices,
             voice::voice_set_muted,
             voice::voice_set_deafened,

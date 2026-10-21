@@ -1,8 +1,9 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { Check, Loader2, LogIn, MoreVertical, UserPlus, Users, X } from "lucide-react";
+import { Check, Loader2, LogIn, MessageCircle, MoreVertical, UserPlus, Users, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, useAccountStore } from "../account/account-store";
+import { useDmStore } from "../dm/dm-store";
 import { useRoomStore } from "../room/room-store";
 import { Avatar } from "../ui/Avatar";
 import { holdOverlay, useOverlayMenu } from "../ui/overlay";
@@ -192,6 +193,7 @@ function FriendRow(props: { friend: Friend }) {
   const joinFriend = useFriendsStore((s) => s.joinFriend);
   const act = useFriendsStore((s) => s.act);
   const waitingFor = useFriendsStore((s) => s.waitingFor);
+  const openChat = useDmStore((s) => s.openChat);
   const p = friend.presence;
   const onMenuOpenChange = useOverlayMenu();
   return (
@@ -213,6 +215,9 @@ function FriendRow(props: { friend: Friend }) {
           </button>
         )
       )}
+      <RoundAction label="Mensagem" onClick={() => void openChat(friend.id)}>
+        <MessageCircle size={18} />
+      </RoundAction>
       {myRoom && p.online && (
         <RoundAction
           label={together ? "Já está na sua sala" : "Chamar para a sala"}

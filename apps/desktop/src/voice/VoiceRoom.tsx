@@ -19,6 +19,7 @@ import { StreamDialog } from "../stream/StreamDialog";
 import { Avatar, avatarColor } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
+import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { useVoiceStore } from "./voice-store";
 
@@ -186,30 +187,35 @@ export function VoiceRoom() {
           setinha da faixa de participantes): só os botões, e só quando aparecem. */}
       <nav
         aria-label="Controles da voz"
-        className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-3 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
           chrome ? "[&>*]:pointer-events-auto" : "translate-y-2"
         }`}
       >
-        <MicButton large />
-        <DeafenButton large />
-        <StreamDialog
-          trigger={
-            <ControlButton label="Transmitir minha tela">
-              <MonitorUp size={20} />
-            </ControlButton>
-          }
-        />
-        <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
-          <UserPlus size={20} />
-        </ControlButton>
+        {/* Grupos como a barra de chamada do Discord: áudio, depois tela e convite, e o desligar. */}
+        <ControlGroup label="Áudio">
+          <MicButton large />
+          <DeafenButton large />
+        </ControlGroup>
+        <ControlGroup label="Tela e convite">
+          <StreamDialog
+            trigger={
+              <ControlButton label="Transmitir minha tela">
+                <MonitorUp size={20} />
+              </ControlButton>
+            }
+          />
+          <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
+            <UserPlus size={20} />
+          </ControlButton>
+        </ControlGroup>
         <Tooltip label="Sair da sala" side="top">
           <button
             type="button"
             aria-label="Sair da sala"
             onClick={() => void leave()}
-            className="grid h-10 w-14 place-items-center rounded-md bg-live text-white transition-colors hover:bg-live/85"
+            className="grid h-12 w-16 place-items-center rounded-lg bg-live text-white transition-colors hover:bg-live/85"
           >
-            <PhoneOff size={20} />
+            <PhoneOff size={22} />
           </button>
         </Tooltip>
       </nav>
@@ -253,6 +259,7 @@ function Tile({
   ref?: Ref<HTMLDivElement>;
 } & HTMLAttributes<HTMLDivElement>) {
   const color = avatarColor(member.name);
+  const effect = useMemberEffect(member, isMe);
   const strip = variant === "strip";
   const shape = variant === "focus" ? "h-full w-full" : strip ? "aspect-video h-full" : "aspect-video w-full";
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -278,10 +285,15 @@ function Tile({
       className={`group relative flex ${shape} cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-brand ${
         speaking ? "border-online" : strip ? "border-transparent hover:border-surface-hover" : "border-transparent"
       }`}
-      // Fundo na cor do avatar, escurecido, como os quadros do Discord.
-      style={{ ...style, background: `color-mix(in srgb, ${color} 45%, var(--color-surface-float))` }}
+      style={{
+        ...style,
+        // Fundo na cor do avatar, escurecido, como os quadros do Discord.
+        background: `color-mix(in srgb, ${color} 45%, var(--color-surface-float))`,
+        // Falando com um efeito escolhido: a borda do quadro fica na cor dele.
+        ...(speaking && effect ? { borderColor: effect.color } : null),
+      }}
     >
-      <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} src={photo} />
+      <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} effect={effect} src={photo} />
 
       {member.live && (
         <span
@@ -323,6 +335,19 @@ function Tile({
   );
 }
 
+/** Uma caixa escura com bordas suaves que junta botões da barra da chamada. */
+function ControlGroup(props: { label: string; children: ReactNode }) {
+  return (
+    <div
+      role="group"
+      aria-label={props.label}
+      className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-surface-0 p-1 shadow-lg shadow-black/30"
+    >
+      {props.children}
+    </div>
+  );
+}
+
 function ControlButton(props: { label: string; onClick?: () => void; children: ReactNode }) {
   return (
     <Tooltip label={props.label} side="top">
@@ -330,7 +355,7 @@ function ControlButton(props: { label: string; onClick?: () => void; children: R
         type="button"
         aria-label={props.label}
         onClick={props.onClick}
-        className="grid size-10 place-items-center rounded-md bg-surface-3 text-text transition-colors hover:bg-surface-hover"
+        className="grid size-10 place-items-center rounded-md text-text transition-colors hover:bg-surface-hover"
       >
         {props.children}
       </button>

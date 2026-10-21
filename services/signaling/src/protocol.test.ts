@@ -87,6 +87,7 @@ describe("mensagens do cliente", () => {
       muted: false,
       deafened: false,
       watching: null,
+      effect: null,
     });
     expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
       type: "status",
@@ -94,6 +95,7 @@ describe("mensagens do cliente", () => {
       muted: true,
       deafened: true,
       watching: null,
+      effect: null,
     });
     // Quem estamos assistindo (para quem transmite ver quem assiste).
     expect(parseClientMessage(`{"type":"status","live":false,"watching":"${PEER}"}`)).toMatchObject({
@@ -123,6 +125,17 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();
+  });
+
+  it("lê o efeito de fala do status e troca o inválido ou desconhecido pelo anel padrão", () => {
+    const status = (effect: unknown) => parseClientMessage(JSON.stringify({ type: "status", live: false, effect }));
+    expect(status({ kind: "waves", color: "#FF8800" })).toMatchObject({ effect: { kind: "waves", color: "#ff8800" } });
+    expect(status(null)).toMatchObject({ effect: null });
+    // Um efeito de um app mais novo não derruba ninguém: vira o anel padrão.
+    expect(status({ kind: "fogo", color: "#ff8800" })).toMatchObject({ effect: null });
+    expect(status({ kind: "dots", color: "vermelho" })).toMatchObject({ effect: null });
+    expect(status({ kind: "dots", color: "#ff8800;background:url(x)" })).toMatchObject({ effect: null });
+    expect(status("dots")).toMatchObject({ effect: null });
   });
 
   it("recusa signal com destino inválido ou payload que não é objeto", () => {
