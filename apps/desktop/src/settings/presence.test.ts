@@ -1,4 +1,4 @@
-import { MAX_MEMBERS, presenceInfo } from "./presence-store";
+import { presenceInfo } from "./presence-store";
 
 const base = {
   show: true,
@@ -19,7 +19,6 @@ describe("status no Discord", () => {
   it("mostra a sala sem o botão de entrar por padrão", () => {
     expect(presenceInfo(base)).toEqual({
       members: 3,
-      maxMembers: MAX_MEMBERS,
       live: false,
       watching: null,
       joinedAtMs: 1000,

@@ -7,8 +7,6 @@ import { useStreamStore } from "../stream/stream-store";
 
 const SHOW_KEY = "squadview.presenca";
 const INVITE_KEY = "squadview.presenca.convite";
-/** Limite de membros da sala (igual ao da sinalização). */
-export const MAX_MEMBERS = 8;
 
 function read(key: string, fallback: boolean): boolean {
   try {
@@ -62,7 +60,6 @@ export function presenceInfo(s: {
   if (!s.show || !s.code) return null;
   return {
     members: s.members,
-    maxMembers: MAX_MEMBERS,
     live: s.live,
     watching: s.watching,
     joinedAtMs: s.joinedAt ?? Date.now(),

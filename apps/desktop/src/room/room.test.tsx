@@ -99,7 +99,7 @@ describe("criar e entrar em sala", () => {
   });
 
   it("mostra o erro da sala e continua com o modal aberto", async () => {
-    invoke.mockRejectedValue("A sala está cheia (máximo de 8 pessoas).");
+    invoke.mockRejectedValue("A sala está cheia.");
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
     await screen.findByRole("dialog");

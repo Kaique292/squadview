@@ -1,6 +1,6 @@
 //! Cenários da sala contra o Worker de sinalização local, sem GPU nem dispositivos de áudio:
 //! renomear, apelido, mudo e surdo, quem sai, pedidos para assistir recusados ou sem resposta,
-//! sinais que ninguém pediu, sala cheia e a volta automática depois de uma queda.
+//! sinais que ninguém pediu, sala sem limite de pessoas e a volta automática depois de uma queda.
 //!
 //! Cada cenário põe um `Room` de verdade numa sala com "amigos" feitos direto com o cliente da
 //! sinalização (`RoomClient`) e, quando precisa de vídeo, com um `Peer` QUIC no mesmo PC. Assim
@@ -620,15 +620,15 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
 }
 
 #[test]
-fn sala_cheia_nao_deixa_entrar() {
+fn sala_sem_limite_de_pessoas() {
     let Some(url) = worker() else { return };
     let rt = Runtime::new().unwrap();
     let code = new_room_code();
-    let _full: Vec<Friend> = (0..8)
+    let _crowd: Vec<Friend> = (0..12)
         .map(|i| friend(&rt, &url, &code, &format!("Amigo {i}")))
         .collect();
-    let err = Room::join(&url, &code, JoinAs::named("Ana"), None, None, |_| {}).unwrap_err();
-    assert_eq!(err, error_message("room-full"));
+    let ana = join(&url, &code, "Ana", None);
+    ana.members("os 13 na sala", |m| m.len() == 13);
 }
 
 /// Quem transmite não responde (saiu, caiu ou tem um app antigo): depois do prazo de 12 s,
@@ -746,31 +746,6 @@ fn sinalizacao_cai_e_a_sala_volta_sozinha() {
     ana.room.rename_room("De volta");
     beto.wait(&rt, "o nome dado depois da volta", |e| {
         matches!(e, RoomEvent::RoomRenamed(ref n) if n == "De volta").then_some(())
-    });
-}
-
-/// Caiu e, na volta, a sala encheu: não adianta insistir, a interface fica sabendo.
-#[test]
-fn sala_cheia_na_volta_desiste_e_avisa() {
-    let Some(url) = worker() else { return };
-    let rt = Runtime::new().unwrap();
-    let code = new_room_code();
-    let ana = join(&url, &code, "Ana", None);
-    let mut friends: Vec<Friend> = (0..7)
-        .map(|i| friend(&rt, &url, &code, &format!("Amigo {i}")))
-        .collect();
-    ana.members("a sala com 8", |m| m.len() == 8);
-
-    for i in 0..110 {
-        ana.room.set_deafened(i % 2 == 0);
-    }
-    ana.wait("o aviso do limite", |u| matches!(u, RoomUpdate::Error(_)).then_some(()));
-    // A vaga da Ana é ocupada antes de ela tentar voltar (a primeira tentativa é depois de 1 s).
-    friends.push(friend(&rt, &url, &code, "Caio"));
-    ana.wait("a desistência", |u| match u {
-        RoomUpdate::Disconnected => Some(()),
-        RoomUpdate::Reconnected => panic!("voltou para uma sala cheia"),
-        _ => None,
     });
 }
 

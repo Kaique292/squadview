@@ -266,7 +266,8 @@ impl RoomEvent {
 /// Mensagem amigável para os erros do Worker.
 pub fn error_message(code: &str) -> &'static str {
     match code {
-        "room-full" => "A sala está cheia (máximo de 8 pessoas).",
+        // Só de um Worker antigo: hoje a sala não tem limite de pessoas.
+        "room-full" => "A sala está cheia.",
         "version-mismatch" => "Alguém na sala está com outra versão do SquadView. Atualizem o app.",
         "rate-limited" => "Muitas mensagens em pouco tempo. Tente entrar de novo.",
         "unknown-peer" => "Esse membro já saiu da sala.",
@@ -679,7 +680,7 @@ mod tests {
 
     #[test]
     fn erros_tem_mensagem_para_o_usuario() {
-        assert!(error_message("room-full").contains("8"));
+        assert!(error_message("room-full").contains("cheia"));
         assert!(error_message("qualquer").contains("recusou"));
     }
 }

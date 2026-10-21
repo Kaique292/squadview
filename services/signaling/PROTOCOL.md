@@ -150,7 +150,7 @@ Também precisam do Worker publicado antes do app.
 | ------------------ | --------------------------------------------------------------------------------- | ---------------- |
 | `invalid-message`  | JSON fora do contrato, mensagem binária, mensagem bruta > 16 KB ou segundo `join` | Sim (4400)       |
 | `version-mismatch` | `protocol` diferente de 1                                                         | Sim (4426)       |
-| `room-full`        | A sala já tem 8 membros                                                           | Sim (4409)       |
+| `room-full`        | Não é mais mandado: a sala não tem limite de pessoas (os apps ainda entendem)     | Sim (4409)       |
 | `rate-limited`     | Mais de 100 mensagens em 10 s                                                     | Sim (4429)       |
 | `not-joined`       | Mensagem antes do `join`                                                          | Não              |
 | `unknown-peer`     | `signal` para alguém que não está na sala (ou para si mesmo)                      | Não              |
