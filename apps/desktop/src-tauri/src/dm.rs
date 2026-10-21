@@ -137,6 +137,14 @@ pub fn dm_messages<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<Vec<
     Ok(engine(&app)?.messages(&friend))
 }
 
+/// Tenta de novo mandar o que está pendente para o amigo (ele ficou online, ou a última tentativa
+/// não teve resposta). Devolve se tentou.
+#[tauri::command]
+pub fn dm_retry<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<bool, String> {
+    check_friend(&friend)?;
+    Ok(engine(&app)?.retry(&friend))
+}
+
 /// Se a conexão direta com o amigo está aberta.
 #[tauri::command]
 pub fn dm_online<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<bool, String> {
