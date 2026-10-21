@@ -83,6 +83,33 @@ describe("configurações: busca e navegação", () => {
     expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("voz-teste"));
   });
 
+  it("clicar de novo em Voz e vídeo recolhe e reabre os subitens", () => {
+    const nav = openSettings();
+    const voz = within(nav).getByRole("button", { name: "Voz e vídeo" });
+    expect(voz).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(voz);
+    expect(voz).toHaveAttribute("aria-expanded", "false");
+    expect(within(nav).queryByRole("button", { name: "Teste do microfone" })).not.toBeInTheDocument();
+    fireEvent.click(voz);
+    expect(within(nav).getByRole("button", { name: "Teste do microfone" })).toBeInTheDocument();
+  });
+
+  it("os subitens recolhem ao trocar de seção", () => {
+    const nav = openSettings();
+    fireEvent.click(within(nav).getByRole("button", { name: "Sons" }));
+    expect(within(nav).getByRole("button", { name: "Voz e vídeo" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(nav).queryByRole("button", { name: "Processamento de voz" })).not.toBeInTheDocument();
+  });
+
+  it("a barra do subitem desliza até o escolhido", () => {
+    const nav = openSettings();
+    const alvo = within(nav).getByRole("button", { name: "Processamento de voz" });
+    fireEvent.click(alvo);
+    expect(alvo).toHaveAttribute("aria-current", "location");
+    const barra = alvo.parentElement!.querySelector("span")!;
+    expect(barra.style.transform).toBe("translateY(200%)");
+  });
+
   it("abre a página de desempenho", async () => {
     invoke.mockImplementation((cmd: string) =>
       Promise.resolve(cmd === "diagnostics_status" ? { enabled: false, files: 0 } : undefined),
