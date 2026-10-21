@@ -68,6 +68,9 @@
   --animate-modal-in: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-modal-out: modal-out 140ms ease-in forwards;
   --animate-step-in: step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Conteúdo das abas: o que sai some rápido para um lado, o novo entra pelo outro. */
+  --animate-tab-out: tab-out 120ms ease-in forwards;
+  --animate-tab-in: tab-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Quadro da voz entrando em foco (ou a grade voltando). */
   --animate-focus-in: focus-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Menus e dicas: aparecem crescendo um pouco a partir do ponto de origem. */
@@ -145,6 +148,19 @@
     from {
       opacity: 0;
       transform: translateX(16px);
+    }
+  }
+  /* `--tab-direction`: 1 indo para uma aba à direita, -1 para uma à esquerda. */
+  @keyframes tab-out {
+    to {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * -12px));
+    }
+  }
+  @keyframes tab-in {
+    from {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * 16px));
     }
   }
 }

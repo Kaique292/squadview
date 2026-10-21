@@ -55,6 +55,8 @@ async function openSettings(tab: string) {
   fireEvent.click(within(await screen.findByRole("menu")).getByText("Configurações do servidor"));
   const dialog = await screen.findByRole("dialog", { name: "Configurações de Turma" });
   fireEvent.click(within(dialog).getByRole("tab", { name: tab }));
+  // O conteúdo da aba troca com animação: espera a aba escolhida aparecer.
+  await waitFor(() => expect(within(dialog).getByRole("tabpanel")).not.toHaveAttribute("data-leaving"));
   return dialog;
 }
 
@@ -145,7 +147,7 @@ describe("servidores: mais casos", () => {
     );
 
     fireEvent.click(within(dialog).getByRole("tab", { name: "Salas" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Renomear Ranked" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Renomear Ranked" }));
     const sala = await screen.findByRole("dialog", { name: "Nome da sala" });
     fireEvent.change(within(sala).getByRole("textbox"), { target: { value: "Casual" } });
     fireEvent.click(within(sala).getByRole("button", { name: "Salvar" }));
