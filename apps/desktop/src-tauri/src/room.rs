@@ -365,6 +365,9 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         RoomUpdate::VoicePeers(peers) => {
             let _ = app.emit(crate::voice::PEERS_EVENT, peers);
         }
+        RoomUpdate::VoiceBridges(bridges) => {
+            let _ = app.emit(crate::voice::BRIDGES_EVENT, bridges);
+        }
         RoomUpdate::VoiceFailed { member_id, reason } => {
             app.state::<Diagnostics>()
                 .write("voice-failed", &json!({ "reason": reason }));

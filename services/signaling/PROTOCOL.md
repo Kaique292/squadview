@@ -69,6 +69,7 @@ Desde a 0.5.0 ([ADR 0014](../../docs/adr/0014-conexao-em-camadas.md)), para quem
 
 - `{"type":"turn","urls":["turn:turn.cloudflare.com:3478?transport=udp",...],"username":"...","credential":"..."}` (servidor → quem acabou de entrar): credenciais do repassador TURN. Só vai se o Worker tiver um provedor configurado (Cloudflare, Metered ou servidor fixo; ver `wrangler.toml`). Apps antigos ignoram.
 - Sinal `relay-request` (entre apps, pelo `signal`): quem não alcança quem transmite pede a um membro que já assiste para repassar. A resposta é um `watch-accept` ou `watch-deny` normal.
+- Sinais da voz repassada ([ADR 0020](../../docs/adr/0020-voz-repassada-pela-sala.md)), entre apps: `voice-relay-request { to }` pede a quem já fala com os dois para repassar a voz com `to`; a resposta é `voice-relay-accept { to }` ou `voice-relay-deny { to, reason }`; quem pediu manda à outra ponta `voice-relay-key { via, key }` com a chave do par (hex). O Worker não olha nenhum deles.
 - Nos sinais, `watch-accept` e `voice-answer` ganham o campo opcional `relay` (`"ip:porta"`): o endereço que quem aceita pegou emprestado no repassador. Quem conecta tenta os `candidates` e, se não fechar em 1,5 s, também o `relay`. O Worker não olha os sinais; o campo é só entre os apps.
 
 ## Amigos e presença

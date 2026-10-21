@@ -14,6 +14,8 @@ pub const SPEAKING_EVENT: &str = "voice-speaking";
 pub const LEVEL_EVENT: &str = "voice-level";
 /// Com quem a voz está ligada.
 pub const PEERS_EVENT: &str = "voice-peers";
+/// Com quem a voz passa por outro membro da sala (ADR 0020): membro -> quem repassa.
+pub const BRIDGES_EVENT: &str = "voice-bridges";
 /// Falha de microfone ou de saída.
 pub const ERROR_EVENT: &str = "voice-error";
 /// Não deu para ligar a voz com alguém.

@@ -76,6 +76,8 @@ interface VoiceState {
   speaking: Record<string, boolean>;
   /** Com quem a voz está ligada (ids). */
   connected: string[];
+  /** Com quem a voz passa por outro membro (ADR 0020): id → id de quem repassa. */
+  bridges: Record<string, string>;
   /** Nível do microfone (0 a 1). */
   level: number;
   devices: { inputs: AudioDevice[]; outputs: AudioDevice[] };
@@ -93,6 +95,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   peers: load<Record<string, PeerPrefs>>(PEERS_KEY, {}),
   speaking: {},
   connected: [],
+  bridges: {},
   level: 0,
   devices: { inputs: [], outputs: [] },
 
@@ -174,6 +177,7 @@ export async function listenToVoiceEvents(nameOf: (id: string) => string | undef
         if (saved?.muted) void invoke("voice_set_peer_muted", { memberId: id, muted: true });
       }
     }),
+    listen<Record<string, string>>("voice-bridges", (e) => useVoiceStore.setState({ bridges: e.payload })),
     listen<string>("voice-error", (e) => toast.warning(e.payload, "Voz")),
     listen<{ memberId: string; reason: string }>("voice-failed", (e) => {
       const name = nameOf(e.payload.memberId) ?? "um amigo";

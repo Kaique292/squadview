@@ -14,10 +14,14 @@ use std::time::{Duration, Instant};
 
 use sv_encode::EncodedFrame;
 use sv_gpu::Size;
-use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
+use sv_net::protocol::{
+    FrameHeader, RelayKey, Relayed, Signal, StreamDescription, decode_relayed, encode_audio, encode_relayed, relay_peer,
+};
 use sv_net::signaling::{error_message, new_room_code};
 use sv_net::{Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, VideoFrame};
-use sv_session::{AudioPacket, JoinAs, KeyframeHandle, Member, RelaySource, Room, RoomUpdate, StreamInfo, WatchPath};
+use sv_session::{
+    AudioPacket, JoinAs, KeyframeHandle, Member, RelaySource, Room, RoomUpdate, StreamInfo, VoiceSettings, WatchPath,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -849,4 +853,304 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
     });
     let first = got.recv_timeout(WAIT).expect("o frame repassado não chegou");
     assert!(matches!(first, Got::Video(5)));
+}
+
+// --- Voz repassada por um membro da sala (ADR 0020) ---
+
+/// A Ana entra com voz (o motor liga mesmo sem microfone nem saída: a falha vira só um aviso).
+/// Entra de novo até pegar um id baixo: quem tem o id menor chama na voz, e os cenários precisam
+/// que seja a Ana a chamar o Beto.
+fn join_with_voice(url: &str, code: &str) -> (Someone, String) {
+    for _ in 0..64 {
+        let (tx, updates) = mpsc::channel();
+        let room = Room::join(
+            url,
+            code,
+            JoinAs::named("Ana"),
+            None,
+            Some(VoiceSettings::default()),
+            move |u| {
+                let _ = tx.send(u);
+            },
+        )
+        .expect("a Ana entra");
+        assert!(room.voice().is_some(), "a voz da Ana não ligou");
+        let ana = Someone { room, updates };
+        let id = ana.members("a Ana", |m| !m.is_empty())[0].id.clone();
+        if id.as_str() < "4" {
+            return (ana, id);
+        }
+    }
+    panic!("a Ana não pegou um id baixo");
+}
+
+/// Amigos até ter um com id maior que o da Ana (é a Ana que chama esse para a voz) e outro.
+fn two_friends(rt: &Runtime, url: &str, code: &str, ana_id: &str) -> (Friend, Friend) {
+    let (mut higher, mut other) = (None, None);
+    for i in 0..7 {
+        let f = friend(rt, url, code, &format!("Amigo {i}"));
+        if higher.is_none() && f.id.as_str() > ana_id {
+            higher = Some(f);
+        } else if other.is_none() {
+            other = Some(f);
+        }
+        if higher.is_some() && other.is_some() {
+            break;
+        }
+    }
+    (higher.expect("um amigo com id maior"), other.expect("outro amigo"))
+}
+
+/// Liga a voz entre a Ana e `friend` (quem tem o id menor chama, como no app). Devolve a conexão
+/// do lado do amigo e a fingerprint da Ana.
+fn voice_with_ana(rt: &Runtime, ana_id: &str, friend: &mut Friend, peer: &Peer) -> (quinn::Connection, String) {
+    if ana_id < friend.id.as_str() {
+        let Signal::VoiceOffer { fingerprint, .. } = friend.signal_from(rt, ana_id) else {
+            panic!("a Ana devia chamar para a voz")
+        };
+        peer.allowed().allow(&fingerprint);
+        friend.client.signal(
+            ana_id,
+            &Signal::VoiceAnswer {
+                candidates: peer.candidates().to_vec(),
+                fingerprint: peer.fingerprint().to_owned(),
+                relay: None,
+            },
+        );
+        let accepted = rt
+            .block_on(async { tokio::time::timeout(WAIT, peer.accept()).await })
+            .expect("a Ana conectou")
+            .expect("conexão");
+        assert_eq!(accepted.purpose, Purpose::Voice);
+        (accepted.conn, fingerprint)
+    } else {
+        friend.client.signal(
+            ana_id,
+            &Signal::VoiceOffer {
+                candidates: peer.candidates().to_vec(),
+                fingerprint: peer.fingerprint().to_owned(),
+            },
+        );
+        let Signal::VoiceAnswer {
+            candidates,
+            fingerprint,
+            ..
+        } = friend.signal_from(rt, ana_id)
+        else {
+            panic!("a Ana devia atender a voz")
+        };
+        // Como no app: quem chama autoriza quem atendeu (a conexão de repasse vem depois).
+        peer.allowed().allow(&fingerprint);
+        let conn = rt
+            .block_on(peer.connect_for(&candidates, None, &fingerprint, Purpose::Voice))
+            .expect("conectar na Ana");
+        (conn, fingerprint)
+    }
+}
+
+/// Espera a Ana ver a voz ligada com todos de `ids`.
+fn ana_talks_to(ana: &Someone, ids: &[&str]) {
+    ana.wait("a voz da Ana ligada", |u| match u {
+        RoomUpdate::VoicePeers(p) if ids.iter().all(|id| p.iter().any(|x| x == id)) => Some(()),
+        _ => None,
+    });
+}
+
+/// O Beto (id maior que o da Ana) não deixa a voz direta abrir: responde sem endereço nenhum.
+fn beto_unreachable(rt: &Runtime, ana_id: &str, beto: &mut Friend) {
+    let Signal::VoiceOffer { .. } = beto.signal_from(rt, ana_id) else {
+        panic!("a Ana devia chamar o Beto para a voz")
+    };
+    beto.client.signal(
+        ana_id,
+        &Signal::VoiceAnswer {
+            candidates: Vec::new(),
+            fingerprint: "ab".into(),
+            relay: None,
+        },
+    );
+}
+
+#[test]
+fn sem_voz_direta_a_ana_ouve_o_beto_pela_conexao_do_hugo() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let (ana, ana_id) = join_with_voice(&url, &code);
+    let (mut beto, mut hugo) = two_friends(&rt, &url, &code, &ana_id);
+    let hugo_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let (hugo_voice, ana_fp) = voice_with_ana(&rt, &ana_id, &mut hugo, &hugo_peer);
+    ana_talks_to(&ana, &[&hugo.id]);
+
+    // A voz direta com o Beto não abre: a Ana pede ao Hugo, que fala com os dois.
+    beto_unreachable(&rt, &ana_id, &mut beto);
+    let request = hugo.signal_from(&rt, &ana_id);
+    assert_eq!(request, Signal::VoiceRelayRequest { to: beto.id.clone() });
+    hugo.client
+        .signal(&ana_id, &Signal::VoiceRelayAccept { to: beto.id.clone() });
+
+    // A chave do par vai direto para o Beto (o Hugo não vê).
+    let Signal::VoiceRelayKey { via, key } = beto.signal_from(&rt, &ana_id) else {
+        panic!("a chave devia ir para o Beto")
+    };
+    assert_eq!(via, hugo.id);
+    let key = RelayKey::from_hex(&key).expect("chave em hex");
+
+    // O Hugo abre a conexão de repasse com a Ana, pelo mesmo caminho da voz.
+    let relay = rt
+        .block_on(hugo_peer.connect_for(&[hugo_voice.remote_address()], None, &ana_fp, Purpose::VoiceRelay))
+        .expect("conexão de repasse");
+    // O Beto aparece ligado na voz, pela conexão do Hugo.
+    ana_talks_to(&ana, &[&beto.id]);
+    let bridges = ana.wait("a ponte", |u| match u {
+        RoomUpdate::VoiceBridges(b) if !b.is_empty() => Some(b),
+        RoomUpdate::VoiceFailed { reason, .. } => panic!("não devia falhar: {reason}"),
+        _ => None,
+    });
+    assert_eq!(bridges.get(&beto.id), Some(&hugo.id));
+
+    // Um pacote do Beto, assinado com a chave do par, passa pelo Hugo sem problema.
+    let (ana_b, beto_b) = (relay_peer(&ana_id).unwrap(), relay_peer(&beto.id).unwrap());
+    let mut audio = Vec::new();
+    encode_audio(1, 2, 0.5, &[1, 2, 3], &mut audio);
+    let mut packet = Vec::new();
+    encode_relayed(&beto_b, &key.tag(&beto_b, &ana_b, &audio), &audio, &mut packet);
+    relay.send_datagram(packet.into()).expect("mandar");
+
+    // O Hugo para de repassar: a Ana perde o Beto. Não pede ao Hugo de novo (ficaria caindo) e,
+    // sem mais ninguém para repassar, a falha chega à interface.
+    relay.close(quinn::VarInt::from_u32(0), b"tchau");
+    ana.wait("o Beto fora da voz", |u| match u {
+        RoomUpdate::VoicePeers(p) if !p.contains(&beto.id) => Some(()),
+        _ => None,
+    });
+    let (who, reason) = ana.wait("a falha da voz", |u| match u {
+        RoomUpdate::VoiceFailed { member_id, reason } => Some((member_id, reason)),
+        _ => None,
+    });
+    assert_eq!(who, beto.id);
+    assert!(reason.contains("ponte da voz caiu"), "{reason}");
+}
+
+#[test]
+fn ninguem_pode_repassar_a_voz_e_a_falha_chega_sem_falar_de_repassador() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let (ana, ana_id) = join_with_voice(&url, &code);
+    let (mut beto, mut hugo) = two_friends(&rt, &url, &code, &ana_id);
+    let hugo_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let _voice = voice_with_ana(&rt, &ana_id, &mut hugo, &hugo_peer);
+    ana_talks_to(&ana, &[&hugo.id]);
+
+    beto_unreachable(&rt, &ana_id, &mut beto);
+    assert_eq!(
+        hugo.signal_from(&rt, &ana_id),
+        Signal::VoiceRelayRequest { to: beto.id.clone() }
+    );
+    // Recusa de quem não foi chamado não conta; a do Hugo, sim.
+    beto.client.signal(
+        &ana_id,
+        &Signal::VoiceRelayDeny {
+            to: beto.id.clone(),
+            reason: "não".into(),
+        },
+    );
+    hugo.client.signal(
+        &ana_id,
+        &Signal::VoiceRelayDeny {
+            to: beto.id.clone(),
+            reason: "já estou repassando a voz de muita gente".into(),
+        },
+    );
+    let (who, reason) = ana.wait("a falha da voz", |u| match u {
+        RoomUpdate::VoiceFailed { member_id, reason } => Some((member_id, reason)),
+        _ => None,
+    });
+    assert_eq!(who, beto.id);
+    assert!(reason.contains("conectar"), "{reason}");
+    assert!(!reason.contains("repassador"), "{reason}");
+}
+
+#[test]
+fn a_ana_repassa_a_voz_entre_o_hugo_e_o_beto_sem_mexer_na_assinatura() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let (ana, ana_id) = join_with_voice(&url, &code);
+    let (mut beto, mut hugo) = two_friends(&rt, &url, &code, &ana_id);
+    let (beto_peer, hugo_peer) = (
+        rt.block_on(Peer::bind(&[])).unwrap(),
+        rt.block_on(Peer::bind(&[])).unwrap(),
+    );
+    let _beto_voice = voice_with_ana(&rt, &ana_id, &mut beto, &beto_peer);
+    let _hugo_voice = voice_with_ana(&rt, &ana_id, &mut hugo, &hugo_peer);
+    ana_talks_to(&ana, &[&beto.id, &hugo.id]);
+
+    // Pedido para alguém que não está na sala: recusa.
+    hugo.client.signal(
+        &ana_id,
+        &Signal::VoiceRelayRequest {
+            to: "0000000000000000".into(),
+        },
+    );
+    let Signal::VoiceRelayDeny { .. } = hugo.signal_from(&rt, &ana_id) else {
+        panic!("devia recusar")
+    };
+
+    // O Hugo não alcança o Beto e pede à Ana, que fala com os dois.
+    hugo.client
+        .signal(&ana_id, &Signal::VoiceRelayRequest { to: beto.id.clone() });
+    assert_eq!(
+        hugo.signal_from(&rt, &ana_id),
+        Signal::VoiceRelayAccept { to: beto.id.clone() }
+    );
+    // A Ana abre a conexão de repasse com os dois.
+    let accept = |peer: &Peer| {
+        let accepted = rt
+            .block_on(async { tokio::time::timeout(WAIT, peer.accept()).await })
+            .expect("a Ana abriu o repasse")
+            .expect("conexão");
+        assert_eq!(accepted.purpose, Purpose::VoiceRelay);
+        accepted.conn
+    };
+    let (to_hugo, to_beto) = (accept(&hugo_peer), accept(&beto_peer));
+
+    // O Hugo manda a voz para o Beto; chega ao Beto com a origem trocada e a assinatura igual.
+    let (hugo_b, beto_b) = (relay_peer(&hugo.id).unwrap(), relay_peer(&beto.id).unwrap());
+    let mut packet = Vec::new();
+    encode_relayed(&beto_b, &[7; 8], b"voz do hugo", &mut packet);
+    let got = rt.block_on(async {
+        // Datagrama pode se perder: manda de novo até chegar.
+        for _ in 0..50 {
+            to_hugo.send_datagram(packet.clone().into()).expect("mandar");
+            if let Ok(Ok(d)) = tokio::time::timeout(Duration::from_millis(100), to_beto.read_datagram()).await {
+                return d;
+            }
+        }
+        panic!("a voz do Hugo não chegou ao Beto");
+    });
+    assert_eq!(
+        decode_relayed(&got),
+        Some(Relayed::Audio {
+            peer: hugo_b,
+            tag: [7; 8],
+            audio: b"voz do hugo"
+        })
+    );
+
+    // O Hugo sai: a Ana avisa o Beto que a voz dele parou de chegar.
+    drop(hugo);
+    let ended = rt.block_on(async {
+        loop {
+            let d = tokio::time::timeout(WAIT, to_beto.read_datagram())
+                .await
+                .expect("o aviso chegou")
+                .expect("datagrama");
+            if let Some(Relayed::Ended { peer }) = decode_relayed(&d) {
+                return peer;
+            }
+        }
+    });
+    assert_eq!(ended, hugo_b);
 }
