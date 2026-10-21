@@ -71,7 +71,8 @@ describe("criar e entrar em sala", () => {
 
     emit("room-members", [ME]);
     expect(sidebarButton(/Sala B8RJ2Q/)).toBeInTheDocument();
-    expect(screen.getByText(/Mande o código da sala para a galera entrar/)).toBeInTheDocument();
+    // Sem a dica "Mande o código da sala…" embaixo de quem está sozinho na sala.
+    expect(screen.queryByText(/Mande o código da sala/)).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Sucesso" })).toHaveTextContent("Você está na sala");
     expect(savedName()).toBe("Kaique");
   });
