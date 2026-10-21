@@ -73,6 +73,13 @@ pub enum FriendAction {
         server: String,
         op: ServerOp,
     },
+    /// Sinal da conversa direta para o amigo `to` (ADR 0017); o conteúdo nunca vai por aqui.
+    DmSignal {
+        to: String,
+        payload: serde_json::Value,
+    },
+    /// Credenciais do repassador TURN para a conversa direta.
+    TurnRequest,
 }
 
 /// Pedido a um servidor. Espelha `ServerOp` do Worker (que confere de novo quem pode o quê).
@@ -303,6 +310,14 @@ mod tests {
             serde_json::to_string(&tirar).unwrap(),
             r#"{"kind":"update","icon":null}"#
         );
+        assert_eq!(
+            json(&FriendAction::DmSignal {
+                to: "1".into(),
+                payload: serde_json::json!({"kind": "dm-offer"})
+            }),
+            r#"{"type":"dm-signal","to":"1","payload":{"kind":"dm-offer"}}"#
+        );
+        assert_eq!(json(&FriendAction::TurnRequest), r#"{"type":"turn-request"}"#);
         // Papel de dono não existe para dar a ninguém.
         assert!(serde_json::from_str::<ServerOp>(r#"{"kind":"role","member":"1","role":"owner"}"#).is_err());
     }

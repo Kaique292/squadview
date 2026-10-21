@@ -32,6 +32,8 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const ALPN: &[u8] = b"squadview/1";
 /// ALPN das conexões de voz (ADR 0010): quem aceita sabe pelo ALPN que a conexão é de voz.
 pub const VOICE_ALPN: &[u8] = b"squadview-voice/1";
+/// ALPN das conversas privadas entre dois amigos (ADR 0017), fora de qualquer sala.
+pub const DM_ALPN: &[u8] = b"squadview-dm/1";
 
 #[cfg(test)]
 mod tests {

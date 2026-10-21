@@ -5,6 +5,7 @@
 //! - [`LocalPreview`]: os dois ligados no mesmo PC, para medir antes de usar a rede.
 
 mod audio;
+pub mod dm;
 mod log;
 mod preview;
 mod remote;
