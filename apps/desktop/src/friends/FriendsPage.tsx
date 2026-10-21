@@ -10,6 +10,7 @@ import { holdOverlay, useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
 import { type Friend, type Person, presenceText, useFriendsStore, useInMyRoom } from "./friends-store";
+import { CheckMark } from "../ui/Checkbox";
 
 type Tab = "online" | "todos" | "pendentes" | "recentes";
 
@@ -252,11 +253,7 @@ function FriendRow(props: { friend: Friend }) {
                 <span className="block font-medium">Entra direto nas minhas salas</span>
                 <span className="block text-xs opacity-70">Sem precisar que alguém aceite</span>
               </span>
-              <span
-                className={`grid size-5 shrink-0 place-items-center rounded border ${friend.direct ? "border-brand bg-brand text-white" : "border-text-faint"}`}
-              >
-                {friend.direct && <Check size={14} />}
-              </span>
+              <CheckMark checked={friend.direct} />
             </Menu.CheckboxItem>
             <Menu.Separator className="my-1 h-px bg-surface-3" />
             <Menu.Item

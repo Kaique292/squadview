@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useOverlayMenu } from "../ui/overlay";
 import { Tooltip } from "../ui/Tooltip";
 import { type AudioDevice, MAX_VOICE_VOLUME, useVoiceStore } from "./voice-store";
+import { CheckMark } from "../ui/Checkbox";
 
 /** Microfone: liga e desliga o mudo; a setinha abre o dispositivo, o volume e o nível. */
 export function MicButton(props: { large?: boolean }) {
@@ -43,11 +44,7 @@ export function MicButton(props: { large?: boolean }) {
           Isolamento de voz
           <span className="block text-xs font-normal opacity-70">Corta ruído de fundo (teclado, ventilador)</span>
         </span>
-        <span
-          className={`grid size-5 place-items-center rounded border ${prefs.noiseSuppression ? "border-brand bg-brand text-white" : "border-text-faint"}`}
-        >
-          {prefs.noiseSuppression && <Check size={14} />}
-        </span>
+        <CheckMark checked={prefs.noiseSuppression} />
       </Menu.CheckboxItem>
     </SplitButton>
   );
