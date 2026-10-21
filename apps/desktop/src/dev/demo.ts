@@ -1,11 +1,15 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
- * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config` ou `#demo=amigos`.
+ * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`
+ * ou `#demo=servidor`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
+import { useAccountStore } from "../account/account-store";
+import { type DmMessage, useDmStore } from "../dm/dm-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
+import { useServersStore } from "../servers/servers-store";
 import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
 
 // Lobo e Yondaime assistem o Minato: o 👁 2 aparece ao lado do "Ao vivo".
@@ -75,9 +79,80 @@ function click(label: string) {
   button?.click();
 }
 
+/** Ícone de servidor de mentira: um degradê com uma letra. */
+function serverIcon(from: string, to: string, letter: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs>
+    <rect width="96" height="96" fill="url(#g)"/>
+    <text x="48" y="62" font-family="Segoe UI" font-size="44" font-weight="800" fill="#fff" text-anchor="middle">${letter}</text>
+  </svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+const SERVERS = [
+  {
+    id: "s1",
+    name: "Turma do Bairro",
+    icon: serverIcon("#5865f2", "#eb459e", "T"),
+    rooms: [
+      { id: "r1", name: "Galera do LoL", code: "F5B6S9" },
+      { id: "r2", name: "Ranked da noite", code: "K7M2Q4" },
+      { id: "r3", name: "Só papo", code: "P3X8W1" },
+    ],
+    members: [{ id: "eu", name: "Kaique", avatar: null, role: "owner" as const }],
+  },
+  { id: "s2", name: "Valorant BR", icon: serverIcon("#ff4655", "#1f2731", "V"), rooms: [], members: [] },
+  { id: "s3", name: "Faculdade", icon: null, rooms: [], members: [] },
+];
+
+/** Conversa privada com o Minato: texto, uma foto e um arquivo esperando "Baixar". */
+const minute = 60 * 1000;
+const now = Date.now();
+const CHAT: DmMessage[] = [
+  { id: "1", mine: false, at: now - 42 * minute, text: "viu o clutch que eu fiz ontem?", status: "received" },
+  { id: "2", mine: true, at: now - 41 * minute, text: "não! manda aí", status: "delivered" },
+  {
+    id: "3",
+    mine: false,
+    at: now - 40 * minute,
+    file: { name: "clutch.png", size: 412_000, mime: "image/png", path: "clutch.png", done: 412_000 },
+    status: "received",
+  },
+  {
+    id: "4",
+    mine: false,
+    at: now - 39 * minute,
+    file: { name: "replay-ranked.rofl", size: 18_400_000, mime: "application/octet-stream", path: null, done: 0 },
+    status: "received",
+  },
+  { id: "5", mine: true, at: now - 2 * minute, text: "que isso 😂 bora de novo hoje às 21h?", status: "delivered" },
+  { id: "6", mine: false, at: now - minute, text: "bora, chama o Lobo", status: "received" },
+];
+
+const CONVERSATIONS = [
+  { friend: "100000000000000001", last: CHAT[5], pending: 0 },
+  {
+    friend: "100000000000000003",
+    last: { id: "s", mine: true, at: now - 3 * 3600 * 1000, text: "valeu pela call!", status: "delivered" as const },
+    pending: 0,
+  },
+  {
+    friend: "100000000000000004",
+    last: {
+      id: "i",
+      mine: false,
+      at: now - 26 * 3600 * 1000,
+      file: { name: "mapa.zip", size: 1, mime: "application/zip", path: null, done: 0 },
+      status: "received" as const,
+    },
+    pending: 0,
+  },
+];
+
 /** Respostas de mentira do Rust, para as telas que perguntam algo a ele. */
 const FAKE_COMMANDS: Record<string, unknown> = {
   diagnostics_status: { enabled: true, files: 3 },
+  dm_preview: thumbnail("#0a3d62", "#c89b3c", "PENTAKILL"),
 };
 
 export function runDemo(scene: string) {
@@ -100,10 +175,18 @@ export function runDemo(scene: string) {
   });
   // Por último (o vidro acima mexeria na janela "de verdade"): só as telas usam este invoke.
   Object.assign(window, {
-    __TAURI_INTERNALS__: { invoke: async (cmd: string) => FAKE_COMMANDS[cmd] ?? null },
+    __TAURI_INTERNALS__: {
+      invoke: async (cmd: string) => FAKE_COMMANDS[cmd] ?? null,
+      // A prévia dos anexos já vem como data URL.
+      convertFileSrc: (path: string) => path,
+      // Arrastar arquivos para a conversa escuta eventos da janela: basta existir.
+      metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
+      transformCallback: () => 0,
+    },
   });
-  if (scene === "amigos") {
+  if (scene === "amigos" || scene === "conversa") {
     useRoomStore.setState({ members: WITH_FRIENDS });
+    useDmStore.setState({ conversations: CONVERSATIONS, unread: { "100000000000000004": 1 } });
     useFriendsStore.setState({
       status: "online",
       open: true,
@@ -112,6 +195,19 @@ export function runDemo(scene: string) {
       joinRequests: [{ id: "00000000000000aa", from: { id: "100000000000000007", name: "Naruto", avatar: null } }],
     });
   }
+  if (scene === "conversa") {
+    // Logado com o Discord, e sem o pedido de entrar cobrindo a caixa de escrever.
+    useAccountStore.setState({
+      profile: { id: "100000000000000000", username: "kaique", globalName: "Kaique", avatar: null },
+    });
+    useFriendsStore.setState({ joinRequests: [] });
+    useDmStore.setState({
+      open: "100000000000000001",
+      messages: { "100000000000000001": CHAT },
+      online: { "100000000000000001": true },
+    });
+  }
+  if (scene === "servidor") useServersStore.setState({ servers: SERVERS, selected: "s1" });
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
     // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).
@@ -119,7 +215,7 @@ export function runDemo(scene: string) {
       .querySelector('[aria-label="Canal de voz"]')
       ?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
     // A sala com alguém em foco, como no Discord.
-    if (scene === "sala") click("Pôr Lobo em foco");
+    if (scene === "sala" || scene === "servidor") click("Pôr Lobo em foco");
     if (scene === "transmitir") click("Transmitir minha tela");
     if (scene === "config") click("Configurações");
   }, 300);

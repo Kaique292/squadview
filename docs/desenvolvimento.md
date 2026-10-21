@@ -83,7 +83,7 @@ docs/                 documentação, ADRs, design e imagens
 
 ## Capturas do README e imagem de prévia do site
 
-- **Capturas das telas:** com o `yarn dev` rodando, abra `http://localhost:1420/#demo=sala` (ou `#demo=transmitir`, `#demo=config`, `#demo=amigos`). O modo de demonstração (`apps/desktop/src/dev/demo.ts`, só no dev) preenche a interface com uma sala de exemplo. Para gerar o PNG sem abrir janela:
+- **Capturas das telas:** com o `yarn dev` rodando, abra `http://localhost:1420/#demo=sala` (ou `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`, `#demo=servidor`). O modo de demonstração (`apps/desktop/src/dev/demo.ts`, só no dev) preenche a interface com uma sala de exemplo. Para gerar o PNG sem abrir janela:
 
   ```powershell
   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --headless=new --hide-scrollbars --window-size=1280,800 --virtual-time-budget=6000 --screenshot=docs\images\tela-sala.png "http://localhost:1420/#demo=sala"
