@@ -3,6 +3,7 @@ import { Dissolve } from "./Dissolve";
 import {
   fitInside,
   gridStep,
+  imageAlpha,
   makeParticles,
   particleAt,
   playVideoExit,
@@ -33,19 +34,30 @@ describe("animação de saída do vídeo", () => {
   it("limita a quantidade de partículas em vídeos grandes", () => {
     expect(gridStep(100, 100)).toBe(3);
     const step = gridStep(1920, 1080);
-    expect((1920 / step) * (1080 / step)).toBeLessThanOrEqual(14_000);
+    expect((1920 / step) * (1080 / step)).toBeLessThanOrEqual(24_000);
   });
 
-  it("cada bloco visível vira uma partícula com a cor da imagem", () => {
+  it("cada bloco visível vira um grão dentro dele, com a cor da imagem mais clara", () => {
     const particles = makeParticles(image(), 4, 2, 1, () => 0.5);
     expect(particles).toHaveLength(2);
-    expect(particles[0]).toMatchObject({ x: 0, y: 0, color: "rgb(200,100,50)" });
+    expect(particles[0].x).toBeGreaterThanOrEqual(0);
+    expect(particles[0].x).toBeLessThan(1);
+    // 200,100,50 clareado 55% em direção ao branco.
+    expect(particles[0].color).toBe("rgb(230,185,163)");
   });
 
-  it("a varredura começa pela esquerda", () => {
+  it("os grãos saem quase juntos, sem varrer da esquerda para a direita, e acabam a tempo", () => {
     const rgba = new Uint8ClampedArray(10 * 1 * 4).fill(255);
     const particles = makeParticles(rgba, 10, 1, 1, () => 0);
-    expect(particles[0].delay).toBeLessThan(particles[9].delay);
+    expect(particles[0].delay).toBe(particles[9].delay);
+    for (const p of makeParticles(rgba, 10, 1, 1)) expect(p.delay + p.life).toBeLessThanOrEqual(1);
+  });
+
+  it("a imagem some suave e por inteiro no começo da poeira", () => {
+    expect(imageAlpha(0)).toBe(1);
+    expect(imageAlpha(0.2)).toBeGreaterThan(0);
+    expect(imageAlpha(0.2)).toBeLessThan(1);
+    expect(imageAlpha(0.5)).toBe(0);
   });
 
   it("a partícula espera, voa subindo e apagando, e some", () => {
