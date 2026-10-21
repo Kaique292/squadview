@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { Dissolve } from "./Dissolve";
-import { DUST_MS, GLOW_MS, HOLD_MS, useDissolveStore } from "./dissolve-effect";
+import { DUST_MS, HOLD_MS, useDissolveStore } from "./dissolve-effect";
 
 /**
  * O jsdom não tem canvas nem carrega imagens: aqui eles são trocados por versões de mentira para
@@ -18,6 +18,7 @@ function fakeContext() {
       data: new Uint8ClampedArray(w * h * 4).fill(255),
     })),
     globalAlpha: 1,
+    globalCompositeOperation: "source-over",
     filter: "none",
     strokeStyle: "",
     fillStyle: "",
@@ -80,30 +81,51 @@ async function play() {
 }
 
 describe("animação de saída desenhada no canvas", () => {
-  it("segura a foto parada, brilha, vira poeira e termina sozinha", async () => {
+  it("segura a foto parada, desfaz em poeira e termina sozinha", async () => {
     await play();
     expect(screen.getByTestId("animacao-de-saida")).toBeInTheDocument();
 
     // Parada: a foto inteira, sem efeito.
     frame(HOLD_MS / 2);
     expect(ctx.drawImage).toHaveBeenCalledTimes(1);
-    expect(ctx.strokeRect).not.toHaveBeenCalled();
 
-    // Brilho: borda acesa e a imagem mais clara.
-    frame(HOLD_MS + GLOW_MS / 2);
-    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
-    expect(ctx.filter).toBe("none");
-
-    // Poeira: blocos que já saíram são apagados e as partículas são pintadas com a cor da foto.
-    frame(HOLD_MS + GLOW_MS + DUST_MS / 2);
+    // Começo da poeira: a imagem ainda aparece, mais apagada, e os grãos saem com a cor dela.
+    frame(HOLD_MS + DUST_MS * 0.2);
+    expect(ctx.drawImage).toHaveBeenCalledTimes(2);
     expect(ctx.fillRect).toHaveBeenCalled();
     expect(ctx.fillStyle).toBe("rgb(255,255,255)");
+    expect(ctx.filter).toBe("none");
+    expect(ctx.globalCompositeOperation).toBe("source-over");
+
+    // Depois: a imagem já sumiu por inteiro e só a poeira continua.
+    frame(HOLD_MS + DUST_MS * 0.6);
+    expect(ctx.drawImage).toHaveBeenCalledTimes(2);
 
     // Fim: a animação sai da tela e não pede mais quadros.
-    frame(HOLD_MS + GLOW_MS + DUST_MS);
+    frame(HOLD_MS + DUST_MS);
     expect(useDissolveStore.getState().effect).toBeNull();
     expect(screen.queryByTestId("animacao-de-saida")).not.toBeInTheDocument();
     expect(frames).toHaveLength(0);
+  });
+
+  it("não tem moldura branca nem buracos em blocos na imagem", async () => {
+    await play();
+    for (const at of [HOLD_MS / 2, HOLD_MS + 1, HOLD_MS + DUST_MS * 0.1, HOLD_MS + DUST_MS * 0.3]) frame(at);
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    // Só a limpeza do canvas inteiro a cada quadro: nada é apagado em pedaços.
+    for (const [x, y] of ctx.clearRect.mock.calls) expect([x, y]).toEqual([0, 0]);
+  });
+
+  it("com a escala do Windows em 125%, o canvas cai em pixels físicos inteiros (sem borrar)", async () => {
+    vi.stubGlobal("devicePixelRatio", 1.25);
+    render(<Dissolve />);
+    act(() => useDissolveStore.getState().play("data:,", { x: 10.3, y: 300.7, width: 333.3, height: 187.5 }));
+    await act(async () => {});
+    const canvas = screen.getByTestId("animacao-de-saida") as HTMLCanvasElement;
+    expect(parseFloat(canvas.style.width) * 1.25).toBeCloseTo(canvas.width, 6);
+    expect(parseFloat(canvas.style.height) * 1.25).toBeCloseTo(canvas.height, 6);
+    expect(parseFloat(canvas.style.left) * 1.25).toBeCloseTo(Math.round(10.3 * 1.25), 6);
+    expect(ctx.scale).not.toHaveBeenCalled();
   });
 
   it("com menos movimento pedido no Windows, termina na hora", () => {
@@ -128,12 +150,12 @@ describe("animação de saída desenhada no canvas", () => {
 
   it("um vídeo novo saindo no meio cancela a animação anterior", async () => {
     await play();
-    frame(HOLD_MS + GLOW_MS + DUST_MS / 4);
+    frame(HOLD_MS + DUST_MS / 4);
     act(() => useDissolveStore.getState().play("data:,outra", { x: 0, y: 300, width: 40, height: 20 }));
     expect(cancelAnimationFrame).toHaveBeenCalled();
     // O quadro que já estava pedido para a animação antiga não desenha mais nada.
     const before = ctx.drawImage.mock.calls.length;
-    frame(HOLD_MS + GLOW_MS + DUST_MS / 2);
+    frame(HOLD_MS + DUST_MS / 2);
     expect(ctx.drawImage.mock.calls.length).toBe(before);
   });
 
