@@ -27,7 +27,7 @@ sv-media.workspace = true
 sv-net.workspace = true
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 sv-session.workspace = true
-tauri = { version = "2.12.4", features = ["tray-icon"] }
+tauri = { version = "2.12.4", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-process = "2.4.0"
 # Sem a feature "zip": no Windows a atualização é o próprio instalador NSIS (.exe).
 tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
@@ -41,6 +41,8 @@ sha2 = "0.11"
 getrandom = "0.4"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
 tauri-plugin-opener = "2"
+# Escolher arquivos para mandar nas conversas e onde salvar o que chegou (só pelo Rust).
+tauri-plugin-dialog = "2"
 # Copiar os registros de desempenho como arquivos (área de transferência do Windows).
 windows = { workspace = true, features = ["Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Shell"] }
 # Limpar o cache da interface pelo próprio WebView2 (a mesma versão que o Tauri já usa).
@@ -51,7 +53,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [dev-dependencies]
 # App de mentira (MockRuntime) para testar a abertura sem janela de verdade.
-tauri = { version = "2.12.4", features = ["test", "tray-icon"] }
+tauri = { version = "2.12.4", features = ["test", "tray-icon", "protocol-asset"] }
 # Sessões assinadas como as do Worker, nos testes dos amigos.
 ring = "0.17"
 
