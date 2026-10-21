@@ -210,129 +210,134 @@ function Sidebar(props: { page: Page; part: string | null; onPage: (p: Page, par
   })).filter((g) => g.items.length > 0);
 
   return (
-    <nav aria-label="Categorias" className="flex w-72 shrink-0 flex-col overflow-y-auto bg-surface-1 px-3 py-5">
-      <button
-        type="button"
-        onClick={() => props.onPage("conta")}
-        className="mb-3 flex items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
-      >
-        <Avatar name={name} size={44} src={profile ? avatarUrl(profile) : undefined} />
-        <span className="min-w-0">
-          <span className="block truncate font-semibold">{name}</span>
-          <span className="flex items-center gap-1 truncate text-xs text-text-muted">
-            {profile ? (
-              <>
-                Editar perfil <Pencil size={12} />
-              </>
-            ) : (
-              "Entrar com o Discord"
-            )}
+    <nav aria-label="Categorias" className="flex w-72 shrink-0 flex-col bg-surface-1">
+      {/* A barra de rolagem do app (fina, por cima, só com o mouse), não a do Windows. */}
+      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-3 pt-5 pb-2">
+        <button
+          type="button"
+          onClick={() => props.onPage("conta")}
+          className="mb-3 flex items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
+        >
+          <Avatar name={name} size={44} src={profile ? avatarUrl(profile) : undefined} />
+          <span className="min-w-0">
+            <span className="block truncate font-semibold">{name}</span>
+            <span className="flex items-center gap-1 truncate text-xs text-text-muted">
+              {profile ? (
+                <>
+                  Editar perfil <Pencil size={12} />
+                </>
+              ) : (
+                "Entrar com o Discord"
+              )}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
 
-      <label className="mb-4 flex h-9 items-center gap-2 rounded-md border border-white/[0.06] bg-surface-0 px-2.5 text-text-muted focus-within:border-brand">
-        <Search size={16} className="shrink-0" />
-        <input
-          type="search"
-          aria-label="Buscar nas configurações"
-          placeholder="Buscar"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
-        />
-      </label>
+        <label className="mb-4 flex h-9 items-center gap-2 rounded-md border border-white/[0.06] bg-surface-0 px-2.5 text-text-muted focus-within:border-brand">
+          <Search size={16} className="shrink-0" />
+          <input
+            type="search"
+            aria-label="Buscar nas configurações"
+            placeholder="Buscar"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
+          />
+        </label>
 
-      {groups.length === 0 && <p className="px-2 text-sm text-text-muted">Nada encontrado.</p>}
-      {groups.map((group, gi) => (
-        <div key={group.title} className={gi > 0 ? "mt-2 border-t border-white/[0.06] pt-3" : ""}>
-          <p className="px-2 pb-1 text-xs font-medium text-text-muted">{group.title}</p>
-          {group.items.map((item) => {
-            const active = props.page === item.id;
-            const expanded = active && !collapsed;
-            const current = item.parts
-              ? Math.max(
-                  0,
-                  item.parts.findIndex((pt) => pt.id === props.part),
-                )
-              : 0;
-            return (
-              <div key={item.id} className="mb-0.5">
-                <button
-                  type="button"
-                  aria-current={active ? "page" : undefined}
-                  aria-expanded={item.parts ? expanded : undefined}
-                  onClick={() => {
-                    // Clicar de novo na seção aberta recolhe (ou reabre) os subitens.
-                    if (active && item.parts) setCollapsed((c) => !c);
-                    else {
-                      setCollapsed(false);
-                      props.onPage(item.id);
-                    }
-                  }}
-                  className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-medium transition-colors ${
-                    active ? "bg-surface-hover text-text" : "text-text-muted hover:bg-surface-hover/60 hover:text-text"
-                  }`}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-                {item.parts && (
-                  // A altura anima de 0 até o conteúdo (grid 0fr → 1fr), abrindo e fechando.
-                  <div
-                    aria-hidden={!expanded}
-                    inert={!expanded}
-                    className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
-                      expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        {groups.length === 0 && <p className="px-2 text-sm text-text-muted">Nada encontrado.</p>}
+        {groups.map((group, gi) => (
+          <div key={group.title} className={gi > 0 ? "mt-2 border-t border-white/[0.06] pt-3" : ""}>
+            <p className="px-2 pb-1 text-xs font-medium text-text-muted">{group.title}</p>
+            {group.items.map((item) => {
+              const active = props.page === item.id;
+              const expanded = active && !collapsed;
+              const current = item.parts
+                ? Math.max(
+                    0,
+                    item.parts.findIndex((pt) => pt.id === props.part),
+                  )
+                : 0;
+              return (
+                <div key={item.id} className="mb-0.5">
+                  <button
+                    type="button"
+                    aria-current={active ? "page" : undefined}
+                    aria-expanded={item.parts ? expanded : undefined}
+                    onClick={() => {
+                      // Clicar de novo na seção aberta recolhe (ou reabre) os subitens.
+                      if (active && item.parts) setCollapsed((c) => !c);
+                      else {
+                        setCollapsed(false);
+                        props.onPage(item.id);
+                      }
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-medium transition-colors ${
+                      active
+                        ? "bg-surface-hover text-text"
+                        : "text-text-muted hover:bg-surface-hover/60 hover:text-text"
                     }`}
                   >
-                    <div className="overflow-hidden">
-                      <div className="relative my-1 ml-[17px] flex flex-col border-l border-white/10">
-                        {/* A barra desliza até o subitem escolhido (todos têm a mesma altura). */}
-                        <span
-                          aria-hidden
-                          className="absolute top-0 -left-px w-0.5 bg-text transition-transform duration-200 ease-out"
-                          style={{
-                            height: `${100 / item.parts.length}%`,
-                            transform: `translateY(${current * 100}%)`,
-                          }}
-                        />
-                        {item.parts.map((pt, i) => (
-                          <button
-                            key={pt.id}
-                            type="button"
-                            aria-current={active && i === current ? "location" : undefined}
-                            onClick={() => props.onPage(item.id, pt.id)}
-                            className={`py-1 pl-4 text-left text-sm transition-colors ${
-                              i === current ? "text-text" : "text-text-muted hover:text-text"
-                            }`}
-                          >
-                            {pt.label}
-                          </button>
-                        ))}
+                    {item.icon}
+                    {item.label}
+                  </button>
+                  {item.parts && (
+                    // A altura anima de 0 até o conteúdo (grid 0fr → 1fr), abrindo e fechando.
+                    <div
+                      aria-hidden={!expanded}
+                      inert={!expanded}
+                      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                        expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                      }`}
+                    >
+                      <div className="overflow-hidden">
+                        <div className="relative my-1 ml-[17px] flex flex-col border-l border-white/10">
+                          {/* A barra desliza até o subitem escolhido (todos têm a mesma altura). */}
+                          <span
+                            aria-hidden
+                            className="absolute top-0 -left-px w-0.5 bg-text transition-transform duration-200 ease-out"
+                            style={{
+                              height: `${100 / item.parts.length}%`,
+                              transform: `translateY(${current * 100}%)`,
+                            }}
+                          />
+                          {item.parts.map((pt, i) => (
+                            <button
+                              key={pt.id}
+                              type="button"
+                              aria-current={active && i === current ? "location" : undefined}
+                              onClick={() => props.onPage(item.id, pt.id)}
+                              className={`py-1 pl-4 text-left text-sm transition-colors ${
+                                i === current ? "text-text" : "text-text-muted hover:text-text"
+                              }`}
+                            >
+                              {pt.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
 
-      {profile && !q && (
-        <div className="mt-2 border-t border-white/[0.06] pt-3">
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-medium text-live transition-colors hover:bg-live/10"
-          >
-            <LogOut size={18} />
-            Sair
-          </button>
-        </div>
-      )}
-      <p className="mt-auto px-2 pt-4 text-xs text-text-faint">SquadView {import.meta.env.APP_VERSION}</p>
+        {profile && !q && (
+          <div className="mt-2 border-t border-white/[0.06] pt-3">
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-medium text-live transition-colors hover:bg-live/10"
+            >
+              <LogOut size={18} />
+              Sair
+            </button>
+          </div>
+        )}
+      </ScrollArea>
+      <p className="px-5 pt-2 pb-5 text-xs text-text-faint">SquadView {import.meta.env.APP_VERSION}</p>
     </nav>
   );
 }

@@ -7,6 +7,13 @@
  * Desativado (`disabled` ou `aria-disabled`) fica com a setinha.
  */
 @layer base {
+  /* Onde ainda sobrar rolagem nativa (menus curtos, estatísticas da live), ela fica fina e na cor
+     da barra do app, sem as setinhas do Windows. Listas e painéis usam o `ScrollArea`. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-0) transparent;
+  }
+
   button:not(:disabled, [aria-disabled="true"]),
   [role="button"]:not([aria-disabled="true"]),
   [role="tab"]:not([aria-disabled="true"]),
@@ -68,6 +75,9 @@
   --animate-modal-in: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-modal-out: modal-out 140ms ease-in forwards;
   --animate-step-in: step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Conteúdo das abas: o que sai some rápido para um lado, o novo entra pelo outro. */
+  --animate-tab-out: tab-out 120ms ease-in forwards;
+  --animate-tab-in: tab-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Quadro da voz entrando em foco (ou a grade voltando). */
   --animate-focus-in: focus-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   /* Menus e dicas: aparecem crescendo um pouco a partir do ponto de origem. */
@@ -145,6 +155,19 @@
     from {
       opacity: 0;
       transform: translateX(16px);
+    }
+  }
+  /* `--tab-direction`: 1 indo para uma aba à direita, -1 para uma à esquerda. */
+  @keyframes tab-out {
+    to {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * -12px));
+    }
+  }
+  @keyframes tab-in {
+    from {
+      opacity: 0;
+      transform: translateX(calc(var(--tab-direction, 1) * 16px));
     }
   }
 }
@@ -241,8 +264,10 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  z-index: -1;
   pointer-events: none;
+  /* Onde dois efeitos se tocam (gente falando lado a lado), as cores se somam: roxo com verde
+     clareia na mistura só ali, e o resto de cada um continua na sua cor. */
+  mix-blend-mode: screen;
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.85);
   transition:
