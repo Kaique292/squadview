@@ -162,10 +162,11 @@ export async function listenToVoiceEvents(nameOf: (id: string) => string | undef
     }),
     listen<number>("voice-level", (e) => useVoiceStore.setState({ level: e.payload })),
     listen<string[]>("voice-peers", (e) => {
-      const before = new Set(useVoiceStore.getState().connected);
       useVoiceStore.setState({ connected: e.payload });
+      // A cada mudança, reaplica o salvo de todos (não só de quem acabou de chegar): uma voz que cai
+      // e volta entre dois avisos não parece "nova", e o silenciar dela se perdia.
       for (const id of e.payload) {
-        const name = before.has(id) ? undefined : nameOf(id);
+        const name = nameOf(id);
         if (!name) continue;
         const saved = useVoiceStore.getState().peers[name];
         if (saved && saved.volume !== 100)

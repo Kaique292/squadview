@@ -209,6 +209,17 @@ describe("chat de voz", () => {
     expect(invoke).not.toHaveBeenCalledWith("voice_set_peer_muted", expect.anything());
   });
 
+  it("o silenciar salvo vale de novo mesmo se a voz cair e voltar entre dois avisos", () => {
+    useRoomStore.setState({ members: [ME, ANA, BETO] });
+    useVoiceStore.setState({ peers: { Ana: { volume: 40, muted: true } } });
+    emit("voice-peers", [ANA.id]);
+    invoke.mockClear();
+    // A Ana caiu e voltou sem a lista mudar: o silenciar dela vai de novo.
+    emit("voice-peers", [ANA.id, BETO.id]);
+    expect(invoke).toHaveBeenCalledWith("voice_set_peer_muted", { memberId: ANA.id, muted: true });
+    expect(invoke).toHaveBeenCalledWith("voice_set_peer_volume", { memberId: ANA.id, volume: 0.4 });
+  });
+
   it("sem nome conhecido, o aviso de falha fala de um amigo", () => {
     emit("voice-failed", { memberId: "dddddddddddddddd", reason: "sem rota" });
     expect(useToastStore.getState().toasts[0].message).toBe("Sem voz com um amigo: sem rota");
