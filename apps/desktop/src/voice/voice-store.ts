@@ -76,6 +76,8 @@ interface VoiceState {
   speaking: Record<string, boolean>;
   /** Com quem a voz está ligada (ids). */
   connected: string[];
+  /** Com quem a voz passa por outro membro (ADR 0020): id → id de quem repassa. */
+  bridges: Record<string, string>;
   /** Nível do microfone (0 a 1). */
   level: number;
   devices: { inputs: AudioDevice[]; outputs: AudioDevice[] };
@@ -93,6 +95,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   peers: load<Record<string, PeerPrefs>>(PEERS_KEY, {}),
   speaking: {},
   connected: [],
+  bridges: {},
   level: 0,
   devices: { inputs: [], outputs: [] },
 
@@ -162,10 +165,11 @@ export async function listenToVoiceEvents(nameOf: (id: string) => string | undef
     }),
     listen<number>("voice-level", (e) => useVoiceStore.setState({ level: e.payload })),
     listen<string[]>("voice-peers", (e) => {
-      const before = new Set(useVoiceStore.getState().connected);
       useVoiceStore.setState({ connected: e.payload });
+      // A cada mudança, reaplica o salvo de todos (não só de quem acabou de chegar): uma voz que cai
+      // e volta entre dois avisos não parece "nova", e o silenciar dela se perdia.
       for (const id of e.payload) {
-        const name = before.has(id) ? undefined : nameOf(id);
+        const name = nameOf(id);
         if (!name) continue;
         const saved = useVoiceStore.getState().peers[name];
         if (saved && saved.volume !== 100)
@@ -173,6 +177,7 @@ export async function listenToVoiceEvents(nameOf: (id: string) => string | undef
         if (saved?.muted) void invoke("voice_set_peer_muted", { memberId: id, muted: true });
       }
     }),
+    listen<Record<string, string>>("voice-bridges", (e) => useVoiceStore.setState({ bridges: e.payload })),
     listen<string>("voice-error", (e) => toast.warning(e.payload, "Voz")),
     listen<{ memberId: string; reason: string }>("voice-failed", (e) => {
       const name = nameOf(e.payload.memberId) ?? "um amigo";

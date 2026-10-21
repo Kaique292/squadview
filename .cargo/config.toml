@@ -1,0 +1,15 @@
+# Higiene de build (ver "Tamanho da target/" em docs/desenvolvimento.md).
+#
+# Em out/2026 a target/ chegou a 133 GB e quase lotou o disco: o grosso era informação de debug
+# completa de todas as dependências, compilada de novo a cada combinação de features e flags.
+
+[profile.dev]
+# Nos nossos crates, só a tabela de linhas: o backtrace e o panic continuam com arquivo e linha,
+# por uma fração do tamanho. Para depurar com variáveis no debugger, rode com
+# CARGO_PROFILE_DEV_DEBUG=full.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Dependências sem informação de debug nenhuma: era a maior parte da target/debug. (O cargo já
+# não compila dependências de forma incremental; só os crates do workspace usam o incremental.)
+debug = false

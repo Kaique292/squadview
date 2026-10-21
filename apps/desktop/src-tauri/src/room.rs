@@ -1,10 +1,11 @@
 //! Comandos da sala (Fase 2): criar/entrar, ver quem está, assistir um amigo.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::json;
-use sv_session::{DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, SpeakingEffect, WindowEvent};
+use sv_session::{Bounds, DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, SpeakingEffect, WindowEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
@@ -28,7 +29,7 @@ pub const ROOM_ERROR_EVENT: &str = "room-error";
 pub const WATCH_STARTED_EVENT: &str = "watch-started";
 /// Não deu para assistir, ou o stream acabou (texto para o usuário).
 pub const WATCH_ENDED_EVENT: &str = "watch-ended";
-/// Estatísticas de quem estamos assistindo, a cada 500 ms.
+/// Estatísticas de cada live que assistimos, a cada 500 ms: `{ memberId, stats }`.
 pub const WATCH_STATS_EVENT: &str = "watch-stats";
 
 /// Endereço do serviço de salas. Ordem: variável de ambiente (testes), o configurado no build
@@ -46,12 +47,19 @@ pub struct RoomState(Mutex<Running>);
 #[derive(Default)]
 pub(crate) struct Running {
     pub(crate) room: Option<Room>,
-    watching: Option<Watching>,
+    /// As lives que assistimos, por pessoa (várias ao mesmo tempo, ADR 0019).
+    watching: HashMap<String, Watching>,
 }
 
 struct Watching {
-    member: Member,
     view: RemoteView,
+}
+
+impl Running {
+    /// Tira todas as lives assistidas (saímos da sala ou ela caiu).
+    fn take_all(&mut self) -> Vec<Watching> {
+        self.watching.drain().map(|(_, w)| w).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,13 +151,12 @@ pub async fn room_join<R: Runtime>(
     let state = app.state::<RoomState>();
     let (old_watching, old_room) = {
         let mut running = lock(&state);
-        (running.watching.take(), running.room.replace(room))
+        (running.take_all(), running.room.replace(room))
     };
     let restart_app = app.clone();
     preview::off_main(move || {
         drop(old_watching);
         drop(old_room);
-        preview::set_watching(&restart_app, false);
         preview::restart_for_room(&restart_app);
     })
     .await?;
@@ -238,11 +245,10 @@ pub async fn room_leave<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
         let state = app.state::<RoomState>();
         let (watching, room) = {
             let mut running = lock(&state);
-            (running.watching.take(), running.room.take())
+            (running.take_all(), running.room.take())
         };
         drop(watching);
         drop(room);
-        preview::set_watching(&app, false);
         preview::restart_for_room(&app);
     })
     .await
@@ -257,44 +263,57 @@ pub fn room_watch(state: State<'_, RoomState>, member_id: String) -> Result<(), 
     Ok(())
 }
 
-/// Para de assistir. Antes de fechar o vídeo, manda a foto do último quadro (evento `video-exit`).
+/// Para de assistir `member_id`. Antes de fechar o vídeo, manda a foto do último quadro (evento
+/// `video-exit`).
 #[tauri::command]
-pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>, member_id: String) -> Result<(), String> {
     preview::off_main(move || {
         let state = app.state::<RoomState>();
-        let Some(watching) = lock(&state).watching.take() else {
+        let Some(watching) = lock(&state).watching.remove(&member_id) else {
             return;
         };
-        preview::hand_off_exit(&app, watching.view.snapshot());
+        preview::hand_off_exit(&app, Some(&member_id), watching.view.snapshot());
         drop(watching);
-        preview::set_watching(&app, false);
-        announce_watching(&app, None);
+        if let Some(room) = lock(&state).room.as_ref() {
+            room.remove_relay_source(&member_id);
+        }
+        announce_watching(&app);
     })
     .await
 }
 
-/// Conta para a sala quem estamos assistindo (quem transmite vê quantos e quem assistem) e deixa a
-/// sala repassar esse stream a quem não alcança quem transmite (ADR 0014).
-fn announce_watching<R: Runtime>(app: &AppHandle<R>, watching: Option<sv_session::RelaySource>) {
-    if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
-        room.set_watching(watching.as_ref().map(|s| s.streamer.as_str()));
-        room.set_relay_source(watching);
+/// Conta para a sala quem estamos assistindo agora (quem transmite vê quantos e quem assistem).
+fn announce_watching<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<RoomState>();
+    let running = lock(&state);
+    if let Some(room) = running.room.as_ref() {
+        let mut ids: Vec<String> = running.watching.keys().cloned().collect();
+        ids.sort();
+        room.set_watching(&ids);
     }
 }
 
-/// Liga ou desliga o som de quem estamos assistindo.
+/// Liga ou desliga o som de uma live que assistimos.
 #[tauri::command]
-pub fn set_watch_listening(state: State<'_, RoomState>, listening: bool) {
-    if let Some(w) = lock(&state).watching.as_ref() {
+pub fn set_watch_listening(state: State<'_, RoomState>, member_id: String, listening: bool) {
+    if let Some(w) = lock(&state).watching.get(&member_id) {
         w.view.set_listening(listening);
     }
 }
 
-/// Volume de quem estamos assistindo, de 0 a 2 (200%).
+/// Volume de uma live que assistimos, de 0 a 2 (200%).
 #[tauri::command]
-pub fn set_watch_volume(state: State<'_, RoomState>, volume: f32) {
-    if let Some(w) = lock(&state).watching.as_ref() {
+pub fn set_watch_volume(state: State<'_, RoomState>, member_id: String, volume: f32) {
+    if let Some(w) = lock(&state).watching.get(&member_id) {
         w.view.set_volume(volume);
+    }
+}
+
+/// Onde fica o vídeo de uma live que assistimos (o quadro dela na sala, em pixels físicos).
+#[tauri::command]
+pub fn set_watch_bounds(state: State<'_, RoomState>, member_id: String, x: i32, y: i32, width: u32, height: u32) {
+    if let Some(w) = lock(&state).watching.get(&member_id) {
+        w.view.set_video_bounds(Bounds { x, y, width, height });
     }
 }
 
@@ -315,13 +334,20 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
     }
 }
 
-/// Solta o vídeo de quem estamos assistindo numa janela pequena, sempre no topo (picture in
-/// picture), ou devolve ao app.
+/// Solta o vídeo de uma live que assistimos numa janela pequena, sempre no topo (picture in
+/// picture), ou devolve ao app. Uma por vez: soltar outra traz a anterior de volta.
 #[tauri::command]
-pub fn room_set_pip(state: State<'_, RoomState>, pip: bool) -> Result<(), String> {
+pub fn room_set_pip(state: State<'_, RoomState>, member_id: String, pip: bool) -> Result<(), String> {
     let running = lock(&state);
-    match running.watching.as_ref() {
+    match running.watching.get(&member_id) {
         Some(w) => {
+            if pip {
+                for (id, other) in &running.watching {
+                    if *id != member_id {
+                        other.view.set_video_pip(false);
+                    }
+                }
+            }
             w.view.set_video_pip(pip);
             Ok(())
         }
@@ -331,19 +357,16 @@ pub fn room_set_pip(state: State<'_, RoomState>, pip: bool) -> Result<(), String
     }
 }
 
-/// Repassa a posição do vídeo para quem estamos assistindo.
+/// Repassa a todas as lives assistidas o que vale para todos os vídeos: escondidos por um modal e
+/// os recortes dos menus (a posição de cada uma vai pelo `set_watch_bounds`).
 pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, layout: &preview::Layout) -> bool {
     let state = app.state::<RoomState>();
     let running = lock(&state);
-    match running.watching.as_ref() {
-        Some(w) => {
-            w.view.set_video_bounds(layout.bounds);
-            w.view.set_video_hidden(layout.hidden);
-            w.view.set_video_holes(layout.holes.clone());
-            true
-        }
-        None => false,
+    for w in running.watching.values() {
+        w.view.set_video_hidden(layout.hidden);
+        w.view.set_video_holes(layout.holes.clone());
     }
+    !running.watching.is_empty()
 }
 
 #[derive(Serialize, Clone)]
@@ -364,6 +387,9 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         RoomUpdate::Voice(event) => crate::voice::emit_event(app, event),
         RoomUpdate::VoicePeers(peers) => {
             let _ = app.emit(crate::voice::PEERS_EVENT, peers);
+        }
+        RoomUpdate::VoiceBridges(bridges) => {
+            let _ = app.emit(crate::voice::BRIDGES_EVENT, bridges);
         }
         RoomUpdate::VoiceFailed { member_id, reason } => {
             app.state::<Diagnostics>()
@@ -421,11 +447,10 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
                 let state = app.state::<RoomState>();
                 let (watching, room) = {
                     let mut running = lock(&state);
-                    (running.watching.take(), running.room.take())
+                    (running.take_all(), running.room.take())
                 };
                 drop(watching);
                 drop(room);
-                preview::set_watching(&app, false);
                 preview::restart_for_room(&app);
                 let _ = app.emit(ROOM_CONNECTION_EVENT, "lost");
             });
@@ -454,6 +479,7 @@ fn start_watching<R: Runtime>(
         }
     };
     let stats_app = app.clone();
+    let stats_id = member.id.clone();
     let closed_app = app.clone();
     let closed_id = member.id.clone();
     let view = RemoteView::start(
@@ -463,7 +489,7 @@ fn start_watching<R: Runtime>(
         target,
         move |stats| {
             stats_app.state::<Diagnostics>().write("watch", &stats);
-            let _ = stats_app.emit(WATCH_STATS_EVENT, stats);
+            let _ = stats_app.emit(WATCH_STATS_EVENT, json!({ "memberId": stats_id, "stats": stats }));
         },
         move |_reason| {
             // Quem transmitia parou, ou a rede caiu. Tira da tela (fora desta thread de rede).
@@ -471,16 +497,14 @@ fn start_watching<R: Runtime>(
             let id = closed_id.clone();
             std::thread::spawn(move || {
                 let state = app.state::<RoomState>();
-                let mut running = lock(&state);
-                if running.watching.as_ref().is_some_and(|w| w.member.id == id) {
-                    let ended = running.watching.take();
-                    drop(running);
-                    if let Some(w) = ended.as_ref() {
-                        preview::hand_off_exit(&app, w.view.snapshot());
+                let ended = lock(&state).watching.remove(&id);
+                if let Some(w) = ended {
+                    preview::hand_off_exit(&app, Some(&id), w.view.snapshot());
+                    drop(w);
+                    if let Some(room) = lock(&state).room.as_ref() {
+                        room.remove_relay_source(&id);
                     }
-                    drop(ended);
-                    preview::set_watching(&app, false);
-                    announce_watching(&app, None);
+                    announce_watching(&app);
                     let _ = app.emit(
                         WATCH_ENDED_EVENT,
                         WatchEnded {
@@ -493,8 +517,9 @@ fn start_watching<R: Runtime>(
         },
     );
     let event_app = app.clone();
+    let source = member.id.clone();
     view.on_video_event(move |event| {
-        if preview::emit_pointer(&event_app, event) {
+        if preview::emit_pointer(&event_app, Some(&source), event) {
             return;
         }
         let kind = match event {
@@ -502,15 +527,16 @@ fn start_watching<R: Runtime>(
             WindowEvent::ExitFullscreen => "exit",
             // Dois cliques, Esc ou fechar no picture in picture: a interface traz o vídeo de volta.
             WindowEvent::ExitPip => {
-                let _ = event_app.emit(PIP_EVENT, false);
+                let _ = event_app.emit(PIP_EVENT, json!({ "pip": false, "source": source }));
                 return;
             }
             _ => return,
         };
-        let _ = event_app.emit(FULLSCREEN_EVENT, kind);
+        let _ = event_app.emit(FULLSCREEN_EVENT, json!({ "kind": kind, "source": source }));
     });
+    // A posição chega quando o quadro da live aparecer na sala (`set_watch_bounds`); até lá, fora
+    // da tela. Escondido por um modal e os recortes valem desde já.
     let layout = preview::layout(app);
-    view.set_video_bounds(layout.bounds);
     view.set_video_hidden(layout.hidden);
     view.set_video_holes(layout.holes);
 
@@ -520,12 +546,16 @@ fn start_watching<R: Runtime>(
     );
     let relay = view.relay_source(&member.id);
     let state = app.state::<RoomState>();
-    lock(&state).watching = Some(Watching {
-        member: member.clone(),
-        view,
-    });
-    preview::set_watching(app, true);
-    announce_watching(app, Some(relay));
+    let replaced = {
+        let mut running = lock(&state);
+        if let Some(room) = running.room.as_ref() {
+            room.add_relay_source(relay);
+        }
+        running.watching.insert(member.id.clone(), Watching { view })
+    };
+    // A mesma pessoa de novo (pediu de novo): a anterior fecha, fora do lock.
+    drop(replaced);
+    announce_watching(app);
     let _ = app.emit(WATCH_STARTED_EVENT, member);
 }
 
@@ -588,17 +618,21 @@ mod tests {
         assert_eq!(room_answer_join(state(), "aa".into(), true).unwrap_err(), entre);
         assert_eq!(room_watch(state(), "aa".into()).unwrap_err(), entre);
         // Picture in picture sem estar assistindo: pedir avisa; voltar não faz nada.
-        assert_eq!(room_set_pip(state(), true).unwrap_err(), "Assista a alguém primeiro.");
-        assert!(room_set_pip(state(), false).is_ok());
+        assert_eq!(
+            room_set_pip(state(), "aa".into(), true).unwrap_err(),
+            "Assista a alguém primeiro."
+        );
+        assert!(room_set_pip(state(), "aa".into(), false).is_ok());
         // Sem sala e sem ninguém assistido, não acontece nada (nem cai).
         assert!(room_set_profile(state(), "Ana".into(), None).is_ok());
         assert!(room_set_effect(state(), None).is_ok());
-        set_watch_listening(state(), false);
-        set_watch_volume(state(), 1.5);
+        set_watch_listening(state(), "aa".into(), false);
+        set_watch_volume(state(), "aa".into(), 1.5);
+        set_watch_bounds(state(), "aa".into(), 0, 0, 320, 180);
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
         assert!(!apply_layout(t.handle(), &preview::Layout::default()));
-        tauri::async_runtime::block_on(room_stop_watching(t.handle().clone())).unwrap();
+        tauri::async_runtime::block_on(room_stop_watching(t.handle().clone(), "aa".into())).unwrap();
         tauri::async_runtime::block_on(room_leave(t.handle().clone())).unwrap();
     }
 

@@ -35,3 +35,5 @@
 | [0016](adr/0016-servidores-e-salas-fixas.md)              | Servidores com salas fixas, guardados no Worker                                     |
 | [0017](adr/0017-mensagens-privadas-p2p.md)                | Mensagens privadas direto entre os dois PCs                                         |
 | [0018](adr/0018-presenca-nas-salas-do-servidor.md)        | Presença nas salas do servidor e entrada direta para membros                        |
+| [0019](adr/0019-varias-lives-ao-mesmo-tempo.md)           | Várias lives ao mesmo tempo, cada uma num quadro da sala                            |
+| [0020](adr/0020-voz-repassada-pela-sala.md)               | Voz repassada por um membro da sala quando dois membros não se alcançam             |

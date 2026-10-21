@@ -80,7 +80,7 @@ beforeEach(async () => {
   handlers.clear();
   useToastStore.setState({ toasts: [] });
   useAccountStore.setState({ profile: { id: ME, username: "kaique", globalName: "Kaique", avatar: null } });
-  useRoomStore.setState({ code: null, roomName: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, roomName: null, members: [], watching: {} });
   useFriendsStore.setState({ status: "signed-out", open: false });
   useServersStore.setState({ servers: [], selected: null, invites: {} });
   useServerInviteStore.setState({ invite: null });
@@ -215,7 +215,9 @@ describe("servidores: mais casos", () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("negado"))) } });
     onServerMessage({ type: "server-invite", server: ID, invite: `${ID}.AbCdEf234567` } as never);
     await Promise.resolve();
-    expect(useServersStore.getState().invites[ID]).toBe(`squadview://servidor/${ID}.AbCdEf234567`);
+    expect(useServersStore.getState().invites[ID]).toBe(
+      `https://kaique292.github.io/squadview/convite/?servidor=${ID}.AbCdEf234567`,
+    );
     expect(onServerMessage({ type: "state" })).toBe(false);
   });
 

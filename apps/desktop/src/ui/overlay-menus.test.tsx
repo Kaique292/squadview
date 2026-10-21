@@ -32,7 +32,7 @@ beforeEach(() => {
   handlers.clear();
   localStorage.clear();
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
+  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   // Só dentro do Tauri o app avisa o Rust para esconder o vídeo.
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   // O jsdom não rola elementos; a lista do Radix chama isso ao abrir.

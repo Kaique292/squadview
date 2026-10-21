@@ -226,6 +226,59 @@ fn arquivo_vai_quando_pedido_e_continua_de_onde_parou() {
 }
 
 #[test]
+fn cancelar_o_download_para_de_receber_e_apaga_o_que_chegou() {
+    let (ana, beto, _) = pair("cancelar");
+    let source = ana.dir.join("filme.mkv");
+    std::fs::create_dir_all(&ana.dir).unwrap();
+    // Grande o bastante para ainda estar chegando quando o cancelar vier.
+    std::fs::write(&source, vec![7u8; 64 * 1024 * 1024]).unwrap();
+    let sent = ana.engine.send_file(BETO, &source, None).unwrap();
+    beto.message("aviso do arquivo", |m| m.id == sent.id);
+    let dest = beto.dir.join("baixados").join("filme.mkv");
+    // Nada baixando: não há o que cancelar.
+    assert!(!beto.engine.cancel_download(ANA, &sent.id));
+    beto.engine.download(ANA, &sent.id, &dest);
+    beto.message("começou a chegar", |m| {
+        m.id == sent.id && m.file.as_ref().is_some_and(|f| f.done > 0)
+    });
+    // Só o dono do download cancela.
+    assert!(!beto.engine.cancel_download(BETO, &sent.id));
+    assert!(beto.engine.cancel_download(ANA, &sent.id));
+    let canceled = beto.message("voltou a Baixar", |m| {
+        m.id == sent.id && m.file.as_ref().is_some_and(|f| f.done == 0 && f.path.is_none())
+    });
+    assert!(canceled.file.unwrap().path.is_none());
+    // O que tinha chegado some (o stream percebe na próxima volta e apaga também).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while part_of(&dest).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!part_of(&dest).exists(), "o .part ficou");
+    assert!(!dest.exists());
+}
+
+#[test]
+fn arquivo_apagado_por_quem_mandou_avisa_em_vez_de_travar() {
+    let (ana, beto, _) = pair("apagado");
+    let source = ana.dir.join("video.mp4");
+    std::fs::create_dir_all(&ana.dir).unwrap();
+    std::fs::write(&source, vec![1u8; 300_000]).unwrap();
+    let sent = ana.engine.send_file(BETO, &source, None).unwrap();
+    beto.message("aviso do arquivo", |m| m.id == sent.id);
+    // A Ana apagou o arquivo antes de o Beto baixar.
+    std::fs::remove_file(&source).unwrap();
+    let dest = beto.dir.join("baixados").join("video.mp4");
+    beto.engine.download(ANA, &sent.id, &dest);
+    let gone = beto.message("não existe mais", |m| {
+        m.id == sent.id && m.file.as_ref().is_some_and(|f| f.gone)
+    });
+    let file = gone.file.unwrap();
+    assert!(file.path.is_none());
+    assert_eq!(file.done, 0);
+    assert!(!part_of(&dest).exists() && !dest.exists());
+}
+
+#[test]
 fn guardar_copia_aponta_para_a_copia_do_app() {
     let (ana, _beto, _) = pair("copia");
     let source = ana.dir.join("foto.png");

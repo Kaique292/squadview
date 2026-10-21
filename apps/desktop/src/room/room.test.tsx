@@ -3,7 +3,7 @@ import { act } from "react";
 import { App } from "../App";
 import { DEFAULT_QUALITY, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
-import { listenToRoomEvents, type Member, savedName, useRoomStore } from "./room-store";
+import { listenToRoomEvents, MAX_WATCHING, type Member, savedName, useRoomStore, type Watch } from "./room-store";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -23,6 +23,11 @@ const ME: Member = { id: "aaaaaaaaaaaaaaaa", name: "Kaique", live: false };
 const ANA: Member = { id: "bbbbbbbbbbbbbbbb", name: "Ana", live: true };
 const BETO: Member = { id: "cccccccccccccccc", name: "Beto", live: false };
 
+/** Uma live que já estamos assistindo. */
+function watchOf(member: Member, extra: Partial<Watch> = {}): Watch {
+  return { member, stats: null, history: [], listening: true, volume: 100, ...extra };
+}
+
 function emit(name: string, payload: unknown) {
   act(() => handlers.get(name)!({ payload }));
 }
@@ -39,13 +44,18 @@ beforeEach(async () => {
     members: [],
     joining: false,
     joinError: null,
-    pendingWatch: null,
-    watching: null,
-    watchStats: null,
-    watchListening: true,
+    pendingWatch: [],
+    watching: {},
   });
   useToastStore.setState({ toasts: [] });
-  useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
+  useStreamStore.setState({
+    status: "idle",
+    stats: null,
+    fullscreen: false,
+    fullscreenOf: null,
+    pip: null,
+    quality: DEFAULT_QUALITY,
+  });
   await listenToRoomEvents();
 });
 
@@ -99,7 +109,7 @@ describe("criar e entrar em sala", () => {
   });
 
   it("mostra o erro da sala e continua com o modal aberto", async () => {
-    invoke.mockRejectedValue("A sala está cheia (máximo de 8 pessoas).");
+    invoke.mockRejectedValue("A sala está cheia.");
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
     await screen.findByRole("dialog");
@@ -146,7 +156,7 @@ describe("na sala", () => {
     expect(screen.queryByRole("button", { name: "Assistir Beto" })).not.toBeInTheDocument();
   });
 
-  it("assiste um amigo: pede, conecta e mostra o vídeo dele com as estatísticas", async () => {
+  it("assiste um amigo: pede, conecta e a live dele vira um quadro da sala, em foco", async () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
     fireEvent.click(screen.getAllByRole("button", { name: "Assistir Ana" })[0]);
@@ -155,57 +165,130 @@ describe("na sala", () => {
 
     emit("watch-started", ANA);
     expect(screen.getByRole("status", { name: "Sucesso" })).toHaveTextContent("Conectado direto com Ana.");
-    const view = screen.getByRole("region", { name: "Assistindo Ana" });
-    emit("watch-stats", { fps: 60, latencyMs: 42, bitrateKbps: 8000, rttMs: 18 } as StreamStats);
-    expect(view).toHaveTextContent("60 fps · 42 ms · 8.0 Mbps · ping 18 ms");
+    // Sem barra embaixo: a live é um quadro como o da nossa, e começa em foco (como no Discord).
+    const foco = screen.getByRole("group", { name: "Em foco" });
+    expect(within(foco).getByRole("button", { name: "Voltar para a grade (live de Ana em foco)" })).toBeInTheDocument();
+    emit("watch-stats", { memberId: ANA.id, stats: { fps: 60, height: 1080, rttMs: 18 } as StreamStats });
+    expect(within(foco).getByText("1080p 60fps")).toHaveAttribute("data-video-hole");
+    // Medição de quem não assistimos (chegou atrasada) não mexe em nada.
+    emit("watch-stats", { memberId: BETO.id, stats: { fps: 30 } as StreamStats });
+    expect(useRoomStore.getState().watching[BETO.id]).toBeUndefined();
 
-    fireEvent.click(screen.getByRole("button", { name: "Silenciar" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: false }));
+    fireEvent.contextMenu(within(foco).getByRole("button", { name: /live de Ana/ }));
+    const menu = await screen.findByRole("menu", { name: "Opções da live de Ana" });
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /Silenciar transmissão/ }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("set_watch_listening", { memberId: ANA.id, listening: false }),
+    );
+    expect(within(foco).getByLabelText("Som da transmissão desligado")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Parar de assistir" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_stop_watching"));
-    expect(screen.queryByRole("region", { name: "Assistindo Ana" })).not.toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Parar de assistir/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_stop_watching", { memberId: ANA.id }));
+    expect(screen.queryByRole("button", { name: /live de Ana/ })).not.toBeInTheDocument();
   });
 
-  it("ajusta o volume de quem assiste até 200%, como no Discord, e lembra", async () => {
-    localStorage.removeItem("squadview.volume");
-    useRoomStore.setState({ watchVolume: 100 });
+  it("assiste várias lives ao mesmo tempo, cada uma com o seu quadro", async () => {
+    const BIA = { ...BETO, live: true };
+    render(<App />);
+    emit("room-members", [ME, ANA, BIA]);
+    emit("watch-started", ANA);
+    emit("watch-started", BIA);
+    // A última que começou fica em foco; a outra vai para a faixa.
+    expect(
+      within(screen.getByRole("group", { name: "Em foco" })).getByRole("button", { name: /live de Beto/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("list", { name: "Outros na voz" })).getByRole("button", { name: /live de Ana/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toHaveTextContent("Assistindo Ana e mais 1");
+    // Na grade, o quadro de quem já assistimos oferece ver a live, que vem para o foco.
+    fireEvent.click(screen.getByRole("button", { name: /Voltar para a grade \(live de Beto em foco\)/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Ver a transmissão" })[0]);
+    expect(
+      within(screen.getByRole("group", { name: "Em foco" })).getByRole("button", { name: /live de Ana/ }),
+    ).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("room_watch", expect.anything());
+  });
+
+  it("assistir pelo botão direito de quem já assistimos também só traz a live para o foco", async () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
     emit("watch-started", ANA);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1 }));
+    fireEvent.click(screen.getByRole("button", { name: /Voltar para a grade \(live de Ana em foco\)/ }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Pôr Ana em foco" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Assistir a transmissão/ }));
+    expect(
+      within(screen.getByRole("group", { name: "Em foco" })).getByRole("button", { name: /live de Ana/ }),
+    ).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("room_watch", expect.anything());
+  });
 
-    const slider = screen.getByRole("slider", { name: "Volume da transmissão" });
+  it("tem um limite de lives ao mesmo tempo", async () => {
+    const watching = Object.fromEntries(
+      Array.from({ length: MAX_WATCHING }, (_, i) => [`m${i}`, watchOf({ ...ANA, id: `m${i}` })]),
+    );
+    useRoomStore.setState({ watching });
+    await useRoomStore.getState().watch(BETO);
+    expect(invoke).not.toHaveBeenCalledWith("room_watch", expect.anything());
+    expect(useToastStore.getState().toasts[0].message).toContain(`até ${MAX_WATCHING} lives`);
+  });
+
+  it("ajusta o volume de cada live até 200%, como no Discord, e lembra para a próxima", async () => {
+    localStorage.removeItem("squadview.volume");
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    emit("watch-started", ANA);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { memberId: ANA.id, volume: 1 }));
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
+    const slider = await screen.findByRole("slider", { name: "Volume da transmissão" });
     expect(slider).toHaveAttribute("max", "200");
     fireEvent.change(slider, { target: { value: "150" } });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { volume: 1.5 }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_volume", { memberId: ANA.id, volume: 1.5 }));
     expect(screen.getByText("150%")).toBeInTheDocument();
     expect(localStorage.getItem("squadview.volume")).toBe("150");
+    // As setas do teclado mexem no volume, não no item destacado do menu.
+    const key = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true });
+    const stop = vi.spyOn(key, "stopPropagation");
+    slider.dispatchEvent(key);
+    expect(stop).toHaveBeenCalled();
+    // Volume de uma live que já fechou não faz nada.
+    await useRoomStore.getState().setWatchVolume(BETO.id, 50);
+    expect(invoke).not.toHaveBeenCalledWith("set_watch_volume", expect.objectContaining({ memberId: BETO.id }));
   });
 
   it("mexer no volume com o som desligado liga o som", async () => {
-    useRoomStore.setState({ watching: ANA, members: [ME, ANA], watchListening: false, watchVolume: 0 });
+    useRoomStore.setState({
+      watching: { [ANA.id]: watchOf(ANA, { listening: false, volume: 0 }) },
+      members: [ME, ANA],
+    });
     render(<App />);
-    fireEvent.change(screen.getByRole("slider", { name: "Volume da transmissão" }), { target: { value: "40" } });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_watch_listening", { listening: true }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
+    fireEvent.change(await screen.findByRole("slider", { name: "Volume da transmissão" }), { target: { value: "40" } });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("set_watch_listening", { memberId: ANA.id, listening: true }),
+    );
   });
 
-  it("quando a transmissão do amigo acaba, sai do vídeo e explica", () => {
-    useRoomStore.setState({ watching: ANA, members: [ME, ANA] });
+  it("quando a transmissão do amigo acaba, o quadro some e explica", () => {
+    useRoomStore.setState({ watching: { [ANA.id]: watchOf(ANA) }, members: [ME, ANA] });
+    useStreamStore.setState({ pip: ANA.id, fullscreen: true, fullscreenOf: ANA.id });
     render(<App />);
     emit("watch-ended", { memberId: ANA.id, reason: "A transmissão terminou." });
-    expect(screen.queryByRole("region", { name: "Assistindo Ana" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /live de Ana/ })).not.toBeInTheDocument();
+    // Estava solta e em tela cheia: a interface volta ao normal.
+    expect(useStreamStore.getState()).toMatchObject({ pip: null, fullscreen: false });
     // Fim normal: notificação informativa (não é erro).
     expect(screen.getByRole("status", { name: "Aviso do sistema" })).toHaveTextContent("A transmissão terminou.");
   });
 
   it("explica quando não deu para conectar e ignora fins de outros membros", () => {
-    useRoomStore.setState({ pendingWatch: ANA.id, members: [ME, ANA] });
+    useRoomStore.setState({ pendingWatch: [ANA.id], members: [ME, ANA] });
     render(<App />);
     emit("watch-ended", { memberId: BETO.id, reason: "outro" });
-    expect(useRoomStore.getState().pendingWatch).toBe(ANA.id);
+    expect(useRoomStore.getState().pendingWatch).toEqual([ANA.id]);
     emit("watch-ended", { memberId: ANA.id, reason: "não deu para conectar direto (CGNAT)" });
-    expect(useRoomStore.getState().pendingWatch).toBeNull();
+    expect(useRoomStore.getState().pendingWatch).toEqual([]);
     expect(screen.getByRole("alert", { name: "Erro" })).toHaveTextContent(
       "Não deu para assistirnão deu para conectar direto (CGNAT)",
     );
@@ -218,13 +301,15 @@ describe("na sala", () => {
   });
 
   it("não pede para assistir de novo quem já está na tela, e mostra falha do pedido", async () => {
-    useRoomStore.setState({ watching: ANA });
+    useRoomStore.setState({ watching: { [ANA.id]: watchOf(ANA) } });
+    await useRoomStore.getState().watch(ANA);
+    useRoomStore.setState({ watching: {}, pendingWatch: [ANA.id] });
     await useRoomStore.getState().watch(ANA);
     expect(invoke).not.toHaveBeenCalledWith("room_watch", expect.anything());
-    useRoomStore.setState({ watching: null });
+    useRoomStore.setState({ pendingWatch: [] });
     invoke.mockRejectedValue("Entre numa sala primeiro.");
     await useRoomStore.getState().watch(ANA);
-    expect(useRoomStore.getState().pendingWatch).toBeNull();
+    expect(useRoomStore.getState().pendingWatch).toEqual([]);
     expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "error", message: "Entre numa sala primeiro." });
   });
 
@@ -292,7 +377,7 @@ describe("na sala", () => {
   });
 
   it("o painel do usuário mostra o que estamos fazendo", () => {
-    useRoomStore.setState({ watching: ANA, members: [ME, ANA] });
+    useRoomStore.setState({ watching: { [ANA.id]: watchOf(ANA) }, members: [ME, ANA] });
     render(<App />);
     const panel = screen.getByRole("contentinfo");
     expect(panel).toHaveTextContent("Assistindo Ana");

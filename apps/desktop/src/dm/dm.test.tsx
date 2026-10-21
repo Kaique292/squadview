@@ -28,6 +28,8 @@ const { invoke, listen, handlers, drop } = vi.hoisted(() => {
   };
 });
 vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (p: string) => `asset://${p}` }));
+const { playCue } = vi.hoisted(() => ({ playCue: vi.fn() }));
+vi.mock("../sounds/sounds", async (original) => ({ ...(await original<object>()), playCue }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
@@ -75,7 +77,7 @@ beforeEach(async () => {
   localStorage.clear();
   useToastStore.setState({ toasts: [] });
   useAccountStore.setState({ profile: { id: ME, username: "k", globalName: "Kaique", avatar: null } });
-  useRoomStore.setState({ code: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, members: [], watching: {} });
   useFriendsStore.setState({
     status: "online",
     open: true,
@@ -463,6 +465,57 @@ describe("mensagens privadas", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("um download no meio pode ser cancelado", async () => {
+    const chat = await openBeto();
+    const zip = msg({
+      id: "z",
+      file: { name: "filme.mkv", size: 1000, mime: "video/x-matroska", path: null, done: 0 },
+    });
+    emit("dm-event", { type: "message", friend: BETO, message: zip });
+    answers.dm_pick_save = "D:/filme.mkv";
+    fireEvent.click(within(chat).getByRole("button", { name: /Baixar/ }));
+    await waitFor(() => expect(calls("dm_download")).toHaveLength(1));
+    emit("dm-event", { type: "message", friend: BETO, message: { ...zip, file: { ...zip.file!, done: 400 } } });
+    fireEvent.click(within(chat).getByRole("button", { name: "Cancelar o download de filme.mkv" }));
+    await waitFor(() => expect(calls("dm_cancel_download")).toEqual([{ friend: BETO, id: "z" }]));
+    // Voltou a mostrar Baixar.
+    emit("dm-event", { type: "message", friend: BETO, message: zip });
+    expect(within(chat).getByRole("button", { name: /Baixar/ })).toBeInTheDocument();
+  });
+
+  it("arquivo que quem mandou apagou avisa e não oferece baixar", async () => {
+    const chat = await openBeto();
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: msg({
+        id: "g",
+        file: { name: "jogo.zip", size: 2048, mime: "application/zip", path: null, done: 0, gone: true },
+      }),
+    });
+    expect(within(chat).getByText(/Não está mais disponível/)).toBeInTheDocument();
+    expect(within(chat).queryByRole("button", { name: /Baixar/ })).toBeNull();
+  });
+
+  it("mensagem nova toca o aviso e aparece no contador do ícone do SquadView", async () => {
+    render(<App />);
+    playCue.mockClear();
+    emit("dm-event", { type: "message", friend: BETO, message: msg({ id: "n1", text: "oi" }) });
+    expect(playCue).toHaveBeenCalledWith("message", expect.any(Number));
+    const rail = screen.getByRole("navigation", { name: "Salas" });
+    expect(within(rail).getByLabelText("1 novidade(s): pedidos de amizade e mensagens")).toBeInTheDocument();
+    // As nossas e as repetidas (status mudando) não tocam.
+    playCue.mockClear();
+    emit("dm-event", { type: "message", friend: BETO, message: msg({ id: "n2", mine: true, text: "e aí" }) });
+    emit("dm-event", { type: "message", friend: BETO, message: msg({ id: "n1", text: "oi" }) });
+    expect(playCue).not.toHaveBeenCalled();
+    // Com a conversa aberta e o app na frente, também não.
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    await act(() => useDmStore.getState().openChat(BETO));
+    emit("dm-event", { type: "message", friend: BETO, message: msg({ id: "n3", text: "tá aí?" }) });
+    expect(playCue).not.toHaveBeenCalled();
   });
 
   it("configurações: a escolha da cópia e as partes novas da limpeza", async () => {

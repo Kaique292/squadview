@@ -285,7 +285,9 @@ export async function listenToFriendsEvents() {
     // Entrou numa sala ou começou a assistir alguém: sai da página de amigos para mostrar a sala
     // ou o vídeo (antes o vídeo ficava escondido atrás dela).
     const enteredRoom = s.code !== null && s.code !== prev.code;
-    const startedWatching = (s.watching && !prev.watching) || (s.pendingWatch && !prev.pendingWatch);
+    const startedWatching =
+      Object.keys(s.watching).length > Object.keys(prev.watching).length ||
+      s.pendingWatch.length > prev.pendingWatch.length;
     if ((enteredRoom || startedWatching) && useFriendsStore.getState().open) {
       useFriendsStore.setState({ open: false });
     }

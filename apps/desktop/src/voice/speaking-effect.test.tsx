@@ -36,7 +36,7 @@ beforeEach(async () => {
   localStorage.clear();
   useSpeakingEffectStore.setState({ effect: null });
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
+  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   await listenToRoomEvents();
   await listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name);

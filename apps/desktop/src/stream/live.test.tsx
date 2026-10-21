@@ -40,7 +40,7 @@ beforeEach(async () => {
   handlers.clear();
   useToastStore.setState({ toasts: [] });
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
+  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   useStreamStore.setState({
     status: "live",
     quality: DEFAULT_QUALITY,
@@ -48,7 +48,8 @@ beforeEach(async () => {
     history: [],
     notice: null,
     fullscreen: false,
-    videoHover: false,
+    videoHover: null,
+    fullscreenOf: null,
     current: { source: JOGO, audioPid: 7, lastAudioPid: 7 },
   });
   offs = [await listenToRoomEvents(), await listenToStreamEvents()];
@@ -329,7 +330,7 @@ describe("o mouse que o vídeo nativo repassa", () => {
     // Dois cliques: chega o clique e logo a tela cheia, que o cancela.
     invoke.mockResolvedValue(undefined);
     handleVideoPointer({ kind: "click", x: 5, y: 5 }, () => {});
-    emit("video-fullscreen", "toggle");
+    emit("video-fullscreen", { kind: "toggle", source: null });
     vi.advanceTimersByTime(DOUBLE_CLICK_MS);
     expect(click).toHaveBeenCalledTimes(1);
   });

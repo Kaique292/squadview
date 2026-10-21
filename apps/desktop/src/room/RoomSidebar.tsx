@@ -18,6 +18,7 @@ import {
   UserPlus,
   Users,
   Volume2,
+  Waypoints,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
@@ -278,8 +279,8 @@ export function RoomMemberList() {
         <MemberRow
           key={m.id}
           member={m}
-          watching={watching?.id === m.id}
-          pending={pendingWatch === m.id}
+          watching={!!watching[m.id]}
+          pending={pendingWatch.includes(m.id)}
           onWatch={() => void watch(m)}
         />
       ))}
@@ -318,6 +319,10 @@ function MemberRow(props: {
   const muted = props.isMe ? myPrefs.muted || myPrefs.deafened : !!member.muted;
   const deafened = props.isMe ? myPrefs.deafened : !!member.deafened;
   const canWatch = member.live && !props.isMe;
+  // A voz com essa pessoa passa por outro membro da sala (ADR 0020): a internet de vocês não
+  // deixou a conexão direta abrir.
+  const bridge = useVoiceStore((s) => (props.isMe ? undefined : s.bridges[member.id]));
+  const bridgeName = useRoomStore((s) => (bridge ? s.members.find((m) => m.id === bridge)?.name : undefined));
   return (
     <MemberMenu member={member} isMe={!!props.isMe} onWatch={props.onWatch}>
       <li
@@ -339,6 +344,15 @@ function MemberRow(props: {
           {member.name}
           {props.isMe && <span className="text-text-faint"> (você)</span>}
         </span>
+        {bridge && (
+          <Tooltip label={`Voz pela conexão de ${bridgeName ?? "outro membro"}`} side="top">
+            <Waypoints
+              size={14}
+              aria-label={`Voz pela conexão de ${bridgeName ?? "outro membro"}`}
+              className="shrink-0 text-text-faint"
+            />
+          </Tooltip>
+        )}
         {(muted || deafened) && (
           <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
         )}
@@ -430,11 +444,17 @@ function UserPanel() {
   const profile = useAccountStore((s) => s.profile);
   const name = me?.name ?? (profile ? displayName(profile) : "Você");
   const code = useRoomStore((s) => s.code);
-  const watching = useRoomStore((s) => s.watching);
+  const watching = Object.values(useRoomStore((s) => s.watching)).map((w) => w.member.name);
   const live = useStreamStore((s) => s.status === "live");
   const speaking = useVoiceStore((s) => !!s.speaking.me);
   const effect = useSpeakingEffectStore((s) => s.effect);
-  const status = live ? "Transmitindo" : watching ? `Assistindo ${watching.name}` : code ? "Na sala" : "Fora de sala";
+  const status = live
+    ? "Transmitindo"
+    : watching.length > 0
+      ? `Assistindo ${watching[0]}${watching.length > 1 ? ` e mais ${watching.length - 1}` : ""}`
+      : code
+        ? "Na sala"
+        : "Fora de sala";
 
   return (
     <footer className="flex h-[52px] shrink-0 items-center gap-1 px-2">

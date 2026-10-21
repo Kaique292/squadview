@@ -29,8 +29,11 @@ Entrar na sala é entrar nesse código, como hoje: a voz, o vídeo e a malha nã
   base64, comprimido pelo app para caber no limite de 16 KB por mensagem).
 - Limites: 100 membros por servidor, 20 salas por servidor, 20 servidores por pessoa, 20
   convites ativos por servidor, convites valem 7 dias.
-- Convite é `<id do servidor>.<segredo>` (link `squadview://servidor/...`): sem o segredo
-  ninguém entra, e o dono pode apagar o servidor (os convites morrem junto).
+- Convite é `<id do servidor>.<segredo>`: sem o segredo ninguém entra, e o dono pode apagar o
+  servidor (os convites morrem junto). O app copia o link web da página de convite
+  (`.../convite/?servidor=<convite>`), clicável em qualquer chat, que abre
+  `squadview://servidor/<convite>` ou oferece o download; colar o `squadview://` antigo continua
+  valendo.
 - O código de uma sala do servidor funciona como qualquer código de sala: quem souber entra,
   mesmo sem ser membro. O código não aparece para quem não é membro; restringir a entrada na
   própria sala fica para depois (exigiria o `Room` perguntar ao `Server`).

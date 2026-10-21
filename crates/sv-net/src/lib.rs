@@ -34,6 +34,9 @@ pub const ALPN: &[u8] = b"squadview/1";
 pub const VOICE_ALPN: &[u8] = b"squadview-voice/1";
 /// ALPN das conversas privadas entre dois amigos (ADR 0017), fora de qualquer sala.
 pub const DM_ALPN: &[u8] = b"squadview-dm/1";
+/// ALPN da conexão de repasse de voz (ADR 0020): quem ajuda copia por ela a voz de quem a gente
+/// não alcança, cada pacote com a origem.
+pub const VOICE_RELAY_ALPN: &[u8] = b"squadview-voice-relay/1";
 
 #[cfg(test)]
 mod tests {

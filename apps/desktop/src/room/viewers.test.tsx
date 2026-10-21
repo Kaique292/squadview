@@ -3,7 +3,7 @@ import { App } from "../App";
 import { useStreamStore } from "../stream/stream-store";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
 import { listenToRoomEvents, type Member, useRoomStore } from "./room-store";
-import { namesList, viewersOf } from "./Viewers";
+import { namesList, Viewers, viewersOf } from "./Viewers";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -35,7 +35,7 @@ beforeEach(async () => {
   localStorage.clear();
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], level: 0 });
   useStreamStore.setState({ status: "idle" });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
+  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   await listenToRoomEvents();
 });
 
@@ -44,6 +44,31 @@ describe("quem está assistindo", () => {
     const members = [{ ...ME, watching: ANA.id }, ANA, { ...BETO, watching: ANA.id }, { ...CAIO, watching: null }];
     expect(viewersOf(members, ANA.id).map((m) => m.name)).toEqual(["Kaique", "Beto"]);
     expect(viewersOf(members, BETO.id)).toEqual([]);
+  });
+
+  it("quem assiste várias lives conta em todas; a lista nova vale mais que o campo antigo", () => {
+    const members = [
+      { ...ME, watching: ANA.id, watchingAll: [ANA.id, CAIO.id] },
+      ANA,
+      // App até o 0.8.0: só o campo antigo.
+      { ...BETO, watching: CAIO.id },
+      { ...CAIO, watching: ANA.id, watchingAll: [] },
+    ];
+    expect(viewersOf(members, ANA.id).map((m) => m.name)).toEqual(["Kaique"]);
+    expect(viewersOf(members, CAIO.id).map((m) => m.name)).toEqual(["Kaique", "Beto"]);
+  });
+
+  it("a lista completa mostra as fotos de até 3 e o resto em número", () => {
+    const EDU = { ...CAIO, id: "eeeeeeeeeeeeeeee", name: "Edu" };
+    useRoomStore.setState({
+      members: [ME, ANA, BETO, CAIO, EDU].map((m) => (m.id === ANA.id ? m : { ...m, watchingAll: [ANA.id] })),
+    });
+    const view = render(<Viewers streamerId={ANA.id} />);
+    const grupo = screen.getByRole("group", { name: "4 pessoas assistindo" });
+    expect(grupo).toHaveTextContent(/^4.*\+1$/);
+    useRoomStore.setState({ members: [ME, ANA] });
+    view.rerender(<Viewers streamerId={ANA.id} />);
+    expect(screen.getByRole("group", { name: "0 pessoas assistindo" })).toBeInTheDocument();
   });
 
   it("junta os nomes como se fala", () => {

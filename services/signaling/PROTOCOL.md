@@ -69,6 +69,7 @@ Desde a 0.5.0 ([ADR 0014](../../docs/adr/0014-conexao-em-camadas.md)), para quem
 
 - `{"type":"turn","urls":["turn:turn.cloudflare.com:3478?transport=udp",...],"username":"...","credential":"..."}` (servidor → quem acabou de entrar): credenciais do repassador TURN. Só vai se o Worker tiver um provedor configurado (Cloudflare, Metered ou servidor fixo; ver `wrangler.toml`). Apps antigos ignoram.
 - Sinal `relay-request` (entre apps, pelo `signal`): quem não alcança quem transmite pede a um membro que já assiste para repassar. A resposta é um `watch-accept` ou `watch-deny` normal.
+- Sinais da voz repassada ([ADR 0020](../../docs/adr/0020-voz-repassada-pela-sala.md)), entre apps: `voice-relay-request { to }` pede a quem já fala com os dois para repassar a voz com `to`; a resposta é `voice-relay-accept { to }` ou `voice-relay-deny { to, reason }`; quem pediu manda à outra ponta `voice-relay-key { via, key }` com a chave do par (hex). O Worker não olha nenhum deles.
 - Nos sinais, `watch-accept` e `voice-answer` ganham o campo opcional `relay` (`"ip:porta"`): o endereço que quem aceita pegou emprestado no repassador. Quem conecta tenta os `candidates` e, se não fechar em 1,5 s, também o `relay`. O Worker não olha os sinais; o campo é só entre os apps.
 
 ## Amigos e presença
@@ -124,7 +125,7 @@ Registro → app:
 | `{"type":"servers","servers":[...]}`                                | Ao conectar: todos os nossos (`id`, `name`, `icon`, `rooms`, `members`)                                                          |
 | `{"type":"server","server":{...}}`                                  | Entramos, criamos ou alguém mudou um servidor nosso                                                                              |
 | `{"type":"server-removed","id":"..."}`                              | Saímos, fomos tirados ou o servidor foi apagado                                                                                  |
-| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta `squadview://servidor/<convite>`)                                                                    |
+| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta o link `.../convite/?servidor=<convite>`, que abre `squadview://servidor/<convite>`)                 |
 | `{"type":"error","code":"..."}`                                     | `not-member`, `not-allowed`, `unknown-room`, `unknown-member`, `invite-invalid`, `server-full`, `too-many`, `owner-cannot-leave` |
 
 O Worker antigo não conhece essas mensagens e fecha a conexão de amigos (4400): publique o Worker antes do app.
@@ -149,7 +150,7 @@ Também precisam do Worker publicado antes do app.
 | ------------------ | --------------------------------------------------------------------------------- | ---------------- |
 | `invalid-message`  | JSON fora do contrato, mensagem binária, mensagem bruta > 16 KB ou segundo `join` | Sim (4400)       |
 | `version-mismatch` | `protocol` diferente de 1                                                         | Sim (4426)       |
-| `room-full`        | A sala já tem 8 membros                                                           | Sim (4409)       |
+| `room-full`        | Não é mais mandado: a sala não tem limite de pessoas (os apps ainda entendem)     | Sim (4409)       |
 | `rate-limited`     | Mais de 100 mensagens em 10 s                                                     | Sim (4429)       |
 | `not-joined`       | Mensagem antes do `join`                                                          | Não              |
 | `unknown-peer`     | `signal` para alguém que não está na sala (ou para si mesmo)                      | Não              |

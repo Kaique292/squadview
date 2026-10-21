@@ -55,7 +55,7 @@ function PresenceProbe() {
 
 describe("status no Discord dentro do app", () => {
   beforeEach(() => {
-    useRoomStore.setState({ code: null, members: [], watching: null, joinedAt: null });
+    useRoomStore.setState({ code: null, members: [], watching: {}, joinedAt: null });
     useStreamStore.setState({ status: "idle" });
     usePresenceSettings.setState({ show: true, shareInvite: false });
   });
