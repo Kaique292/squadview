@@ -12,6 +12,7 @@ export const SOUND_OPTIONS: { cues: Cue[]; label: string }[] = [
   { cues: ["deafen", "undeafen"], label: "Surdo" },
   { cues: ["stream-start", "stream-stop"], label: "Começar e encerrar transmissão" },
   { cues: ["disconnect"], label: "Conexão perdida" },
+  { cues: ["message"], label: "Mensagem recebida" },
 ];
 
 export interface SoundPrefs {
