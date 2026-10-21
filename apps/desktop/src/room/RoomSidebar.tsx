@@ -266,7 +266,12 @@ export function RoomMemberList() {
   const { members, pendingWatch, watching, watch } = useRoomStore();
   const [me, ...others] = members;
   return (
-    <ul aria-label="Membros da sala" className="flex min-h-0 flex-col gap-0.5 overflow-hidden pl-6">
+    // Recorta (para recolher a sala), mas com folga: o efeito de fala passa da foto e não pode
+    // ficar cortado no primeiro e no último da lista.
+    <ul
+      aria-label="Membros da sala"
+      className="flex min-h-0 flex-col gap-0.5 overflow-clip pl-6 [overflow-clip-margin:12px]"
+    >
       {me && <MemberRow member={me} isMe />}
       {others.map((m) => (
         <MemberRow
