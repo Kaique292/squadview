@@ -78,7 +78,7 @@ beforeEach(async () => {
   Object.assign(navigator, { clipboard: { writeText: clipboard } });
   useToastStore.setState({ toasts: [] });
   useAccountStore.setState({ profile: { id: ME, username: "kaique", globalName: "Kaique", avatar: null } });
-  useRoomStore.setState({ code: null, roomName: null, members: [], watching: null });
+  useRoomStore.setState({ code: null, roomName: null, members: [], watching: {} });
   useFriendsStore.setState({ status: "signed-out", open: false });
   useServersStore.setState({ servers: [], selected: null, invites: {} });
   useServerInviteStore.setState({ invite: null });

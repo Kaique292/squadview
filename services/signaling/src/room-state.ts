@@ -136,6 +136,7 @@ export class RoomState {
           muted: msg.muted,
           deafened: msg.deafened,
           watching: msg.watching,
+          watchingAll: msg.watchingAll,
           effect: msg.effect,
         };
         conn.setAttachment({ ...attachment, member });

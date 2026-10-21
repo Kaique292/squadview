@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { avatarUrl, type DiscordProfile, displayName, useAccountStore } from "../account/account-store";
-import type { StreamStats } from "../stream/stream-store";
+import { HISTORY_SIZE, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { toast } from "../ui/toast-store";
 import { useSpeakingEffectStore } from "../voice/speaking-effect";
 import { toRust, useVoiceStore } from "../voice/voice-store";
@@ -20,8 +20,10 @@ export interface Member {
   discord?: { id: string; avatar: string | null } | null;
   /** A conta foi conferida pelo SquadView (entrou com o Discord nesta versão): pode virar amigo. */
   verified?: boolean;
-  /** Quem este membro está assistindo (id). Ausente em apps até o 0.4.0. */
+  /** Quem este membro está assistindo (id; a primeira, se forem várias). Ausente até o 0.4.0. */
   watching?: string | null;
+  /** Todas as lives que este membro assiste (ADR 0019). Ausente em apps até o 0.8.0. */
+  watchingAll?: string[];
   /** Efeito de fala escolhido (ADR 0015). Ausente em apps até o 0.5.0; use `useMemberEffect`. */
   effect?: unknown;
 }
@@ -44,6 +46,24 @@ const NAME_KEY = "squadview.nome";
 const VOLUME_KEY = "squadview.volume";
 /** Volume máximo de quem assistimos, em % (como no Discord). */
 export const MAX_WATCH_VOLUME = 200;
+/** Quantas lives dá para assistir ao mesmo tempo (o mesmo limite do Worker, ADR 0019). */
+export const MAX_WATCHING = 4;
+
+/** Uma live que estamos assistindo: quem transmite, as medições e o som dela. */
+export interface Watch {
+  member: Member;
+  stats: StreamStats | null;
+  /** As últimas medições, da mais antiga para a mais nova (os gráficos dos detalhes). */
+  history: StreamStats[];
+  listening: boolean;
+  /** De 0 a 200 (%). */
+  volume: number;
+}
+
+/** `member` assiste `streamerId`: pela lista nova (ADR 0019) ou pelo campo antigo (apps até o 0.8.0). */
+export function watches(member: Member, streamerId: string): boolean {
+  return member.watchingAll?.includes(streamerId) ?? member.watching === streamerId;
+}
 
 function savedVolume(): number {
   try {
@@ -104,13 +124,11 @@ interface RoomState {
   /** Erro ao criar/entrar (aparece no próprio modal). */
   joinError: string | null;
   /** Quem pedimos para assistir, esperando a conexão. */
-  pendingWatch: string | null;
-  watching: Member | null;
-  watchStats: StreamStats | null;
-  watchListening: boolean;
-  /** Volume de quem assistimos, de 0 a 200 (%). Fica salvo neste PC. */
-  watchVolume: number;
-  setWatchVolume: (volume: number) => Promise<void>;
+  pendingWatch: string[];
+  /** As lives que estamos assistindo, por id de quem transmite (na ordem em que começaram). */
+  watching: Record<string, Watch>;
+  /** Volume de uma live, de 0 a 200 (%). O último escolhido fica salvo neste PC para as próximas. */
+  setWatchVolume: (memberId: string, volume: number) => Promise<void>;
   /** Código de um convite por link, esperando a pessoa confirmar a entrada. */
   invite: string | null;
   setInvite: (code: string | null) => void;
@@ -119,8 +137,8 @@ interface RoomState {
   setNickname: (name: string) => Promise<void>;
   leave: () => Promise<void>;
   watch: (member: Member) => Promise<void>;
-  stopWatching: () => Promise<void>;
-  setWatchListening: (listening: boolean) => Promise<void>;
+  stopWatching: (memberId: string) => Promise<void>;
+  setWatchListening: (memberId: string, listening: boolean) => Promise<void>;
   clearError: () => void;
 }
 
@@ -129,15 +147,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   roomName: null,
   reconnecting: false,
   invite: null,
-  watchVolume: savedVolume(),
   joinedAt: null,
   members: [],
   joining: false,
   joinError: null,
-  pendingWatch: null,
-  watching: null,
-  watchStats: null,
-  watchListening: true,
+  pendingWatch: [],
+  watching: {},
 
   async renameRoom(name) {
     try {
@@ -175,8 +190,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         roomName: info.roomName ?? null,
         joinedAt: Date.now(),
         joining: false,
-        watching: null,
-        watchStats: null,
+        watching: {},
+        pendingWatch: [],
       });
       toast.success(`Mande o código ${info.code} para a galera entrar.`, "Você está na sala");
       return true;
@@ -201,48 +216,71 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       roomName: null,
       joinedAt: null,
       members: [],
-      watching: null,
-      watchStats: null,
-      pendingWatch: null,
+      watching: {},
+      pendingWatch: [],
     });
   },
 
   async watch(member) {
-    if (get().watching?.id === member.id) return;
-    set({ pendingWatch: member.id });
+    const { watching, pendingWatch } = get();
+    if (watching[member.id] || pendingWatch.includes(member.id)) return;
+    if (Object.keys(watching).length + pendingWatch.length >= MAX_WATCHING) {
+      toast.warning(`Dá para assistir até ${MAX_WATCHING} lives ao mesmo tempo. Pare uma para assistir outra.`);
+      return;
+    }
+    set({ pendingWatch: [...pendingWatch, member.id] });
     try {
       await invoke("room_watch", { memberId: member.id });
     } catch (e) {
-      set({ pendingWatch: null });
+      set({ pendingWatch: get().pendingWatch.filter((id) => id !== member.id) });
       toast.error(typeof e === "string" ? e : "Não deu para assistir.");
     }
   },
 
-  async stopWatching() {
-    await invoke("room_stop_watching").catch(() => {});
-    set({ watching: null, watchStats: null });
+  async stopWatching(memberId) {
+    leaveVideo(memberId);
+    await invoke("room_stop_watching", { memberId }).catch(() => {});
+    set({ watching: without(get().watching, memberId) });
   },
 
-  async setWatchVolume(volume) {
+  async setWatchVolume(memberId, volume) {
     const v = Math.min(MAX_WATCH_VOLUME, Math.max(0, Math.round(volume)));
-    set({ watchVolume: v });
+    const watch = get().watching[memberId];
+    if (!watch) return;
+    set({ watching: { ...get().watching, [memberId]: { ...watch, volume: v } } });
     try {
       localStorage.setItem(VOLUME_KEY, String(v));
     } catch {
       // Sem armazenamento: vale só nesta sessão.
     }
-    await invoke("set_watch_volume", { volume: v / 100 }).catch(() => {});
+    await invoke("set_watch_volume", { memberId, volume: v / 100 }).catch(() => {});
   },
 
-  async setWatchListening(listening) {
-    set({ watchListening: listening });
-    await invoke("set_watch_listening", { listening }).catch(() => set({ watchListening: !listening }));
+  async setWatchListening(memberId, listening) {
+    const update = (on: boolean) => {
+      const watch = get().watching[memberId];
+      if (watch) set({ watching: { ...get().watching, [memberId]: { ...watch, listening: on } } });
+    };
+    update(listening);
+    await invoke("set_watch_listening", { memberId, listening }).catch(() => update(!listening));
   },
 
   clearError() {
     set({ joinError: null });
   },
 }));
+
+/** `record` sem a chave `key`. */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
+}
+
+/** A live de `memberId` fechou: se estava solta ou em tela cheia, a interface volta ao normal. */
+function leaveVideo(memberId: string) {
+  const stream = useStreamStore.getState();
+  if (stream.pip === memberId) useStreamStore.setState({ pip: null });
+  if (stream.fullscreenOf === memberId) void stream.setFullscreen(false);
+}
 
 /** O primeiro da lista somos nós. */
 export function useMe() {
@@ -267,41 +305,60 @@ export async function listenToRoomEvents() {
           reconnecting: false,
           joinedAt: null,
           members: [],
-          watching: null,
-          watchStats: null,
-          pendingWatch: null,
+          watching: {},
+          pendingWatch: [],
         });
         toast.error("Não deu para voltar para a sala. Entre de novo pelo código ou pelo link.", "Conexão perdida");
       }
     }),
     listen<Member[]>("room-members", (e) => {
       const members = e.payload;
-      const { watching } = useRoomStore.getState();
-      // Quem estávamos assistindo saiu da sala: o vídeo some sozinho (evento watch-ended).
-      useRoomStore.setState({ members, watching: watching && (members.find((m) => m.id === watching.id) ?? watching) });
+      // Quem assistimos mudou de nome ou de foto: o quadro da live acompanha. Quem saiu da sala
+      // some sozinho (evento watch-ended).
+      const watching = Object.fromEntries(
+        Object.entries(useRoomStore.getState().watching).map(([id, w]) => [
+          id,
+          { ...w, member: members.find((m) => m.id === id) ?? w.member },
+        ]),
+      );
+      useRoomStore.setState({ members, watching });
     }),
     listen<string>("room-error", (e) => toast.error(e.payload, "Sala")),
     listen<Member>("watch-started", (e) => {
-      useRoomStore.setState({ watching: e.payload, pendingWatch: null, watchStats: null, watchListening: true });
-      // O volume escolhido vale para qualquer transmissão que a gente assistir.
-      void invoke("set_watch_volume", { volume: useRoomStore.getState().watchVolume / 100 }).catch(() => {});
-      toast.success(`Conectado direto com ${e.payload.name}.`, "Assistindo");
+      const member = e.payload;
+      const { watching, pendingWatch } = useRoomStore.getState();
+      // O volume escolhido da última vez vale para a próxima live que a gente assistir.
+      const volume = savedVolume();
+      useRoomStore.setState({
+        watching: { ...watching, [member.id]: { member, stats: null, history: [], listening: true, volume } },
+        pendingWatch: pendingWatch.filter((id) => id !== member.id),
+      });
+      void invoke("set_watch_volume", { memberId: member.id, volume: volume / 100 }).catch(() => {});
+      toast.success(`Conectado direto com ${member.name}.`, "Assistindo");
     }),
     listen<{ memberId: string; reason: string }>("watch-ended", (e) => {
+      const { memberId, reason } = e.payload;
       const { watching, pendingWatch } = useRoomStore.getState();
-      const wasWatching = watching?.id === e.payload.memberId;
-      const wasPending = pendingWatch === e.payload.memberId;
+      const wasWatching = memberId in watching;
+      const wasPending = pendingWatch.includes(memberId);
       if (!wasWatching && !wasPending) return;
       useRoomStore.setState({
-        watching: wasWatching ? null : watching,
-        watchStats: wasWatching ? null : useRoomStore.getState().watchStats,
-        pendingWatch: null,
+        watching: without(watching, memberId),
+        pendingWatch: pendingWatch.filter((id) => id !== memberId),
       });
+      if (wasWatching) leaveVideo(memberId);
       // Fim normal da transmissão é informação; não conseguir conectar é erro.
-      if (wasWatching) toast.info(e.payload.reason);
-      else toast.error(e.payload.reason, "Não deu para assistir");
+      if (wasWatching) toast.info(reason);
+      else toast.error(reason, "Não deu para assistir");
     }),
-    listen<StreamStats>("watch-stats", (e) => useRoomStore.setState({ watchStats: e.payload })),
+    listen<{ memberId: string; stats: StreamStats }>("watch-stats", (e) => {
+      const { memberId, stats } = e.payload;
+      const all = useRoomStore.getState().watching;
+      const watch = all[memberId];
+      if (!watch) return;
+      const history = [...watch.history, stats].slice(-HISTORY_SIZE);
+      useRoomStore.setState({ watching: { ...all, [memberId]: { ...watch, stats, history } } });
+    }),
     // Convite clicado com o app já aberto.
     listen<string>("invite", () => void takePendingInvite()),
   ]);

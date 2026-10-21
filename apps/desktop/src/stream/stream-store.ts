@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { playVideoExit } from "../ui/dissolve-effect";
 import { toast } from "../ui/toast-store";
-import { cancelVideoClick, handleVideoPointer, type VideoPointer } from "./video-pointer";
+import { cancelVideoClick, handleVideoPointer, OWN_VIDEO, type VideoPointer, videoKey } from "./video-pointer";
 
 /** Espelha `sv_capture::CaptureSource` (serde: { kind, handle }). */
 export type CaptureSource = { kind: "monitor" | "window"; handle: number };
@@ -108,14 +108,17 @@ interface StreamState {
   /** Ouvir o som da prévia neste PC (sai duas vezes: use fone). */
   listening: boolean;
   setListening: (listening: boolean) => Promise<void>;
-  /** O stream ocupa a tela inteira (a janela do app em tela cheia, sem as barras laterais). */
+  /** Um vídeo ocupa a tela inteira (a janela do app em tela cheia, sem as barras laterais). */
   fullscreen: boolean;
-  setFullscreen: (fullscreen: boolean) => Promise<void>;
-  /** O mouse está sobre o vídeo nativo (ele não passa pela interface: o Rust avisa). */
-  videoHover: boolean;
-  /** O vídeo de quem assistimos está solto numa janela pequena, sempre no topo. */
-  pip: boolean;
-  setPip: (pip: boolean) => Promise<void>;
+  /** Qual vídeo está em tela cheia: `OWN_VIDEO` (a nossa live) ou o id de quem assistimos. */
+  fullscreenOf: string | null;
+  /** Põe (ou tira) em tela cheia o vídeo `of` (sem `of`: a nossa live). */
+  setFullscreen: (fullscreen: boolean, of?: string) => Promise<void>;
+  /** Sobre qual vídeo nativo o mouse está (ele não passa pela interface: o Rust avisa). */
+  videoHover: string | null;
+  /** A live (id de quem transmite) solta numa janela pequena, sempre no topo. Uma por vez. */
+  pip: string | null;
+  setPip: (memberId: string | null) => Promise<void>;
   stop: () => Promise<void>;
 }
 
@@ -163,28 +166,38 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   },
 
   fullscreen: false,
-  async setFullscreen(fullscreen) {
-    if (get().fullscreen === fullscreen) return;
-    set({ fullscreen });
+  fullscreenOf: null,
+  async setFullscreen(fullscreen, of = OWN_VIDEO) {
+    const before = get();
+    // Já em tela cheia, trocar de vídeo não mexe na janela.
+    if (before.fullscreen && fullscreen) {
+      set({ fullscreenOf: of });
+      return;
+    }
+    if (before.fullscreen === fullscreen) return;
+    set({ fullscreen, fullscreenOf: fullscreen ? of : null });
     try {
       await invoke("set_fullscreen", { fullscreen });
     } catch {
-      set({ fullscreen: !fullscreen });
+      set({ fullscreen: before.fullscreen, fullscreenOf: before.fullscreenOf });
     }
   },
 
-  videoHover: false,
+  videoHover: null,
 
-  pip: false,
-  async setPip(pip) {
-    if (get().pip === pip) return;
+  pip: null,
+  async setPip(memberId) {
+    const before = get().pip;
+    if (before === memberId) return;
     // Tela cheia e picture in picture não combinam: soltar o vídeo sai da tela cheia antes.
-    if (pip) await get().setFullscreen(false);
-    set({ pip });
+    if (memberId) await get().setFullscreen(false);
+    set({ pip: memberId });
     try {
-      await invoke("room_set_pip", { pip });
+      // Soltar outra traz a anterior de volta sozinha (o Rust deixa uma por vez).
+      if (memberId) await invoke("room_set_pip", { memberId, pip: true });
+      else if (before) await invoke("room_set_pip", { memberId: before, pip: false });
     } catch {
-      set({ pip: !pip });
+      set({ pip: before });
     }
   },
 
@@ -245,7 +258,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
  */
 export function onVideoEnter(cb: () => void) {
   return useStreamStore.subscribe((s, prev) => {
-    if (s.videoHover && !prev.videoHover) cb();
+    if (s.videoHover && s.videoHover !== prev.videoHover) cb();
   });
 }
 
@@ -274,19 +287,32 @@ export async function listenToStreamEvents() {
   const unlistenNotice = await listen<StreamNotice | null>("stream-notice", (e) =>
     useStreamStore.setState({ notice: e.payload }),
   );
-  // Pedidos de tela cheia feitos dentro do vídeo nativo (que recebe o teclado e os cliques dele).
-  const unlistenFullscreen = await listen<"toggle" | "exit">("video-fullscreen", (e) => {
-    // Dois cliques: o clique que esperava para ver se vinha outro não vale.
-    if (e.payload === "toggle") cancelVideoClick();
-    const { fullscreen, setFullscreen } = useStreamStore.getState();
-    void setFullscreen(e.payload === "toggle" ? !fullscreen : false);
-  });
-  // Clique, botão direito e o mouse entrando e saindo do vídeo, que fica por cima da interface.
+  // Pedidos de tela cheia feitos dentro de um vídeo nativo (que recebe o teclado e os cliques dele).
+  // `source` diz qual: `null` é a nossa live; um id, a live de quem assistimos.
+  const unlistenFullscreen = await listen<{ kind: "toggle" | "exit"; source: string | null }>(
+    "video-fullscreen",
+    (e) => {
+      const of = videoKey(e.payload.source);
+      // Dois cliques: o clique que esperava para ver se vinha outro não vale.
+      if (e.payload.kind === "toggle") cancelVideoClick(of);
+      const { fullscreen, fullscreenOf, setFullscreen } = useStreamStore.getState();
+      const on = e.payload.kind === "toggle" && !(fullscreen && fullscreenOf === of);
+      void setFullscreen(on, of);
+    },
+  );
+  // Clique, botão direito e o mouse entrando e saindo de um vídeo, que fica por cima da interface.
   const unlistenPointer = await listen<VideoPointer>("video-pointer", (e) =>
-    handleVideoPointer(e.payload, (inside) => useStreamStore.setState({ videoHover: inside })),
+    handleVideoPointer(e.payload, (of, inside) => {
+      const hover = useStreamStore.getState().videoHover;
+      if (inside) useStreamStore.setState({ videoHover: of });
+      else if (hover === of) useStreamStore.setState({ videoHover: null });
+    }),
   );
   // Dois cliques, Esc ou fechar na janelinha do picture in picture: o vídeo volta para o app.
-  const unlistenPip = await listen<boolean>("video-pip", (e) => void useStreamStore.getState().setPip(e.payload));
+  const unlistenPip = await listen<{ pip: boolean; source: string | null }>("video-pip", (e) => {
+    const { pip, setPip } = useStreamStore.getState();
+    if (!e.payload.pip && pip === e.payload.source) void setPip(null);
+  });
   // Esc com o foco na interface também sai da tela cheia.
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && useStreamStore.getState().fullscreen) void useStreamStore.getState().setFullscreen(false);
@@ -294,7 +320,9 @@ export async function listenToStreamEvents() {
   window.addEventListener("keydown", onKey);
   const unlistenSystem = await listen<SystemLoad>("system-load", (e) => useStreamStore.setState({ system: e.payload }));
   // Foto do último quadro, logo antes de um vídeo (o nosso ou o de quem assistimos) fechar.
-  const unlistenExit = await listen<string>("video-exit", (e) => playVideoExit(e.payload));
+  const unlistenExit = await listen<{ image: string | null; source: string | null }>("video-exit", (e) =>
+    playVideoExit(e.payload.image, videoKey(e.payload.source)),
+  );
   try {
     useStreamStore.setState({ logPath: await invoke<string | null>("session_log_path") });
   } catch {

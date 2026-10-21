@@ -4,7 +4,7 @@ import { Monitor, MoreHorizontal } from "lucide-react";
 import { type KeyboardEvent, useEffect, useState } from "react";
 import { useRoomStore } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
-import { useOverlayMenu } from "../ui/overlay";
+import { stopInsideMenu, useOverlayMenu } from "../ui/overlay";
 import { MENU_CONTENT, StreamMenuItems, qualityLabel } from "./StreamMenu";
 import { onVideoEnter, useStreamStore } from "./stream-store";
 import { useVideoSlot } from "./video-slot";
@@ -111,6 +111,8 @@ export function StreamTile(props: {
                   sideOffset={6}
                   aria-label="Opções da transmissão"
                   className={MENU_CONTENT}
+                  onClick={stopInsideMenu}
+                  onDoubleClick={stopInsideMenu}
                 >
                   <StreamMenuItems kind="dropdown" onChange={props.onChange} onDetails={props.onDetails} />
                 </DropdownMenu.Content>
@@ -120,7 +122,12 @@ export function StreamTile(props: {
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content aria-label="Opções da transmissão" className={MENU_CONTENT}>
+        <ContextMenu.Content
+          aria-label="Opções da transmissão"
+          className={MENU_CONTENT}
+          onClick={stopInsideMenu}
+          onDoubleClick={stopInsideMenu}
+        >
           <StreamMenuItems kind="context" onChange={props.onChange} onDetails={props.onDetails} />
         </ContextMenu.Content>
       </ContextMenu.Portal>

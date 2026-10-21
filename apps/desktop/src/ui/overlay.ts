@@ -90,13 +90,34 @@ export function measureHoles(root: ParentNode = document): Hole[] {
   return holes;
 }
 
+/** Quantos vídeos estão na tela agora: um vigia só serve a todos (ver `watchVideoHoles`). */
+let watchers = 0;
+let stopHolesWatcher: (() => void) | null = null;
+
 /**
- * Enquanto há vídeo na tela: vigia menus, dicas e avisos e manda ao Rust onde eles estão, para o
- * vídeo abrir um buraco ali em vez de cobri-los. Mede uma vez por quadro no máximo (e de novo logo
- * depois, quando o Radix termina de posicionar e animar). Devolve a função que para de vigiar.
+ * Enquanto há vídeo na tela: vigia menus, dicas e avisos e manda ao Rust onde eles estão, para os
+ * vídeos abrirem um buraco ali em vez de cobri-los. Com várias lives na tela, o vigia é um só: ele
+ * para quando o último vídeo sai. Devolve a função que deixa de vigiar.
  */
 export function watchVideoHoles(): () => void {
   if (!("__TAURI_INTERNALS__" in window)) return () => {};
+  if (watchers++ === 0) stopHolesWatcher = startWatchingHoles();
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    if (--watchers === 0) {
+      stopHolesWatcher?.();
+      stopHolesWatcher = null;
+    }
+  };
+}
+
+/**
+ * O vigia: mede uma vez por quadro no máximo (e de novo logo depois, quando o Radix termina de
+ * posicionar e animar). Devolve a função que para.
+ */
+function startWatchingHoles(): () => void {
   let last = "[]";
   let frame = 0;
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -135,4 +156,12 @@ export function watchVideoHoles(): () => void {
 /** Só para testes. */
 export function openOverlays() {
   return open;
+}
+
+/**
+ * O menu fica num portal, mas no React ele é filho do quadro: o clique num item subiria até o
+ * quadro e o poria em foco (e dois cliques, em tela cheia). Ele para no menu.
+ */
+export function stopInsideMenu(e: { stopPropagation: () => void }) {
+  e.stopPropagation();
 }

@@ -65,7 +65,8 @@ beforeEach(() => {
     history: [],
     system: null,
     current: null,
-    videoHover: false,
+    videoHover: null,
+    fullscreenOf: null,
     notice: null,
     listening: false,
     fullscreen: false,
@@ -398,12 +399,12 @@ describe("vídeo dentro do app", () => {
   it("obedece aos dois cliques/F11 e ao Esc feitos dentro do vídeo nativo", async () => {
     invoke.mockResolvedValue(undefined);
     const unlisten = await listenToStreamEvents();
-    act(() => handlers.get("video-fullscreen")!({ payload: "toggle" }));
+    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "toggle", source: null } }));
     await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
-    act(() => handlers.get("video-fullscreen")!({ payload: "exit" }));
+    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "exit", source: null } }));
     await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));
 
-    act(() => handlers.get("video-fullscreen")!({ payload: "toggle" }));
+    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "toggle", source: null } }));
     await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));

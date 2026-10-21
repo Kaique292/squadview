@@ -10,7 +10,6 @@ import { ServerHome } from "./servers/ServerHome";
 import { ServerSidebar } from "./servers/ServerSidebar";
 import { useServersStore } from "./servers/servers-store";
 import { ServerRail } from "./room/ServerRail";
-import { WatchView } from "./room/WatchView";
 import { roomTitle, useRoomStore } from "./room/room-store";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
@@ -26,7 +25,8 @@ import { Toaster } from "./ui/Toaster";
 export function App() {
   const live = useStreamStore((s) => s.status === "live");
   const fullscreen = useStreamStore((s) => s.fullscreen);
-  const watching = useRoomStore((s) => s.watching);
+  // Assistindo alguma live (elas aparecem como quadros na sala, junto com a gente).
+  const watching = useRoomStore((s) => Object.keys(s.watching).length > 0);
   const code = useRoomStore((s) => s.code);
   const roomName = useRoomStore((s) => s.roomName);
   // O servidor aberto na lateral (pela barra de salas ou por entrar numa sala dele).
@@ -76,11 +76,11 @@ export function App() {
               ? "bg-surface-2 p-0"
               : friendsOpen
                 ? "bg-glass-2 p-0"
-                : (code || live) && !watching
-                  ? // O canal de voz (com a nossa live como um quadro) ocupa a área toda, com fundo
+                : code || live
+                  ? // O canal de voz (com as lives como quadros) ocupa a área toda, com fundo
                     // preto, como no Discord.
                     "bg-black p-0"
-                  : `bg-glass-2 px-4 pt-4 ${watching ? "pb-11" : "pb-4"}`
+                  : "bg-glass-2 px-4 pt-4 pb-4"
           }`}
         >
           {friendsOpen ? (
@@ -91,8 +91,6 @@ export function App() {
             )
           ) : server && !code ? (
             <ServerHome server={server} />
-          ) : watching ? (
-            <WatchView member={watching} />
           ) : (
             <VoiceRoom />
           )}

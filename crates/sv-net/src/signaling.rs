@@ -87,6 +87,10 @@ pub struct Member {
     /// Quem este membro está assistindo (id). Ausente no Worker antigo e em apps até o 0.4.0.
     #[serde(default)]
     pub watching: Option<String>,
+    /// Todas as lives que ele assiste (ADR 0019). Ausente no Worker antigo e em apps até o 0.8.0:
+    /// aí vale só o `watching`.
+    #[serde(default, rename = "watchingAll")]
+    pub watching_all: Vec<String>,
     /// Efeito de fala escolhido (`None`: o anel padrão). Ausente no Worker antigo e em apps até o 0.5.0.
     #[serde(default)]
     pub effect: Option<SpeakingEffect>,
@@ -112,8 +116,11 @@ enum Outgoing<'a> {
         live: bool,
         muted: bool,
         deafened: bool,
-        /// Quem estamos assistindo: quem transmite vê quantos e quem assistem.
+        /// A primeira live que assistimos (para apps antigos, que só leem uma).
         watching: Option<&'a str>,
+        /// Todas as lives que assistimos: quem transmite vê quantos e quem assistem.
+        #[serde(rename = "watchingAll")]
+        watching_all: &'a [String],
         /// O efeito de fala que escolhemos (`None`: o anel padrão).
         effect: Option<&'a SpeakingEffect>,
     },
@@ -355,7 +362,7 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.set_status(live, false, false, None, None);
+        self.set_status(live, false, false, &[], None);
     }
 
     /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido, quem assistimos e
@@ -365,14 +372,15 @@ impl RoomClient {
         live: bool,
         muted: bool,
         deafened: bool,
-        watching: Option<&str>,
+        watching: &[String],
         effect: Option<&SpeakingEffect>,
     ) {
         self.send(&Outgoing::Status {
             live,
             muted,
             deafened,
-            watching,
+            watching: watching.first().map(String::as_str),
+            watching_all: watching,
             effect,
         });
     }
@@ -512,28 +520,35 @@ mod tests {
             muted: false,
             deafened: true,
             watching: None,
+            watching_all: &[],
             effect: None,
         })
         .unwrap();
         assert_eq!(
             status,
-            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"effect":null}"#
+            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"watchingAll":[],"effect":null}"#
         );
         let watching = serde_json::to_string(&Outgoing::Status {
             live: false,
             muted: false,
             deafened: false,
             watching: Some("0123456789abcdef"),
+            watching_all: &["0123456789abcdef".to_owned(), "fedcba9876543210".to_owned()],
             effect: None,
         })
         .unwrap();
         assert!(watching.contains(r#""watching":"0123456789abcdef""#), "{watching}");
+        assert!(
+            watching.contains(r#""watchingAll":["0123456789abcdef","fedcba9876543210"]"#),
+            "{watching}"
+        );
         let ondas = SpeakingEffect::cleaned("waves", "#FF8800").unwrap();
         let effect = serde_json::to_string(&Outgoing::Status {
             live: false,
             muted: false,
             deafened: false,
             watching: None,
+            watching_all: &[],
             effect: Some(&ondas),
         })
         .unwrap();
@@ -597,6 +612,7 @@ mod tests {
                     discord: None,
                     verified: false,
                     watching: None,
+                    watching_all: Vec::new(),
                     effect: None,
                 }],
                 room: None,

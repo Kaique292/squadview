@@ -173,14 +173,15 @@ struct Inner {
     /// Formato do que estamos transmitindo (None: não estamos ao vivo ou o encoder ainda não começou).
     stream: Mutex<Option<StreamDescription>>,
     keyframes: Mutex<Option<KeyframeHandle>>,
-    /// Quem pedimos para assistir, esperando resposta.
-    pending_watch: Mutex<Option<String>>,
-    /// Sem conexão com quem transmite: pedindo para outro membro repassar.
-    pending_relay: Mutex<Option<PendingRelay>>,
-    /// O stream que assistimos, para repassar a quem pedir (quem não alcança quem transmite).
-    relay_source: Mutex<Option<RelaySource>>,
-    /// Fingerprints de quem vai conectar para receber repassado por nós.
-    relay_viewers: Mutex<std::collections::HashSet<String>>,
+    /// Quem pedimos para assistir, esperando resposta (várias lives ao mesmo tempo, ADR 0019).
+    pending_watch: Mutex<std::collections::HashSet<String>>,
+    /// Sem conexão com quem transmite: pedindo para outro membro repassar (por streamer).
+    pending_relay: Mutex<HashMap<String, PendingRelay>>,
+    /// Os streams que assistimos, por streamer, para repassar a quem pedir (quem não alcança
+    /// quem transmite).
+    relay_sources: Mutex<HashMap<String, RelaySource>>,
+    /// Fingerprint de quem vai conectar para receber repassado por nós → de qual streamer.
+    relay_viewers: Mutex<HashMap<String, String>>,
     /// A voz com estes membros não abriu: pedindo a alguém para repassar (ADR 0020).
     pending_voice_relay: Mutex<HashMap<String, PendingVoiceRelay>>,
     voice: Arc<VoiceMesh>,
@@ -279,6 +280,7 @@ impl Room {
                     discord,
                     verified: false,
                     watching: None,
+                    watching_all: Vec::new(),
                     effect: None,
                 }),
                 room_name: Mutex::new(room),
@@ -286,10 +288,10 @@ impl Room {
                 broadcaster: Broadcaster::new(),
                 stream: Mutex::new(None),
                 keyframes: Mutex::new(None),
-                pending_watch: Mutex::new(None),
-                pending_relay: Mutex::new(None),
-                relay_source: Mutex::new(None),
-                relay_viewers: Mutex::new(std::collections::HashSet::new()),
+                pending_watch: Mutex::default(),
+                pending_relay: Mutex::default(),
+                relay_sources: Mutex::default(),
+                relay_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
@@ -394,21 +396,14 @@ impl Room {
     /// Pede para assistir `member_id`. A resposta chega como [`RoomUpdate::WatchReady`] ou
     /// [`RoomUpdate::WatchFailed`].
     pub fn watch(&self, member_id: &str) {
-        *lock(&self.inner.pending_watch) = Some(member_id.to_owned());
-        *lock(&self.inner.pending_relay) = None;
+        lock(&self.inner.pending_watch).insert(member_id.to_owned());
+        lock(&self.inner.pending_relay).remove(member_id);
         // Sem resposta a tempo (quem transmite saiu, caiu ou tem um app antigo): desiste e avisa.
         let inner = self.inner.clone();
         let id = member_id.to_owned();
         self.runtime.spawn(async move {
             tokio::time::sleep(WATCH_ANSWER_TIMEOUT).await;
-            let expired = {
-                let mut pending = lock(&inner.pending_watch);
-                let expired = pending.as_deref() == Some(id.as_str());
-                if expired {
-                    *pending = None;
-                }
-                expired
-            };
+            let expired = lock(&inner.pending_watch).remove(&id);
             if expired {
                 (inner.on_update)(RoomUpdate::WatchFailed {
                     member_id: id,
@@ -465,24 +460,30 @@ impl Room {
         self.inner.publish_members();
     }
 
-    /// Começamos (`Some`) ou paramos (`None`) de assistir alguém: a sala fica sabendo, para quem
+    /// Quem estamos assistindo agora (todas as lives, ADR 0019): a sala fica sabendo, para quem
     /// transmite ver quantos e quem assistem (inclusive quem recebe repassado por outro membro).
-    pub fn set_watching(&self, member_id: Option<&str>) {
+    pub fn set_watching(&self, member_ids: &[String]) {
         let mut me = lock(&self.inner.me);
-        if me.watching.as_deref() == member_id {
+        if me.watching_all == member_ids {
             return;
         }
-        me.watching = member_id.map(str::to_owned);
+        me.watching = member_ids.first().cloned();
+        me.watching_all = member_ids.to_vec();
         drop(me);
         self.inner.send_status();
         self.inner.publish_members();
     }
 
-    /// O stream que estamos assistindo (ou `None`, paramos): a sala pode repassá-lo a quem não
-    /// alcança quem transmite (ADR 0014). Quem recebia por nós cai quando o stream acaba.
-    pub fn set_relay_source(&self, source: Option<RelaySource>) {
-        *lock(&self.inner.relay_source) = source;
-        lock(&self.inner.relay_viewers).clear();
+    /// Começamos a assistir `source.streamer`: a sala pode repassar esse stream a quem não alcança
+    /// quem transmite (ADR 0014).
+    pub fn add_relay_source(&self, source: RelaySource) {
+        lock(&self.inner.relay_sources).insert(source.streamer.clone(), source);
+    }
+
+    /// Paramos de assistir `streamer`: quem ia receber esse stream por nós não recebe mais.
+    pub fn remove_relay_source(&self, streamer: &str) {
+        lock(&self.inner.relay_sources).remove(streamer);
+        lock(&self.inner.relay_viewers).retain(|_, s| s != streamer);
     }
 
     /// Quantos amigos estão assistindo a gente.
@@ -499,17 +500,16 @@ impl Drop for Room {
     }
 }
 
+/// `member` assiste `streamer`: pela lista nova (ADR 0019) ou pelo campo antigo (apps até o 0.8.0).
+fn watches(member: &Member, streamer: &str) -> bool {
+    member.watching_all.iter().any(|id| id == streamer) || member.watching.as_deref() == Some(streamer)
+}
+
 impl Inner {
     /// Manda para a sala o nosso estado (ao vivo, mudo, surdo, quem assistimos e o efeito de fala).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
-        lock(&self.client).set_status(
-            me.live,
-            me.muted,
-            me.deafened,
-            me.watching.as_deref(),
-            me.effect.as_ref(),
-        );
+        lock(&self.client).set_status(me.live, me.muted, me.deafened, &me.watching_all, me.effect.as_ref());
     }
 
     /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
@@ -559,6 +559,7 @@ impl Inner {
             discord: None,
             verified: false,
             watching: None,
+            watching_all: Vec::new(),
             effect: None,
         })
     }
@@ -568,15 +569,11 @@ impl Inner {
     fn try_relay(self: &Arc<Self>, streamer: String, reason: String) {
         let me = lock(&self.me).id.clone();
         let mut pending = lock(&self.pending_relay);
-        let mut tried = pending
-            .take()
-            .filter(|p| p.streamer == streamer)
-            .map(|p| p.tried)
-            .unwrap_or_default();
+        let mut tried = pending.remove(&streamer).map(|p| p.tried).unwrap_or_default();
         let helper = lock(&self.members)
             .values()
             .filter(|m| m.id != me && m.id != streamer && !tried.contains(&m.id))
-            .find(|m| m.watching.as_deref() == Some(streamer.as_str()))
+            .find(|m| watches(m, &streamer))
             .map(|m| m.id.clone());
         let Some(helper) = helper else {
             drop(pending);
@@ -587,13 +584,16 @@ impl Inner {
             return;
         };
         tried.push(helper.clone());
-        *pending = Some(PendingRelay {
-            streamer: streamer.clone(),
-            helper: helper.clone(),
-            tried,
-            answered: false,
-            reason,
-        });
+        pending.insert(
+            streamer.clone(),
+            PendingRelay {
+                streamer: streamer.clone(),
+                helper: helper.clone(),
+                tried,
+                answered: false,
+                reason,
+            },
+        );
         drop(pending);
         let request = Signal::RelayRequest {
             streamer,
@@ -606,8 +606,8 @@ impl Inner {
         tokio::spawn(async move {
             tokio::time::sleep(RELAY_ANSWER_TIMEOUT).await;
             let next = lock(&inner.pending_relay)
-                .as_ref()
-                .filter(|p| p.helper == helper && !p.answered)
+                .values()
+                .find(|p| p.helper == helper && !p.answered)
                 .map(|p| (p.streamer.clone(), p.reason.clone()));
             if let Some((streamer, reason)) = next {
                 inner.try_relay(streamer, reason);
@@ -746,11 +746,11 @@ impl Inner {
                 stream,
                 relay,
             } => {
-                let direct = lock(&self.pending_watch).as_deref() == Some(from.as_str());
-                // Ou é quem aceitou repassar o stream que pedimos.
+                let direct = lock(&self.pending_watch).contains(&from);
+                // Ou é quem aceitou repassar um stream que pedimos.
                 let helped = {
                     let mut pending = lock(&self.pending_relay);
-                    pending.as_mut().filter(|p| p.helper == from).map(|p| {
+                    pending.values_mut().find(|p| p.helper == from && !p.answered).map(|p| {
                         p.answered = true;
                         p.streamer.clone()
                     })
@@ -764,12 +764,12 @@ impl Inner {
                 tokio::spawn(async move {
                     let result = inner.peer.connect(&candidates, relay, &fingerprint).await;
                     if direct {
-                        *lock(&inner.pending_watch) = None;
+                        lock(&inner.pending_watch).remove(&streamer);
                     }
                     match result {
                         Ok(conn) => {
                             let path = if !direct {
-                                *lock(&inner.pending_relay) = None;
+                                lock(&inner.pending_relay).remove(&streamer);
                                 WatchPath::Member(from)
                             } else if relay.is_some_and(|r| r == conn.remote_address()) {
                                 WatchPath::Turn
@@ -790,7 +790,7 @@ impl Inner {
                                 connect_failure(&e, inner.peer.nat(), relay.is_some())
                             } else {
                                 lock(&inner.pending_relay)
-                                    .as_ref()
+                                    .get(&streamer)
                                     .map_or_else(|| e.to_string(), |p| p.reason.clone())
                             };
                             inner.try_relay(streamer, reason);
@@ -803,13 +803,14 @@ impl Inner {
                 candidates,
                 fingerprint,
             } => {
-                let source = lock(&self.relay_source)
-                    .clone()
-                    .filter(|s| s.streamer == streamer && s.broadcaster.viewer_count() < MAX_RELAYED);
+                let source = lock(&self.relay_sources)
+                    .get(&streamer)
+                    .cloned()
+                    .filter(|s| s.broadcaster.viewer_count() < MAX_RELAYED);
                 let reply = match source {
                     Some(source) => {
                         self.peer.allowed().allow(&fingerprint);
-                        lock(&self.relay_viewers).insert(fingerprint);
+                        lock(&self.relay_viewers).insert(fingerprint, streamer);
                         self.peer.punch(&candidates);
                         self.peer.permit_relay(&candidates);
                         Signal::WatchAccept {
@@ -926,7 +927,7 @@ impl Inner {
                 }
             }
             Signal::WatchDeny { reason } => {
-                if lock(&self.pending_watch).take().as_deref() == Some(from.as_str()) {
+                if lock(&self.pending_watch).remove(&from) {
                     (self.on_update)(RoomUpdate::WatchFailed {
                         member_id: from,
                         reason,
@@ -935,8 +936,8 @@ impl Inner {
                 }
                 // Quem ia repassar não pode: o próximo.
                 let next = lock(&self.pending_relay)
-                    .as_ref()
-                    .filter(|p| p.helper == from)
+                    .values()
+                    .find(|p| p.helper == from)
                     .map(|p| (p.streamer.clone(), p.reason.clone()));
                 if let Some((streamer, reason)) = next {
                     self.try_relay(streamer, reason);
@@ -1117,9 +1118,10 @@ async fn accept_viewers(inner: Arc<Inner>) {
         let relayed = accepted
             .fingerprint
             .as_ref()
-            .is_some_and(|f| lock(&inner.relay_viewers).remove(f));
-        if relayed {
-            match lock(&inner.relay_source).clone() {
+            .and_then(|f| lock(&inner.relay_viewers).remove(f));
+        if let Some(streamer) = relayed {
+            let source = lock(&inner.relay_sources).get(&streamer).cloned();
+            match source {
                 Some(source) => {
                     let keyframes = source.keyframes.clone();
                     source.broadcaster.add(conn, Arc::new(move || keyframes.request()));
@@ -1231,6 +1233,7 @@ mod tests {
             discord: None,
             verified: false,
             watching: None,
+            watching_all: Vec::new(),
             effect: None,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![

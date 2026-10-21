@@ -22,7 +22,10 @@ import { StreamDetailsDialog } from "../stream/StreamDetailsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { MENU_CONTENT, StreamMenuItems } from "../stream/StreamMenu";
 import { StreamTile, type StreamTileVariant } from "../stream/StreamTile";
+import { WatchDetailsDialog } from "../stream/WatchDetailsDialog";
+import { WatchTile } from "../stream/WatchTile";
 import { onVideoEnter, useStreamStore } from "../stream/stream-store";
+import { OWN_VIDEO } from "../stream/video-pointer";
 import { useOverlayMenu } from "../ui/overlay";
 import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
@@ -50,7 +53,7 @@ type TileVariant = "grid" | "focus" | "strip";
  * pessoa em foco (grande no centro, os outros numa faixa embaixo); clicar nele de novo volta à grade.
  */
 export function VoiceRoom() {
-  const { code, roomName, members, pendingWatch, watch, leave } = useRoomStore();
+  const { code, roomName, members, pendingWatch, watching, watch, leave } = useRoomStore();
   const speaking = useVoiceStore((s) => s.speaking);
   const myPrefs = useVoiceStore((s) => s.prefs);
   const profile = useAccountStore((s) => s.profile);
@@ -62,25 +65,44 @@ export function VoiceRoom() {
   const clicked = useRef(false);
   // Sobre o vídeo nativo o mouse sai da página sem ela saber: quem avisa é o Rust. Ao entrar no
   // vídeo, o "mouse em cima" da página deixa de valer (senão ficava preso ligado ao sair da janela).
-  const videoHover = useStreamStore((s) => s.videoHover);
+  const videoHover = useStreamStore((s) => s.videoHover !== null);
   useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
   // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
   const live = useStreamStore((s) => s.status === "live");
   const fullscreen = useStreamStore((s) => s.fullscreen);
+  const fullscreenOf = useStreamStore((s) => s.fullscreenOf);
   const notice = useStreamStore((s) => s.notice);
   const [changing, setChanging] = useState(false);
   const [details, setDetails] = useState(false);
-  const ids = [...(live ? [STREAM_TILE] : []), ...members.map((m) => m.id)];
+  // De qual live são os detalhes abertos (continua lá enquanto o modal fecha, animando).
+  const [watchDetails, setWatchDetails] = useState<{ memberId: string; open: boolean } | null>(null);
+  // As lives que assistimos são quadros também, logo depois da nossa (várias ao mesmo tempo, ADR 0019).
+  const watched = Object.keys(watching);
+  const ids = [...(live ? [STREAM_TILE] : []), ...watched.map(watchTileId), ...members.map((m) => m.id)];
   const focusIndex = focusId ? ids.indexOf(focusId) : -1;
   // Quem estava em foco saiu da sala (ou a live parou): volta para a grade.
   if (focusId && focusIndex < 0) setFocusId(null);
+  // Começou a assistir alguém: a live dele vem para o foco, como no Discord.
+  useEffect(
+    () =>
+      useRoomStore.subscribe((s, prev) => {
+        const fresh = Object.keys(s.watching).filter((id) => !(id in prev.watching));
+        if (fresh.length > 0) setFocusId(watchTileId(fresh[fresh.length - 1]));
+      }),
+    [],
+  );
 
   const dialogs = (
     <>
       <StreamDialog open={changing} onOpenChange={setChanging} />
       <StreamDetailsDialog open={details} onOpenChange={setDetails} />
+      <WatchDetailsDialog
+        memberId={watchDetails?.memberId ?? null}
+        open={!!watchDetails?.open}
+        onOpenChange={(open) => setWatchDetails((d) => d && { ...d, open })}
+      />
     </>
   );
   const streamTile = (variant: StreamTileVariant) => (
@@ -92,7 +114,26 @@ export function VoiceRoom() {
       onDetails={() => setDetails(true)}
     />
   );
-  // Tela cheia (ou ao vivo fora de uma sala): só a live, ocupando tudo.
+  const watchTile = (memberId: string, variant: StreamTileVariant, hidden = false) => (
+    <WatchTile
+      memberId={memberId}
+      variant={variant}
+      hidden={hidden}
+      focused={focusId === watchTileId(memberId)}
+      onActivate={() => setFocusId(focusId === watchTileId(memberId) ? null : watchTileId(memberId))}
+      onDetails={() => setWatchDetails({ memberId, open: true })}
+    />
+  );
+  // Tela cheia numa live que assistimos: só ela, ocupando tudo.
+  if (fullscreen && fullscreenOf && watching[fullscreenOf]) {
+    return (
+      <section aria-label={`Live de ${watching[fullscreenOf].member.name}`} className="h-full w-full bg-black">
+        {watchTile(fullscreenOf, "fullscreen")}
+        {dialogs}
+      </section>
+    );
+  }
+  // Tela cheia (ou ao vivo fora de uma sala): só a nossa live, ocupando tudo.
   if (live && (fullscreen || !code)) {
     return (
       <section aria-label="Sua transmissão" className={`h-full w-full bg-black ${fullscreen ? "" : "p-4"}`}>
@@ -121,15 +162,25 @@ export function VoiceRoom() {
     }
   }
 
-  /** O quadro em `index` de `ids`: a nossa live ou uma pessoa (a primeira pessoa somos nós). */
-  function tile(index: number, variant: TileVariant) {
+  /** Assistir quem já assistimos só traz a live dele para o foco. */
+  function watchOrFocus(m: Member) {
+    if (watching[m.id]) setFocusId(watchTileId(m.id));
+    else void watch(m);
+  }
+
+  /**
+   * O quadro em `index` de `ids`: a nossa live, uma live que assistimos ou uma pessoa (a primeira
+   * pessoa somos nós). `hidden`: está na faixa recolhida.
+   */
+  function tile(index: number, variant: TileVariant, hidden = false) {
     if (ids[index] === STREAM_TILE) return streamTile(variant);
-    const memberIndex = index - (live ? 1 : 0);
+    if (index - (live ? 1 : 0) < watched.length) return watchTile(watched[index - (live ? 1 : 0)], variant, hidden);
+    const memberIndex = index - (live ? 1 : 0) - watched.length;
     const m = members[memberIndex];
     const isMe = memberIndex === 0;
     const focused = m.id === focusId;
     return (
-      <MemberMenu member={m} isMe={isMe} onWatch={m.live && !isMe ? () => void watch(m) : undefined}>
+      <MemberMenu member={m} isMe={isMe} onWatch={m.live && !isMe ? () => watchOrFocus(m) : undefined}>
         <Tile
           glow={glows[m.id]}
           member={m}
@@ -140,8 +191,9 @@ export function VoiceRoom() {
           muted={isMe ? myPrefs.muted || myPrefs.deafened : !!m.muted}
           deafened={isMe ? myPrefs.deafened : !!m.deafened}
           photo={memberPhoto(m, isMe, profile, 128)}
-          pending={pendingWatch === m.id}
-          onWatch={() => void watch(m)}
+          pending={pendingWatch.includes(m.id)}
+          watching={!!watching[m.id]}
+          onWatch={() => watchOrFocus(m)}
           onActivate={() => setFocusId(focused ? null : m.id)}
         />
       </MemberMenu>
@@ -231,7 +283,7 @@ export function VoiceRoom() {
                   >
                     {others.map((i) => (
                       <li key={ids[i]} className="h-28 shrink-0 animate-focus-in">
-                        {tile(i, "strip")}
+                        {tile(i, "strip", !stripOpen)}
                       </li>
                     ))}
                   </ul>
@@ -321,6 +373,7 @@ function Tile({
   deafened,
   photo,
   pending,
+  watching,
   onWatch,
   onActivate,
   ref,
@@ -338,6 +391,8 @@ function Tile({
   deafened: boolean;
   photo?: string;
   pending: boolean;
+  /** Já assistimos a live desta pessoa (o botão só traz o quadro dela para o foco). */
+  watching: boolean;
   onWatch: () => void;
   onActivate: () => void;
   ref?: Ref<HTMLDivElement>;
@@ -392,7 +447,7 @@ function Tile({
             className="pointer-events-auto flex items-center gap-2 rounded-md bg-surface-0/90 px-4 py-2 text-sm font-semibold transition-colors hover:bg-surface-0"
           >
             {pending ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
-            {pending ? "Conectando…" : "Assistir a transmissão"}
+            {pending ? "Conectando…" : watching ? "Ver a transmissão" : "Assistir a transmissão"}
           </button>
         </div>
       )}
@@ -411,7 +466,12 @@ function Tile({
 }
 
 /** O quadro da nossa live (não é uma pessoa: não colide com nenhum id). */
-const STREAM_TILE = "transmissao:minha";
+const STREAM_TILE = OWN_VIDEO;
+
+/** O quadro da live de quem assistimos (o da pessoa continua com o id dela). */
+function watchTileId(memberId: string) {
+  return `assistindo:${memberId}`;
+}
 
 /** Transmitindo, o botão de tela da barra fica verde (como no Discord) e abre o menu da live. */
 function StreamControl(props: { onChange: () => void; onDetails: () => void }) {

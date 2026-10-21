@@ -36,7 +36,7 @@ beforeEach(async () => {
   handlers.clear();
   localStorage.clear();
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], bridges: {}, level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: null, pendingWatch: null });
+  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   useToastStore.setState({ toasts: [] });
   await listenToRoomEvents();

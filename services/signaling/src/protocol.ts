@@ -49,9 +49,14 @@ export interface Member {
   verified: boolean;
   /** Quem este membro está assistindo (id), ou `null`. Ausente até o primeiro `status` dele. */
   watching?: PeerId | null;
+  /** Todas as lives que ele está assistindo (ADR 0019). O `watching` é a primeira, para apps antigos. */
+  watchingAll?: PeerId[];
   /** Efeito de fala escolhido, ou `null` (o anel padrão). Ausente até o primeiro `status` dele. */
   effect?: SpeakingEffect | null;
 }
+
+/** Quantas lives um membro pode anunciar que assiste ao mesmo tempo. */
+export const MAX_WATCHING = 4;
 
 export type ClientMessage =
   | {
@@ -76,6 +81,8 @@ export type ClientMessage =
       muted: boolean;
       deafened: boolean;
       watching: PeerId | null;
+      /** Todas as lives que estamos assistindo (ADR 0019); sem ele, só o `watching`. */
+      watchingAll: PeerId[];
       effect: SpeakingEffect | null;
     }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
@@ -202,11 +209,21 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const deafened = flag(data.deafened);
       if (muted === null || deafened === null) return null;
       // watching também é opcional (apps até o 0.4.0 não mandam).
-      const watching = data.watching ?? null;
-      if (watching !== null && (typeof watching !== "string" || !PEER_ID_PATTERN.test(watching))) return null;
+      const first = data.watching ?? null;
+      if (first !== null && (typeof first !== "string" || !PEER_ID_PATTERN.test(first))) return null;
+      // watchingAll também (apps até o 0.8.0 só mandam o watching).
+      const all = data.watchingAll ?? (first === null ? [] : [first]);
+      if (
+        !Array.isArray(all) ||
+        all.length > MAX_WATCHING ||
+        !all.every((id) => typeof id === "string" && PEER_ID_PATTERN.test(id))
+      )
+        return null;
+      const watchingAll = [...new Set(all as string[])];
+      const watching = first ?? watchingAll[0] ?? null;
       // effect também é opcional (apps até o 0.5.0 não mandam).
       const effect = parseEffect(data.effect);
-      return { type: "status", live: data.live, muted, deafened, watching, effect };
+      return { type: "status", live: data.live, muted, deafened, watching, watchingAll, effect };
     }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;
