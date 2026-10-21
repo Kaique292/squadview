@@ -1,9 +1,10 @@
 import { Plus } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type HTMLAttributes, type ReactNode, type Ref, useState } from "react";
 import logo from "../assets/logo.svg";
 import { useFriendsStore } from "../friends/friends-store";
 import { AddServerDialog } from "../servers/AddServerDialog";
 import { ServerIcon } from "../servers/ServerIcon";
+import { ServerContextMenu } from "../servers/ServerMenu";
 import { serverOfRoom, useServersStore } from "../servers/servers-store";
 import { Tooltip } from "../ui/Tooltip";
 import { RoomDialog } from "./RoomDialog";
@@ -52,15 +53,17 @@ export function ServerRail(props: { hidden: boolean }) {
       </RailItem>
       <div className="h-0.5 w-8 rounded-full bg-surface-3" />
       {servers.map((server) => (
-        <RailItem
-          key={server.id}
-          label={server.name}
-          active={!friendsOpen && selected === server.id}
-          badge={roomServer?.id === server.id && someoneLive}
-          onClick={() => select(server.id)}
-        >
-          <ServerIcon name={server.name} icon={server.icon} />
-        </RailItem>
+        // Botão direito no ícone: o mesmo menu do nome do servidor.
+        <ServerContextMenu key={server.id} server={server}>
+          <RailItem
+            label={server.name}
+            active={!friendsOpen && selected === server.id}
+            badge={roomServer?.id === server.id && someoneLive}
+            onClick={() => select(server.id)}
+          >
+            <ServerIcon name={server.name} icon={server.icon} />
+          </RailItem>
+        </ServerContextMenu>
       ))}
       {code && !roomServer && (
         <RailItem
@@ -105,7 +108,20 @@ export function ServerRail(props: { hidden: boolean }) {
 }
 
 /** Um ícone da barra, com a pílula da esquerda e a dica com o nome. */
-function RailItem(props: {
+/**
+ * Um ícone da barra. Repassa o resto das props (e o `ref`) para a caixa em volta: o menu do botão
+ * direito (`ContextMenu.Trigger` com `asChild`) põe os eventos dele ali.
+ */
+function RailItem({
+  label,
+  active,
+  badge,
+  count,
+  onClick,
+  children,
+  ref,
+  ...rest
+}: {
   label: string;
   active: boolean;
   badge?: boolean;
@@ -113,9 +129,11 @@ function RailItem(props: {
   count?: number;
   onClick?: () => void;
   children: ReactNode;
-}) {
+  ref?: Ref<HTMLDivElement>;
+} & HTMLAttributes<HTMLDivElement>) {
+  const props = { label, active, badge, count, onClick, children };
   return (
-    <div className="group relative flex w-full justify-center">
+    <div {...rest} ref={ref} className="group relative flex w-full justify-center">
       {/* Pílula: some (inativo), cresce um pouco no hover e fica alta no ativo. */}
       <span
         aria-hidden
