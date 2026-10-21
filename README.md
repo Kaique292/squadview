@@ -35,7 +35,7 @@
 </p>
 
 > [!NOTE]
-> **Versão 0.8: veja quem está em cada sala do servidor.** A lateral do servidor mostra quem está em cada sala (e quem está ao vivo), mesmo com você fora dela, e quem é do servidor entra direto, sem pedir permissão. Os quadros da sala ganharam fundos em degradê, um por pessoa, o botão direito no ícone do servidor abre o menu dele e as mensagens que estavam esperando vão sozinhas quando o amigo aparece. Também corrigimos os menus por cima da live (sem moldura preta) e os controles que ficavam presos na tela. A sala inteira distribuindo o vídeo (salas sem limite) chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
+> **Versão 0.9: várias lives ao mesmo tempo.** Cada live que você assiste vira um quadro da sala, igual ao da sua: assista até 4 de uma vez, com volume, silenciar, tela cheia, picture in picture e detalhes com o ping no menu de cada uma. Quem está atrás de CGNAT agora se ouve na voz: se dois amigos não se alcançam, um terceiro da sala repassa a voz entre eles, assinada para ninguém no meio conseguir falsificar. A sala não tem mais limite de pessoas, o convite do servidor virou um link clicável, o ícone do servidor mostra um alto-falante quando tem gente em call e as conversas ganharam som de mensagem nova, contador e cancelar download. A sala inteira distribuindo o vídeo chega na [Fase 3](docs/roadmap.md). Achou um problema? [Abra uma issue](https://github.com/Kaique292/squadview/issues).
 
 ## ✨ O que ele faz
 
@@ -46,13 +46,13 @@
 - **Jogue do jeito que quiser.** Janela, sem bordas ou tela cheia: escolha o jogo uma vez e o app acompanha sozinho do cliente para a partida e de volta (LoL, Valorant e jogos com launcher). Nada é injetado no jogo, então é seguro com Vanguard, EAC e BattlEye.
 - **Só o áudio do jogo.** Transmitindo um jogo ou app, vai só o som dele, e o som acompanha quando o jogo troca de janela; o som da call fica de fora.
 - **A sua live na sala**, como no Discord: transmitindo, a sua tela vira um quadro da sala, com a qualidade e o AO VIVO no canto. Clique para pôr em foco, dois cliques para a tela cheia e o botão direito para parar, trocar o que transmite, mudar a qualidade ou ligar e desligar o som, sem sair do ar. Os detalhes mostram o último minuto em gráficos (fps, bitrate, latência e encode) e o uso da GPU e da CPU em barras.
-- **Assista dentro do app**, como no Discord: o vídeo aparece na janela, com tela cheia, volume de até 200% e estatísticas (fps, bitrate, latência e ping). Quem transmite vê quantos e quem estão assistindo. Quer jogar enquanto assiste? Mande a live para uma **janelinha por cima de tudo** (picture in picture).
-- **Funciona atrás de CGNAT.** Se a conexão direta não fecha (internet da operadora, 4G), o app tenta por IPv6 e, se ainda não der, recebe o vídeo por alguém da sala que já está assistindo. Há também um repassador na nuvem pronto para ligar ([ADR 0014](docs/adr/0014-conexao-em-camadas.md)).
+- **Assista várias lives ao mesmo tempo**, como no Discord: cada live que você assiste vira um quadro da sala, igual ao da sua, e dá para assistir até 4 de uma vez. Clique para pôr em foco, dois cliques para a tela cheia e o botão direito (ou os "...") para o volume de até 200%, silenciar, parar de assistir e os detalhes (fps, bitrate, latência e ping em gráficos). Quem transmite vê quantos e quem estão assistindo. Quer jogar enquanto assiste? Mande a live para uma **janelinha por cima de tudo** (picture in picture).
+- **Funciona atrás de CGNAT.** Se a conexão direta não fecha (internet da operadora, 4G), o app tenta por IPv6 e, se ainda não der, recebe o vídeo por alguém da sala que já está assistindo. A voz faz o mesmo: se dois amigos não se alcançam, outro membro da sala repassa a voz entre eles, assinada com uma chave que só os dois conhecem ([ADR 0020](docs/adr/0020-voz-repassada-pela-sala.md)). Tudo de graça, sem servidor no meio; há também um repassador na nuvem pronto para ligar ([ADR 0014](docs/adr/0014-conexao-em-camadas.md)).
 - **Chat de voz na sala.** A sala é um canal de voz como o do Discord: um quadro por pessoa, cada um com o seu fundo em degradê, borda verde (ou o efeito que você escolher, com a cor que quiser; quando duas pessoas falam lado a lado, as cores se misturam onde os efeitos se tocam) em quem fala, mudo e surdo, e clique num quadro para pôr a pessoa em foco. Volume e silenciar por pessoa (só para você), isolamento de voz contra teclado e ventilador e controle automático de ganho, para todo mundo chegar no mesmo volume. A voz também vai direto de PC para PC.
 - **Amigos.** Veja quem está online, numa sala ou transmitindo. Peça para entrar na sala de um amigo (qualquer pessoa da sala aceita), chame amigos para a sua e marque quem entra direto. Adicione direto pelo botão direito em quem está na sala com você, ou depois, em Recentes.
-- **Servidores com salas fixas.** Crie um servidor para a turma, com salas de voz que ficam lá mesmo vazias. A lateral mostra quem está em cada sala e quem está ao vivo, mesmo com você fora dela, e quem é do servidor entra direto, sem pedir permissão. Chame a galera por um link de convite, escolha administradores e dê um ícone ao servidor, ajustando o recorte, a posição e o zoom. O botão direito no ícone do servidor abre o menu dele.
-- **Conversas privadas.** Mande mensagens, fotos, vídeos e arquivos para um amigo, direto de PC para PC: nem o texto passa por servidor, e o histórico fica só no seu PC. Fotos pequenas aparecem sozinhas; arquivos grandes e vídeos esperam você clicar em Baixar. O que você mandar com o amigo offline fica esperando e vai quando ele aparecer.
-- **Salas rápidas com nome e código.** Dê um nome à sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
+- **Servidores com salas fixas.** Crie um servidor para a turma, com salas de voz que ficam lá mesmo vazias. A lateral mostra quem está em cada sala e quem está ao vivo, mesmo com você fora dela, o ícone do servidor ganha um alto-falante quando tem gente em call, e quem é do servidor entra direto, sem pedir permissão. Chame a galera por um link de convite clicável, escolha administradores e dê um ícone ao servidor, ajustando o recorte, a posição e o zoom. O botão direito no ícone do servidor abre o menu dele.
+- **Conversas privadas.** Mande mensagens, fotos, vídeos e arquivos para um amigo, direto de PC para PC: nem o texto passa por servidor, e o histórico fica só no seu PC. Fotos pequenas aparecem sozinhas; arquivos grandes e vídeos esperam você clicar em Baixar (e dá para cancelar no meio). Mensagem nova toca um som e soma no contador do ícone. O que você mandar com o amigo offline fica esperando e vai quando ele aparecer.
+- **Salas rápidas com nome e código, sem limite de pessoas.** Dê um nome à sala e mande o **link de convite**: quem tem o app entra direto, quem não tem cai na página de download.
 - **Integração com o Discord.** Entre com a sua conta: seu nome e sua foto aparecem para toda a sala. Mostre no seu perfil do Discord que está numa sala, transmitindo ou assistindo, com o botão "Entrar na sala" se quiser.
 - **Visual que você já conhece.** Interface na organização do Discord, com identidade própria, configurações por categoria e efeito de vidro ajustável. Sons de aviso ao entrar, sair, mutar, ensurdecer e transmitir (com volume e cada som desligável).
 - **Fica na bandeja.** Fechar a janela deixa o app perto do relógio, e você continua na sala; clique no ícone para abrir ou use "Sair" no botão direito. Dá para desligar em Configurações › Windows.
@@ -62,7 +62,7 @@
 
 **Em breve**
 
-- **Salas sem limite (Fase 3).** A própria sala distribui o vídeo como um torrent, mas com atraso de call: com 5.000 pessoas, cerca de 60 ms de rede, e quem transmite manda sempre só 2 cópias ([ADR 0012](docs/adr/0012-malha-em-enxame.md)).
+- **A sala distribui o vídeo (Fase 3).** A própria sala repassa o vídeo como um torrent, mas com atraso de call: com 5.000 pessoas, cerca de 60 ms de rede, e quem transmite manda sempre só 2 cópias ([ADR 0012](docs/adr/0012-malha-em-enxame.md)).
 - **Internet fraca não derruba ninguém (Fase 3).** Quem está com conexão ruim recebe 720p, e o resto continua em 1080p.
 - **Bot do Discord (Fase 5)** avisando no servidor quando alguém começar a transmitir.
 
@@ -70,6 +70,10 @@
 
 <p align="center">
   <img src="docs/images/tela-transmitindo.png" alt="A sua live como um quadro da sala, com 720P 30FPS e AO VIVO em pílula no canto, ao lado dos amigos na voz" width="90%">
+</p>
+
+<p align="center">
+  <img src="docs/images/tela-assistindo.png" alt="Assistindo duas lives ao mesmo tempo: cada uma é um quadro da sala, com a qualidade e o AO VIVO no canto, ao lado de quem está na voz" width="90%">
 </p>
 
 <p align="center">
@@ -195,7 +199,7 @@ Não. O SquadView é um projeto independente e open source, sem ligação com o 
 | 0    | Fundação: estrutura, docs, esteira e atualização automática | ✅     |
 | 1    | Captura + encode por hardware + preview local + áudio       | 🟨     |
 | 2    | Transmissão direta entre os PCs da sala                     | 🟨     |
-| 3    | Malha da sala (repasse entre membros)                       | ⬜     |
+| 3    | Malha da sala (repasse entre membros)                       | 🟨     |
 | 4    | App completo + login com Discord                            | 🟨     |
 | 5    | AMD, Rich Presence, bot → **v1.0**                          | 🟨     |
 
@@ -236,7 +240,7 @@ As miniaturas das janelas usam o crate `jpeg-encoder`: _this software is based i
 
 There is **no media server**: video goes directly between PCs over QUIC, with UDP hole punching. The plan (Phase 3) is for the room itself to distribute the video: members with spare upload relay already-encoded packets, and members on weak connections get a 720p layer. A tiny free signaling service (Cloudflare Worker) only helps peers find each other; no video goes through it.
 
-- **Status:** version 0.8. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD), with a live viewer count. Members behind CGNAT connect over IPv6 or get the stream relayed by someone already watching; an optional cloud TURN relay is ready to turn on. The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), with friends, presence, "ask to join" requests, custom speaking effects that blend where they touch, picture-in-picture, notification sounds and a system tray icon. Servers with persistent voice rooms (showing who is in each room, with members joining directly), invites, roles and cropped icons; private peer-to-peer messages with files (no server in between, history kept locally). Discord login, invite links, Rich Presence and a silent Discord-style installer. Your own stream shows up as a tile in the room (Discord-style), with a right-click menu to stop, switch source, change quality or toggle audio without going offline, and a details view with live charts. Full room-wide relaying (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
+- **Status:** version 0.9. One friend streams and the rest of the room watches inside the app, directly PC to PC (NVIDIA and AMD), with a live viewer count. Members behind CGNAT connect over IPv6 or get the stream relayed by someone already watching; an optional cloud TURN relay is ready to turn on. The room is a Discord-like voice channel (peer-to-peer Opus voice with noise suppression), with friends, presence, "ask to join" requests, custom speaking effects that blend where they touch, picture-in-picture, notification sounds and a system tray icon. Watch up to 4 streams at once, each one a tile in the room with its own volume, mute, fullscreen, picture-in-picture and stats. When two members can't reach each other (CGNAT), a third member relays their voice, signed end to end so the relay can't forge it. Rooms have no member limit. Servers with persistent voice rooms (showing who is in each room, with members joining directly), clickable invite links, roles and cropped icons; private peer-to-peer messages with files (no server in between, history kept locally). Discord login, invite links, Rich Presence and a silent Discord-style installer. Your own stream shows up as a tile in the room (Discord-style), with a right-click menu to stop, switch source, change quality or toggle audio without going offline, and a details view with live charts. Full room-wide relaying (mesh) is Phase 3. See the [roadmap](docs/roadmap.md).
 - **Stack:** Rust core, Tauri v2, React 19 + Tailwind v4, QUIC (quinn) peer-to-peer mesh, Cloudflare Worker for signaling.
 - **Contributing:** PRs target the `dev` branch and use [Conventional Commits](https://www.conventionalcommits.org/). Docs are in Portuguese; issues and PRs in English are welcome too.
 - **Support:** [Buy Me a Coffee](https://buymeacoffee.com/kaiqueamaral).
