@@ -12,17 +12,17 @@ export function StreamIllustration() {
       <rect x="82" y="8" width="116" height="74" rx="12" fill="#2e3035" stroke="#6e4ff6" strokeWidth="4" />
       <rect x="92" y="18" width="96" height="54" rx="6" fill="url(#sv-ilustra-tela)" />
       <path d="M133 34l18 11-18 11z" fill="#fff" />
-      <rect x="96" y="22" width="30" height="11" rx="3" fill="#f23f43" />
+      <rect x="95" y="22" width="34" height="11" rx="5.5" fill="#f23f43" />
       <text
-        x="111"
-        y="30.5"
+        x="112"
+        y="30.2"
         textAnchor="middle"
-        fontSize="7"
+        fontSize="6.5"
         fontWeight="700"
         fill="#fff"
         fontFamily="Segoe UI, sans-serif"
       >
-        Ao vivo
+        AO VIVO
       </text>
 
       {/* sofá */}

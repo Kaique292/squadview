@@ -12,7 +12,6 @@ import { useServersStore } from "./servers/servers-store";
 import { ServerRail } from "./room/ServerRail";
 import { WatchView } from "./room/WatchView";
 import { roomTitle, useRoomStore } from "./room/room-store";
-import { StreamView } from "./stream/StreamView";
 import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
@@ -77,10 +76,11 @@ export function App() {
               ? "bg-surface-2 p-0"
               : friendsOpen
                 ? "bg-glass-2 p-0"
-                : code && !watching && !live
-                  ? // O canal de voz ocupa a área toda, com fundo preto, como no Discord.
+                : (code || live) && !watching
+                  ? // O canal de voz (com a nossa live como um quadro) ocupa a área toda, com fundo
+                    // preto, como no Discord.
                     "bg-black p-0"
-                  : `bg-glass-2 px-4 pt-4 ${watching || live ? "pb-11" : "pb-4"}`
+                  : `bg-glass-2 px-4 pt-4 ${watching ? "pb-11" : "pb-4"}`
           }`}
         >
           {friendsOpen ? (
@@ -93,8 +93,6 @@ export function App() {
             <ServerHome server={server} />
           ) : watching ? (
             <WatchView member={watching} />
-          ) : live ? (
-            <StreamView />
           ) : (
             <VoiceRoom />
           )}

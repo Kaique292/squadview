@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { playVideoExit } from "../ui/dissolve-effect";
+import { toast } from "../ui/toast-store";
+import { cancelVideoClick, handleVideoPointer, type VideoPointer } from "./video-pointer";
 
 /** Espelha `sv_capture::CaptureSource` (serde: { kind, handle }). */
 export type CaptureSource = { kind: "monitor" | "window"; handle: number };
@@ -65,6 +67,18 @@ export function sourceKey(id: CaptureSource) {
   return `${id.kind}-${id.handle}`;
 }
 
+/** Quantas medições guardar para os gráficos dos detalhes (a cada 500 ms: 1 minuto). */
+export const HISTORY_SIZE = 120;
+
+/** O que está sendo transmitido agora (para trocar a fonte, a qualidade ou o som sem parar). */
+export interface CurrentStream {
+  source: CaptureSource;
+  /** Programa cujo som vai junto (`null`: sem som). */
+  audioPid: number | null;
+  /** O último programa escolhido para o som, para religar o som depois de desligar. */
+  lastAudioPid: number | null;
+}
+
 /** Miniaturas pedidas ao mesmo tempo (cada uma captura um frame da fonte). */
 const THUMBNAIL_CONCURRENCY = 4;
 
@@ -76,19 +90,29 @@ interface StreamState {
   thumbnails: Record<string, string | null>;
   quality: StreamQuality;
   stats: StreamStats | null;
+  /** As últimas medições, da mais antiga para a mais nova (os gráficos dos detalhes). */
+  history: StreamStats[];
   system: SystemLoad | null;
+  current: CurrentStream | null;
   notice: StreamNotice | null;
   logPath: string | null;
   error: string | null;
   loadSources: () => Promise<void>;
   setQuality: (quality: StreamQuality) => void;
+  /** Começa a transmitir; já ao vivo, troca a fonte sem sair do ar. */
   start: (source: CaptureSource, quality: StreamQuality, audioPid?: number | null) => Promise<void>;
+  /** Troca a qualidade sem parar a transmissão. */
+  changeQuality: (quality: StreamQuality) => Promise<void>;
+  /** Liga ou desliga o som que vai junto, sem parar a transmissão. */
+  setShareAudio: (share: boolean) => Promise<void>;
   /** Ouvir o som da prévia neste PC (sai duas vezes: use fone). */
   listening: boolean;
   setListening: (listening: boolean) => Promise<void>;
   /** O stream ocupa a tela inteira (a janela do app em tela cheia, sem as barras laterais). */
   fullscreen: boolean;
   setFullscreen: (fullscreen: boolean) => Promise<void>;
+  /** O mouse está sobre o vídeo nativo (ele não passa pela interface: o Rust avisa). */
+  videoHover: boolean;
   /** O vídeo de quem assistimos está solto numa janela pequena, sempre no topo. */
   pip: boolean;
   setPip: (pip: boolean) => Promise<void>;
@@ -102,7 +126,9 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   thumbnails: {},
   quality: DEFAULT_QUALITY,
   stats: null,
+  history: [],
   system: null,
+  current: null,
   notice: null,
   logPath: null,
   error: null,
@@ -147,6 +173,8 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }
   },
 
+  videoHover: false,
+
   pip: false,
   async setPip(pip) {
     if (get().pip === pip) return;
@@ -171,20 +199,43 @@ export const useStreamStore = create<StreamState>((set, get) => ({
   },
 
   async start(source, quality, audioPid = null) {
-    set({ status: "starting", stats: null, notice: null, error: null, quality, listening: false });
+    // Já ao vivo é uma troca: a live continua na tela (e na sala) enquanto a nova fonte começa.
+    const live = get().status === "live";
+    set({ status: live ? "live" : "starting", notice: null, error: null, quality, listening: false });
+    if (!live) set({ stats: null, history: [] });
     try {
       await invoke("start_preview", { source, quality, audioPid });
-      set({ status: "live" });
+      const lastAudioPid = audioPid ?? get().current?.lastAudioPid ?? null;
+      set({ status: "live", current: { source, audioPid, lastAudioPid } });
     } catch (e) {
-      set({ status: "idle", error: typeof e === "string" ? e : "Não deu para começar a transmissão." });
+      const message = typeof e === "string" ? e : "Não deu para começar a transmissão.";
+      if (live) {
+        // A troca falhou: o Rust já parou a anterior.
+        set({ status: "idle", stats: null, current: null, error: message });
+        toast.error(message, "Transmissão");
+      } else set({ status: "idle", error: message });
     }
+  },
+
+  async changeQuality(quality) {
+    const current = get().current;
+    if (!current) return;
+    await get().start(current.source, quality, current.audioPid);
+  },
+
+  async setShareAudio(share) {
+    const current = get().current;
+    if (!current) return;
+    const audioPid = share ? current.lastAudioPid : null;
+    if (share && audioPid === null) return;
+    await get().start(current.source, get().quality, audioPid);
   },
 
   async stop() {
     await get().setFullscreen(false);
     // Antes de fechar o vídeo, o Rust manda a foto do último quadro (evento `video-exit`).
     await invoke("stop_preview");
-    set({ status: "idle", stats: null });
+    set({ status: "idle", stats: null, history: [], current: null });
   },
 }));
 
@@ -202,19 +253,28 @@ export function estimatedMbps(quality: StreamQuality, sourceHeight = 2160) {
 
 /** Liga os eventos vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
 export async function listenToStreamEvents() {
-  const unlistenStats = await listen<StreamStats>("stream-stats", (e) => useStreamStore.setState({ stats: e.payload }));
+  const unlistenStats = await listen<StreamStats>("stream-stats", (e) => {
+    const history = [...useStreamStore.getState().history, e.payload].slice(-HISTORY_SIZE);
+    useStreamStore.setState({ stats: e.payload, history });
+  });
   const unlistenEnded = await listen("stream-ended", () => {
     void useStreamStore.getState().setFullscreen(false);
-    useStreamStore.setState({ status: "idle", stats: null, notice: null });
+    useStreamStore.setState({ status: "idle", stats: null, history: [], current: null, notice: null });
   });
   const unlistenNotice = await listen<StreamNotice | null>("stream-notice", (e) =>
     useStreamStore.setState({ notice: e.payload }),
   );
   // Pedidos de tela cheia feitos dentro do vídeo nativo (que recebe o teclado e os cliques dele).
   const unlistenFullscreen = await listen<"toggle" | "exit">("video-fullscreen", (e) => {
+    // Dois cliques: o clique que esperava para ver se vinha outro não vale.
+    if (e.payload === "toggle") cancelVideoClick();
     const { fullscreen, setFullscreen } = useStreamStore.getState();
     void setFullscreen(e.payload === "toggle" ? !fullscreen : false);
   });
+  // Clique, botão direito e o mouse entrando e saindo do vídeo, que fica por cima da interface.
+  const unlistenPointer = await listen<VideoPointer>("video-pointer", (e) =>
+    handleVideoPointer(e.payload, (inside) => useStreamStore.setState({ videoHover: inside })),
+  );
   // Dois cliques, Esc ou fechar na janelinha do picture in picture: o vídeo volta para o app.
   const unlistenPip = await listen<boolean>("video-pip", (e) => void useStreamStore.getState().setPip(e.payload));
   // Esc com o foco na interface também sai da tela cheia.
@@ -237,6 +297,7 @@ export async function listenToStreamEvents() {
     unlistenExit();
     unlistenNotice();
     unlistenFullscreen();
+    unlistenPointer();
     unlistenPip();
     window.removeEventListener("keydown", onKey);
   };

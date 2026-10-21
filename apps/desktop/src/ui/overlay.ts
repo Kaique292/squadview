@@ -35,32 +35,53 @@ export function useOverlayMenu(onChange?: (open: boolean) => void) {
 
 /**
  * O que abre um buraco no vídeo: tudo que o Radix põe num portal (menus, dicas, listas suspensas)
- * e o que for marcado com `data-video-hole` (avisos no canto, pedidos para entrar).
+ * e o que for marcado com `data-video-hole` (avisos no canto, os selos e botões em cima da live).
  */
 const HOLE_SELECTOR = "[data-radix-popper-content-wrapper], [data-video-hole]";
-/** Folga em volta, para a sombra e a setinha da dica não ficarem cortadas pelo vídeo. */
-const HOLE_MARGIN = 6;
 
 export interface Hole {
   x: number;
   y: number;
   width: number;
   height: number;
+  /** Raio dos cantos (pixels físicos): o buraco tem a forma do menu ou da pílula. */
+  radius: number;
 }
 
-/** Os retângulos (pixels físicos, relativos à janela) da interface que deve ficar por cima do vídeo. */
+/** O raio do canto de cima à esquerda (todos os nossos menus e pílulas têm os quatro iguais). */
+function radiusOf(el: HTMLElement) {
+  const style = getComputedStyle(el);
+  return parseFloat(style.borderTopLeftRadius || style.borderRadius) || 0;
+}
+
+/**
+ * Os recortes (pixels físicos, relativos à janela) da interface que deve ficar por cima do vídeo.
+ * Cada um tem o tamanho e os cantos exatos do que está por cima: embaixo do buraco não há vídeo,
+ * só o fundo preto da área, então qualquer folga aparecia como uma moldura preta em volta.
+ */
 export function measureHoles(root: ParentNode = document): Hole[] {
   const dpr = window.devicePixelRatio || 1;
   const holes: Hole[] = [];
-  for (const el of root.querySelectorAll(HOLE_SELECTOR)) {
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) continue;
+  const add = (r: DOMRect, radius: number) => {
+    if (r.width <= 0 || r.height <= 0) return;
     holes.push({
-      x: Math.floor((r.left - HOLE_MARGIN) * dpr),
-      y: Math.floor((r.top - HOLE_MARGIN) * dpr),
-      width: Math.ceil((r.width + 2 * HOLE_MARGIN) * dpr),
-      height: Math.ceil((r.height + 2 * HOLE_MARGIN) * dpr),
+      x: Math.floor(r.left * dpr),
+      y: Math.floor(r.top * dpr),
+      width: Math.ceil(r.width * dpr),
+      height: Math.ceil(r.height * dpr),
+      radius: Math.round(Math.min(radius, r.width / 2, r.height / 2) * dpr),
     });
+  };
+  for (const el of root.querySelectorAll<HTMLElement>(HOLE_SELECTOR)) {
+    // No portal do Radix, quem tem o fundo e os cantos é o conteúdo, não a caixa em volta.
+    const target = el.matches("[data-radix-popper-content-wrapper]")
+      ? ((el.firstElementChild as HTMLElement | null) ?? el)
+      : el;
+    add(target.getBoundingClientRect(), radiusOf(target));
+    // A setinha da dica fica fora da caixa: ganha um buraco só dela.
+    for (const arrow of target.querySelectorAll("svg")) {
+      if (arrow.parentElement?.style.position === "absolute") add(arrow.getBoundingClientRect(), 0);
+    }
   }
   return holes;
 }
