@@ -4,6 +4,7 @@
 //! Roda pelo `yarn test:rs` (o `scripts/with-worker.mjs` sobe o Worker local e define
 //! `SQUADVIEW_SIGNALING_URL` e `SQUADVIEW_TEST_SESSION_SECRET`). Sem essas variáveis, é pulado.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -33,10 +34,15 @@ fn session(secret: &str, id: &str) -> String {
     format!("{payload}.{}", URL_SAFE_NO_PAD.encode(sig.as_ref()))
 }
 
-/// Ids do Discord novos a cada execução (o Worker local guarda o estado entre execuções).
+/// Ids do Discord novos a cada teste. O relógio do Windows anda de 100 em 100 ns: dois testes em
+/// paralelo podiam pegar o mesmo horário, ficar com a mesma Ana e o mesmo Beto e um atrapalhar o
+/// outro (na esteira os dois falhavam juntos esperando a amizade). O contador separa os testes do
+/// mesmo processo; o horário separa as execuções (o Worker local guarda o estado entre elas).
 fn fresh_ids() -> (String, String) {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1_000_000_000_000_000;
-    (format!("1{n:017}"), format!("2{n:017}"))
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed) % 1000;
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 100_000_000_000_000;
+    (format!("1{t:014}{n:03}"), format!("2{t:014}{n:03}"))
 }
 
 /// Espera uma mensagem do registro que satisfaça `pred`.
