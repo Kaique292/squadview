@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { displayName, useAccountStore } from "../account/account-store";
 import { useFriendsStore } from "../friends/friends-store";
+import { serverInviteLink } from "../room/invite";
 import { savedName, useRoomStore } from "../room/room-store";
 import { toast } from "../ui/toast-store";
 
@@ -83,9 +84,13 @@ export function serverErrorText(code: string): string | null {
   return code === "too-many" && request ? (TOO_MANY[request] ?? null) : null;
 }
 
-/** Link de convite, que abre o app de quem tem. */
+/**
+ * Link de convite para mandar à galera: um link web comum (clicável no Discord e no WhatsApp) que abre o app de
+ * quem tem ou leva ao download de quem não tem. O `squadview://servidor/...` cru só funciona com o app instalado e
+ * nem vira link na maioria dos chats.
+ */
 export function serverInviteUrl(invite: string): string {
-  return `squadview://servidor/${invite}`;
+  return serverInviteLink(invite);
 }
 
 /** Tira o convite de um link ou do texto colado (`<id>.<segredo>`). `null` se não achar. */

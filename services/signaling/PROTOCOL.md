@@ -124,7 +124,7 @@ Registro → app:
 | `{"type":"servers","servers":[...]}`                                | Ao conectar: todos os nossos (`id`, `name`, `icon`, `rooms`, `members`)                                                          |
 | `{"type":"server","server":{...}}`                                  | Entramos, criamos ou alguém mudou um servidor nosso                                                                              |
 | `{"type":"server-removed","id":"..."}`                              | Saímos, fomos tirados ou o servidor foi apagado                                                                                  |
-| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta `squadview://servidor/<convite>`)                                                                    |
+| `{"type":"server-invite","server":"...","invite":"<id>.<segredo>"}` | Convite criado (o app monta o link `.../convite/?servidor=<convite>`, que abre `squadview://servidor/<convite>`)                 |
 | `{"type":"error","code":"..."}`                                     | `not-member`, `not-allowed`, `unknown-room`, `unknown-member`, `invite-invalid`, `server-full`, `too-many`, `owner-cannot-leave` |
 
 O Worker antigo não conhece essas mensagens e fecha a conexão de amigos (4400): publique o Worker antes do app.

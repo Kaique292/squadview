@@ -149,8 +149,8 @@
     <main>
       <img class="logo" src="../logo.svg" alt="SquadView" />
       <div id="ok">
-        <h1>Te chamaram para uma sala</h1>
-        <p>Entre e assista a tela da galera, com som do jogo e sem servidor no meio.</p>
+        <h1 id="title">Te chamaram para uma sala</h1>
+        <p id="lead">Entre e assista a tela da galera, com som do jogo e sem servidor no meio.</p>
         <div class="code" id="code" aria-label="Código da sala"></div>
         <a class="button" id="open">Abrir no SquadView</a>
         <div class="fallback" id="fallback">
@@ -162,7 +162,7 @@
       </div>
       <div id="invalid" hidden>
         <h1>Convite inválido</h1>
-        <p>Este link não tem um código de sala válido. Peça o link de novo para quem te convidou.</p>
+        <p>Este link não tem um convite válido. Peça o link de novo para quem te convidou.</p>
         <a class="button secondary" style="margin-top: 20px" href="https://github.com/Kaique292/squadview">
           Conhecer o SquadView
         </a>
@@ -173,15 +173,31 @@
     <script>
       // Mesmo alfabeto da sinalização: 6 caracteres, sem letras que se confundem (I, L, O, 0, 1).
       const ALPHABET = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
-      const raw = new URLSearchParams(location.search).get("sala") || "";
+      // Convite de servidor: <id do servidor (16 hex)>.<segredo (12 letras e números)>, como o app gera.
+      const SERVER_INVITE = /^[0-9a-f]{16}\.[A-Za-z0-9]{12}$/;
+      const params = new URLSearchParams(location.search);
+      const raw = params.get("sala") || "";
       const code = raw.replace(/[\s-]/g, "").toUpperCase();
+      const server = (params.get("servidor") || "").trim();
 
-      if (!ALPHABET.test(code)) {
+      let deepLink = null;
+      if (SERVER_INVITE.test(server)) {
+        deepLink = "squadview://servidor/" + server;
+        document.getElementById("title").textContent = "Te chamaram para um servidor";
+        document.getElementById("lead").textContent =
+          "Entre no servidor da galera e nas salas de voz, com tela compartilhada e som do jogo.";
+        // O segredo do convite não aparece na página: ele só segue para o app.
+        document.getElementById("code").hidden = true;
+        document.title = "Convite para um servidor · SquadView";
+      } else if (ALPHABET.test(code)) {
+        deepLink = "squadview://join/" + code;
+        document.getElementById("code").textContent = code;
+      }
+
+      if (!deepLink) {
         document.getElementById("ok").hidden = true;
         document.getElementById("invalid").hidden = false;
       } else {
-        const deepLink = "squadview://join/" + code;
-        document.getElementById("code").textContent = code;
         const open = document.getElementById("open");
         open.href = deepLink;
         // Tenta abrir o app sozinho; se nada acontecer, mostra o download.
