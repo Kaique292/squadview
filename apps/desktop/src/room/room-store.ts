@@ -372,5 +372,11 @@ export async function rejoinAfterUpdate() {
 /** Pega o convite guardado pelo Rust (se houver) e pede confirmação para entrar. */
 async function takePendingInvite() {
   const code = await invoke<string | null>("take_pending_invite").catch(() => null);
-  if (code) useRoomStore.getState().setInvite(code);
+  if (!code) return;
+  // Convite de servidor (`servidor:<convite>`): abre o "Entrar num servidor" já preenchido.
+  if (code.startsWith("servidor:")) useServerInviteStore.setState({ invite: code.slice("servidor:".length) });
+  else useRoomStore.getState().setInvite(code);
 }
+
+/** Convite de servidor recebido por link, esperando a pessoa confirmar. */
+export const useServerInviteStore = create<{ invite: string | null }>(() => ({ invite: null }));

@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { displayName, useAccountStore } from "../account/account-store";
 import { savedName, useRoomStore } from "../room/room-store";
 import { useStreamStore } from "../stream/stream-store";
+import { clearServers, onServerMessage, type ServerOp, serverErrorText } from "../servers/servers-store";
 import { toast } from "../ui/toast-store";
 
 /** Amigos e presença (ver docs/adr/0011-amigos-e-presenca.md). */
@@ -57,7 +58,11 @@ export type FriendAction =
   | { type: "status"; room: { code: string; name: string | null } | null; live: boolean }
   | { type: "friend-request" | "friend-accept" | "friend-decline" | "friend-cancel" | "unfriend"; id: string }
   | { type: "set-direct"; id: string; direct: boolean }
-  | { type: "join" | "invite"; id: string };
+  | { type: "join" | "invite"; id: string }
+  // Servidores (ADR 0016).
+  | { type: "server-create"; name: string }
+  | { type: "server-join"; invite: string }
+  | { type: "server-action"; server: string; op: ServerOp };
 
 /** Pedido de alguém de fora para entrar na sala em que estamos. */
 export interface JoinRequest {
@@ -196,6 +201,7 @@ function onJoinResult(result: JoinResult) {
 }
 
 function onMessage(msg: RegistryMessage) {
+  if (onServerMessage(msg)) return;
   switch (msg.type) {
     case "state": {
       useFriendsStore.setState({
@@ -219,8 +225,12 @@ function onMessage(msg: RegistryMessage) {
         invites: [...useFriendsStore.getState().invites.filter((i) => i.from.id !== msg.from.id), msg],
       });
       return;
-    case "error":
+    case "error": {
+      // Erro de um pedido a servidor (o último que fizemos): texto do servidor.
+      const server = serverErrorText(msg.code);
+      if (server) return toast.warning(server, "Servidor");
       toast.warning(ERRORS[msg.code] ?? "Não deu certo agora. Tente de novo.", "Amigos");
+    }
   }
 }
 
@@ -246,7 +256,10 @@ export async function listenToFriendsEvents() {
   const offs = await Promise.all([
     listen<FriendsStatus>("friends-status", (e) => {
       useFriendsStore.setState({ status: e.payload });
-      if (e.payload === "signed-out") useFriendsStore.setState({ ...EMPTY });
+      if (e.payload === "signed-out") {
+        useFriendsStore.setState({ ...EMPTY });
+        clearServers();
+      }
       if (e.payload === "online") sendProfileAndStatus();
     }),
     listen<RegistryMessage>("friends-event", (e) => onMessage(e.payload)),

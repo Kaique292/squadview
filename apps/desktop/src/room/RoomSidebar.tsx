@@ -168,7 +168,7 @@ function RoomHeader(props: { code: string }) {
   );
 }
 
-function MenuItem(props: {
+export function MenuItem(props: {
   icon: ReactNode;
   onSelect: () => void;
   danger?: boolean;
@@ -231,9 +231,8 @@ function NoRoom() {
 
 /** A sala como um "canal de voz": categoria recolhível, nome com o tempo conectado e os membros. */
 function RoomChannel() {
-  const { code, roomName, members, pendingWatch, watching, watch, joinedAt } = useRoomStore();
+  const { code, roomName, members, joinedAt } = useRoomStore();
   const [open, setOpen] = useState(true);
-  const [me, ...others] = members;
 
   return (
     <ScrollArea className="min-h-0 flex-1" viewportClassName="px-2 pt-4 pb-2">
@@ -256,25 +255,34 @@ function RoomChannel() {
       <div
         className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
       >
-        <ul aria-label="Membros da sala" className="flex min-h-0 flex-col gap-0.5 overflow-hidden pl-6">
-          {me && <MemberRow member={me} isMe />}
-          {others.map((m) => (
-            <MemberRow
-              key={m.id}
-              member={m}
-              watching={watching?.id === m.id}
-              pending={pendingWatch === m.id}
-              onWatch={() => void watch(m)}
-            />
-          ))}
-        </ul>
+        <RoomMemberList />
       </div>
     </ScrollArea>
   );
 }
 
+/** Quem está na sala em que estamos (nós primeiro), com o "assistir" de quem está ao vivo. */
+export function RoomMemberList() {
+  const { members, pendingWatch, watching, watch } = useRoomStore();
+  const [me, ...others] = members;
+  return (
+    <ul aria-label="Membros da sala" className="flex min-h-0 flex-col gap-0.5 overflow-hidden pl-6">
+      {me && <MemberRow member={me} isMe />}
+      {others.map((m) => (
+        <MemberRow
+          key={m.id}
+          member={m}
+          watching={watching?.id === m.id}
+          pending={pendingWatch === m.id}
+          onWatch={() => void watch(m)}
+        />
+      ))}
+    </ul>
+  );
+}
+
 /** Tempo desde que entramos na sala, como o "2:15:06" do canal de voz. */
-function Elapsed(props: { since: number }) {
+export function Elapsed(props: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
