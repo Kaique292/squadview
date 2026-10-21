@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use quinn::Connection;
 use sv_encode::EncodedFrame;
 use sv_gpu::{Size, clock};
-use sv_media::{Bounds, WindowEvent, WindowTarget};
+use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
 use sv_net::protocol::{FrameHeader, StreamDescription};
 use sv_net::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
 
@@ -193,7 +193,7 @@ impl RemoteView {
     }
 
     /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
-    pub fn set_video_holes(&self, holes: Vec<Bounds>) {
+    pub fn set_video_holes(&self, holes: Vec<Hole>) {
         let mut s = lock(&self.state.surface);
         s.holes = holes;
         s.apply();

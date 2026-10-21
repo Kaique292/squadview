@@ -22,6 +22,22 @@ pub const ENDED_EVENT: &str = "stream-ended";
 pub const NOTICE_EVENT: &str = "stream-notice";
 /// Pedido de tela cheia feito dentro do vídeo: `"toggle"` (dois cliques, F11) ou `"exit"` (Esc).
 pub const FULLSCREEN_EVENT: &str = "video-fullscreen";
+/// Clique, botão direito, entrada e saída do mouse no vídeo embutido: ele fica por cima da
+/// interface e recebe o mouse no lugar dela (`{ kind, x, y }`, pixels físicos a partir do vídeo).
+pub const POINTER_EVENT: &str = "video-pointer";
+
+/// Repassa o mouse do vídeo para a interface. `false`: o evento não é de mouse.
+pub fn emit_pointer<R: Runtime>(app: &AppHandle<R>, event: WindowEvent) -> bool {
+    let payload = match event {
+        WindowEvent::Click { x, y } => json!({ "kind": "click", "x": x, "y": y }),
+        WindowEvent::ContextMenu { x, y } => json!({ "kind": "menu", "x": x, "y": y }),
+        WindowEvent::PointerEnter => json!({ "kind": "enter" }),
+        WindowEvent::PointerLeave => json!({ "kind": "leave" }),
+        WindowEvent::ToggleFullscreen | WindowEvent::ExitFullscreen | WindowEvent::ExitPip => return false,
+    };
+    let _ = app.emit(POINTER_EVENT, payload);
+    true
+}
 
 /// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar a captura.
 const CHANGED_NOTICE_FOR: Duration = Duration::from_secs(6);
@@ -255,11 +271,14 @@ fn launch<R: Runtime>(
     // Dois cliques, F11 ou Esc dentro do vídeo: quem muda o layout é a interface.
     let event_app = app.clone();
     preview.on_video_event(move |event| {
+        if emit_pointer(&event_app, event) {
+            return;
+        }
         let kind = match event {
             WindowEvent::ToggleFullscreen => "toggle",
             WindowEvent::ExitFullscreen => "exit",
             // A prévia nunca entra em picture in picture (só o stream de um amigo).
-            WindowEvent::ExitPip => return,
+            _ => return,
         };
         let _ = event_app.emit(FULLSCREEN_EVENT, kind);
     });
@@ -322,7 +341,7 @@ pub struct Layout {
     pub bounds: Bounds,
     pub hidden: bool,
     /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali.
-    pub holes: Vec<Bounds>,
+    pub holes: Vec<sv_session::Hole>,
     /// Estamos assistindo um amigo: a área é dele, a prévia fica fora da tela.
     pub watching: bool,
 }
@@ -368,13 +387,15 @@ pub fn set_video_hidden<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewS
     crate::room::apply_layout(&app, &layout);
 }
 
-/// Um retângulo da interface (pixels físicos, relativos à janela).
+/// Um retângulo da interface (pixels físicos, relativos à janela), com o raio dos cantos.
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 pub struct Hole {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
+    #[serde(default)]
+    radius: u32,
 }
 
 /// Menus, dicas e avisos abertos por cima da área do vídeo: o vídeo abre um buraco em cada um, em
@@ -384,11 +405,14 @@ pub fn set_video_holes<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewSt
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.holes = holes
         .into_iter()
-        .map(|h| Bounds {
-            x: h.x,
-            y: h.y,
-            width: h.width,
-            height: h.height,
+        .map(|h| sv_session::Hole {
+            bounds: Bounds {
+                x: h.x,
+                y: h.y,
+                width: h.width,
+                height: h.height,
+            },
+            radius: h.radius,
         })
         .collect();
     let layout = running.layout.clone();
