@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0](https://github.com/Kaique292/squadview/compare/v0.4.0...v0.5.0) (2026-10-21)
+
+
+### ✨ Novidades
+
+* **app:** fechar a janela manda o app para a bandeja ([2634bf8](https://github.com/Kaique292/squadview/commit/2634bf870a2f4e235e48756d0f8fd8cdd888742f))
+* **app:** mostra quantos e quem estão assistindo cada live ([34b9c84](https://github.com/Kaique292/squadview/commit/34b9c847e6fde20c4843a57a1850829726638fd3))
+* **net:** conexão em camadas para quem está atrás de CGNAT ([cf1fadd](https://github.com/Kaique292/squadview/commit/cf1fadd744367d8f92ab5d7e916c5a0684c6b7c1))
+* **ui:** sons de aviso ao entrar, sair, mutar, ensurdecer e transmitir ([bf61141](https://github.com/Kaique292/squadview/commit/bf6114108bbf52baf5bb0365726b0c5ce5c43768))
+
+
+### 🐛 Correções
+
+* **app:** barra da abertura chega ao fim antes de abrir o app ([0d9a4de](https://github.com/Kaique292/squadview/commit/0d9a4ded3e4877e2b9cf76378d8c942ae1aa61f2))
+* **app:** login com o Discord liga os amigos mesmo se a sessão demorar ([a8db0a3](https://github.com/Kaique292/squadview/commit/a8db0a332fb483c2249bbfbb8a2b302e244a13e7))
+* **ui:** amigo que já está na sala não tem Entrar nem Chamar ([d02c057](https://github.com/Kaique292/squadview/commit/d02c0573fb58066be804ebad7fa6c31eb057ea9f))
+* **ui:** mãozinha do mouse em tudo que é clicável ([f965328](https://github.com/Kaique292/squadview/commit/f965328e3420283c794ca349ebb477c0830c154b))
+* **ui:** menus, dicas e avisos aparecem por cima da live sem escondê-la ([d18e684](https://github.com/Kaique292/squadview/commit/d18e6840c3713217e5088a2e35e25b0f4f2a59bb))
+* **ui:** setinha dos participantes volta a funcionar e selo "Ao vivo" sem ícone ([327f2fc](https://github.com/Kaique292/squadview/commit/327f2fc68ca2b7ba24cb31696c981a4b2c4339ab))
+
 ## [0.4.0](https://github.com/Kaique292/squadview/compare/v0.3.1...v0.4.0) (2026-10-20)
 
 
