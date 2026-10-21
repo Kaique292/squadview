@@ -4053,7 +4053,7 @@ dependencies = [
 
 [[package]]
 name = "squadview"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
@@ -4139,7 +4139,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sv-capture"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "sv-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4158,7 +4158,7 @@ dependencies = [
 
 [[package]]
 name = "sv-encode"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sv-core",
  "sv-gpu",
@@ -4167,14 +4167,14 @@ dependencies = [
 
 [[package]]
 name = "sv-gpu"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "sv-media"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nnnoiseless",
  "opus-rs",
@@ -4187,14 +4187,14 @@ dependencies = [
 
 [[package]]
 name = "sv-mesh"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sv-core",
 ]
 
 [[package]]
 name = "sv-net"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "sv-session"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "quinn",
