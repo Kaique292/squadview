@@ -114,10 +114,11 @@ describe("menus por cima do vídeo", () => {
     const dpr = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", { value: 1.5, configurable: true });
     try {
+      // Um pixel para dentro de cada lado (o recorte do Windows tem os cantos em degraus).
       expect(measureHoles(root)).toEqual([
-        { x: 15, y: 30, width: 300, height: 150, radius: 12 },
+        { x: 16, y: 31, width: 298, height: 148, radius: 11 },
         // Pílula: o raio para na metade da altura.
-        { x: 15, y: 30, width: 300, height: 150, radius: 75 },
+        { x: 16, y: 31, width: 298, height: 148, radius: 74 },
       ]);
     } finally {
       Object.defineProperty(window, "devicePixelRatio", { value: dpr, configurable: true });

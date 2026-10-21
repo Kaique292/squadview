@@ -1,12 +1,12 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Monitor, MoreHorizontal } from "lucide-react";
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, useEffect, useState } from "react";
 import { useRoomStore } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
 import { useOverlayMenu } from "../ui/overlay";
 import { MENU_CONTENT, StreamMenuItems, qualityLabel } from "./StreamMenu";
-import { useStreamStore } from "./stream-store";
+import { onVideoEnter, useStreamStore } from "./stream-store";
 import { useVideoSlot } from "./video-slot";
 
 /** Como o quadro aparece: na grade com todos, grande em foco, pequeno na faixa ou em tela cheia. */
@@ -31,6 +31,9 @@ export function StreamTile(props: {
   const myName = useRoomStore((s) => s.members[0]?.name) ?? "Você";
   const slot = useVideoSlot();
   const [pointerIn, setPointerIn] = useState(false);
+  // O mouse indo da página para o vídeo nativo não avisa a página: ao entrar no vídeo, o "em cima"
+  // dela deixa de valer (senão os ... ficavam presos na tela depois de sair da janela).
+  useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [menuOpen, setMenuOpen] = useState(false);
   const onMenuOpenChange = useOverlayMenu(setMenuOpen);
   const strip = props.variant === "strip";

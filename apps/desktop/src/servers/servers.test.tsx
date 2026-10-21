@@ -265,17 +265,26 @@ describe("servidores na barra de salas", () => {
     );
   });
 
-  it("apagar o servidor pede para digitar o nome", async () => {
+  it("apagar o servidor só pede confirmação (sem digitar o nome); cancelar não apaga", async () => {
     useServersStore.setState({ servers: [server()], selected: "0000000000000001" });
     render(<App />);
     fireEvent.pointerDown(serverMenu(), { button: 0, ctrlKey: false });
     fireEvent.click(within(await screen.findByRole("menu")).getByText("Apagar servidor"));
-    const dialog = await screen.findByRole("dialog", { name: "Apagar Turma do bairro?" });
-    const campo = within(dialog).getByRole("textbox");
-    fireEvent.change(campo, { target: { value: "Turma" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Apagar servidor" }));
+    let dialog = await screen.findByRole("dialog", { name: "Apagar Turma do bairro?" });
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(actions().some((a) => a.op?.kind === "delete")).toBe(false);
-    fireEvent.change(campo, { target: { value: "Turma do bairro" } });
+
+    // O botão direito no ícone do servidor abre o mesmo menu.
+    const rail = screen.getByRole("navigation", { name: "Salas" });
+    fireEvent.contextMenu(within(rail).getByRole("button", { name: "Turma do bairro" }));
+    const menu = await screen.findByRole("menu", { name: "Opções de Turma do bairro" });
+    expect(within(menu).getByText("Convidar pessoas")).toBeInTheDocument();
+    expect(within(menu).getByText("Configurações do servidor")).toBeInTheDocument();
+    expect(within(menu).getByText("Criar sala")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByText("Apagar servidor"));
+    dialog = await screen.findByRole("dialog", { name: "Apagar Turma do bairro?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Apagar servidor" }));
     await waitFor(() =>
       expect(actions()).toContainEqual({ type: "server-action", server: "0000000000000001", op: { kind: "delete" } }),

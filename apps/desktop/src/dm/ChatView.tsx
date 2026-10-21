@@ -110,6 +110,7 @@ export function ChatView(props: { friend: string }) {
                             : undefined
                       }
                       friendName={person.name}
+                      friendOnline={!!presence?.online}
                       onMediaLoad={toEnd}
                     />
                   </li>
@@ -134,6 +135,8 @@ function MessageRow(props: {
   author: string;
   photo?: string;
   friendName: string;
+  /** O amigo está online (a mensagem pendente está conectando, não esperando ele aparecer). */
+  friendOnline: boolean;
   onMediaLoad: () => void;
 }) {
   const m = props.message;
@@ -157,7 +160,10 @@ function MessageRow(props: {
           <p className="mt-0.5 flex items-center gap-1 text-[11px] text-text-faint">
             {m.status === "pending" ? (
               <>
-                <Clock size={11} /> Esperando {props.friendName} ficar online
+                <Clock size={11} />{" "}
+                {props.friendOnline
+                  ? `Conectando com ${props.friendName}…`
+                  : `Esperando ${props.friendName} ficar online`}
               </>
             ) : (
               <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
