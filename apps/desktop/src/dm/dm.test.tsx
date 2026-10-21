@@ -5,7 +5,15 @@ import { listenToFriendsEvents, useFriendsStore } from "../friends/friends-store
 import { listenToRoomEvents, useRoomStore } from "../room/room-store";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { useToastStore } from "../ui/toast-store";
-import { AUTO_DOWNLOAD_MAX, autoDownloads, type DmMessage, fileSize, listenToDmEvents, useDmStore } from "./dm-store";
+import {
+  AUTO_DOWNLOAD_MAX,
+  RETRY_EVERY_MS,
+  autoDownloads,
+  type DmMessage,
+  fileSize,
+  listenToDmEvents,
+  useDmStore,
+} from "./dm-store";
 
 const { invoke, listen, handlers, drop } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -157,7 +165,8 @@ describe("mensagens privadas", () => {
       friend: BETO,
       message: msg({ id: "2", mine: true, text: "bora", status: "pending" }),
     });
-    expect(within(chat).getByText("Esperando Beto ficar online")).toBeInTheDocument();
+    // Beto está online: a mensagem está conectando, não esperando ele aparecer.
+    expect(within(chat).getByText("Conectando com Beto…")).toBeInTheDocument();
     emit("dm-event", {
       type: "message",
       friend: BETO,
@@ -401,6 +410,59 @@ describe("mensagens privadas", () => {
     answers.dm_conversations = new Error("Entre com o Discord");
     await act(() => useDmStore.getState().load());
     expect(useDmStore.getState().conversations).toHaveLength(1);
+  });
+
+  it("com o amigo offline, a pendente espera ele ficar online", async () => {
+    useFriendsStore.setState({
+      friends: [{ id: BETO, name: "Beto", avatar: null, direct: false, presence: { ...ONLINE, online: false } }],
+    });
+    answers.dm_messages = [msg({ id: "1", mine: true, status: "pending", text: "tá aí?" })];
+    render(<App />);
+    await act(() => useDmStore.getState().openChat(BETO));
+    const chat = await screen.findByRole("region", { name: "Conversa com Beto" });
+    expect(await within(chat).findByText("Esperando Beto ficar online")).toBeInTheDocument();
+  });
+
+  it("o amigo ficando online faz a pendente tentar de novo, sem precisar mandar outra", async () => {
+    useDmStore.setState({
+      conversations: [{ friend: BETO, last: msg({ id: "1", mine: true, status: "pending" }), pending: 1 }],
+    });
+    act(() =>
+      useFriendsStore.setState({
+        friends: [{ id: BETO, name: "Beto", avatar: null, direct: false, presence: { ...ONLINE, online: false } }],
+      }),
+    );
+    expect(calls("dm_retry")).toHaveLength(0);
+    act(() =>
+      useFriendsStore.setState({
+        friends: [{ id: BETO, name: "Beto", avatar: null, direct: false, presence: ONLINE }],
+      }),
+    );
+    expect(calls("dm_retry")).toEqual([{ friend: BETO }]);
+  });
+
+  it("enquanto houver pendente para um amigo online sem conexão, tenta de novo de tempos em tempos", async () => {
+    vi.useFakeTimers();
+    try {
+      offs.forEach((off) => off());
+      offs = [await listenToDmEvents()];
+      useDmStore.setState({
+        conversations: [
+          { friend: BETO, last: msg({ id: "1", mine: true, status: "pending" }), pending: 1 },
+          { friend: "333333333333333333", last: msg({ id: "2", mine: true, status: "pending" }), pending: 1 },
+        ],
+        online: {},
+      });
+      vi.advanceTimersByTime(RETRY_EVERY_MS);
+      // Só o Beto (online); o outro amigo não está na lista de online.
+      expect(calls("dm_retry")).toEqual([{ friend: BETO }]);
+      // Conectado: não tenta mais.
+      useDmStore.setState({ online: { [BETO]: true } });
+      vi.advanceTimersByTime(RETRY_EVERY_MS);
+      expect(calls("dm_retry")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("configurações: a escolha da cópia e as partes novas da limpeza", async () => {
