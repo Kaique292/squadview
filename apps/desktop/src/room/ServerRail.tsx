@@ -4,6 +4,7 @@ import logo from "../assets/logo.svg";
 import { useFriendsStore } from "../friends/friends-store";
 import { AddServerDialog } from "../servers/AddServerDialog";
 import { ServerIcon } from "../servers/ServerIcon";
+import { useDmStore } from "../dm/dm-store";
 import { ServerContextMenu } from "../servers/ServerMenu";
 import { serverOfRoom, useServersStore } from "../servers/servers-store";
 import { Tooltip } from "../ui/Tooltip";
@@ -21,7 +22,10 @@ export function ServerRail(props: { hidden: boolean }) {
   const someoneLive = useRoomStore((s) => s.members.slice(1).some((m) => m.live));
   const friendsOpen = useFriendsStore((s) => s.open);
   const setFriendsOpen = useFriendsStore((s) => s.setOpen);
-  const pending = useFriendsStore((s) => s.incoming.length);
+  // Pedidos de amizade e mensagens não lidas: o número vermelho no ícone do SquadView.
+  const requests = useFriendsStore((s) => s.incoming.length);
+  const unread = useDmStore((s) => Object.values(s.unread).reduce((a, b) => a + b, 0));
+  const pending = requests + unread;
   const servers = useServersStore((s) => s.servers);
   // Servidores com gente nas salas de voz (ADR 0018): o alto-falante no ícone, como no Discord.
   const presence = useServersStore((s) => s.presence);
@@ -131,7 +135,7 @@ function RailItem({
   badge?: boolean;
   /** Tem gente numa sala de voz (o alto-falante no canto, quando não há ninguém ao vivo). */
   voice?: boolean;
-  /** Número vermelho no canto (pedidos de amizade). */
+  /** Número vermelho no canto (pedidos de amizade e mensagens não lidas). */
   count?: number;
   onClick?: () => void;
   children: ReactNode;
@@ -163,7 +167,7 @@ function RailItem({
       {/* Alguém ao vivo na sala: pontinho vermelho, como as notificações do Discord. */}
       {!!props.count && (
         <span
-          aria-label={`${props.count} pedido(s) de amizade`}
+          aria-label={`${props.count} novidade(s): pedidos de amizade e mensagens`}
           className="absolute right-2 bottom-0 grid h-5 min-w-5 place-items-center rounded-full border-[3px] border-surface-0 bg-live px-1 text-[11px] font-bold text-white"
         >
           {props.count}

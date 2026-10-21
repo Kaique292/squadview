@@ -145,6 +145,13 @@ pub fn dm_retry<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<bool, S
     Ok(engine(&app)?.retry(&friend))
 }
 
+/// Cancela o download de um anexo (apaga o que já tinha chegado).
+#[tauri::command]
+pub fn dm_cancel_download<R: Runtime>(app: AppHandle<R>, friend: String, id: String) -> Result<bool, String> {
+    check_friend(&friend)?;
+    Ok(engine(&app)?.cancel_download(&friend, &id))
+}
+
 /// Se a conexão direta com o amigo está aberta.
 #[tauri::command]
 pub fn dm_online<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<bool, String> {
@@ -446,6 +453,7 @@ mod tests {
                     mime: "image/png".into(),
                     path: None,
                     done: 0,
+                    gone: false,
                 }),
                 status: sv_session::dm::Status::Received,
             },

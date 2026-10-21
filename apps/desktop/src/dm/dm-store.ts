@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { useFriendsStore } from "../friends/friends-store";
+import { sound } from "../sounds/sound-store";
 import { toast } from "../ui/toast-store";
 
 /**
@@ -11,6 +12,8 @@ import { toast } from "../ui/toast-store";
 
 /** Espelha `sv_session::dm::Attachment`. */
 export interface Attachment {
+  /** O arquivo não existe mais no PC de quem mandou: não dá para baixar. */
+  gone?: boolean;
   name: string;
   size: number;
   mime: string;
@@ -88,6 +91,8 @@ interface DmState {
   setCopyChoice: (choice: CopyChoice) => void;
   /** Baixa um anexo (sem `dest`: na pasta de anexos do app). */
   download: (friend: string, message: DmMessage, dest?: string) => Promise<void>;
+  /** Para um download no meio (o que já tinha chegado é apagado). */
+  cancelDownload: (friend: string, message: DmMessage) => Promise<void>;
 }
 
 export const useDmStore = create<DmState>((set, get) => ({
@@ -102,7 +107,9 @@ export const useDmStore = create<DmState>((set, get) => ({
 
   async load() {
     try {
-      set({ conversations: await invoke<Conversation[]>("dm_conversations") });
+      const conversations = await invoke<Conversation[]>("dm_conversations");
+      for (const c of conversations) if (c.last) seen.add(c.last.id);
+      set({ conversations });
     } catch {
       // Sem login: a lista fica vazia ("Nenhuma conversa ainda.").
     }
@@ -118,6 +125,7 @@ export const useDmStore = create<DmState>((set, get) => ({
         invoke<DmMessage[]>("dm_messages", { friend }),
         invoke<boolean>("dm_online", { friend }),
       ]);
+      for (const m of messages) seen.add(m.id);
       set({ messages: { ...get().messages, [friend]: messages }, online: { ...get().online, [friend]: online } });
       // Fotos pequenas que chegaram enquanto a conversa estava fechada.
       for (const m of messages) if (autoDownloads(m)) void get().download(friend, m);
@@ -164,6 +172,11 @@ export const useDmStore = create<DmState>((set, get) => ({
     }
   },
 
+  async cancelDownload(friend, message) {
+    set({ downloading: { ...get().downloading, [message.id]: false } });
+    await invoke("dm_cancel_download", { friend, id: message.id }).catch(() => {});
+  },
+
   async download(friend, message, dest) {
     if (get().downloading[message.id]) return;
     set({ downloading: { ...get().downloading, [message.id]: true } });
@@ -187,6 +200,9 @@ async function sendAll(friend: string, paths: string[], keepCopy: boolean) {
 }
 
 /** Uma mensagem nova ou que mudou: entra na conversa aberta e no resumo da lista. */
+/** Ids de mensagens que já passaram por aqui (para não contar uma atualização como nova). */
+const seen = new Set<string>();
+
 function onMessage(friend: string, message: DmMessage) {
   const s = useDmStore.getState();
   const list = s.messages[friend];
@@ -198,7 +214,10 @@ function onMessage(friend: string, message: DmMessage) {
           : [...list, message],
       }
     : s.messages;
-  const isNew = !list?.some((m) => m.id === message.id);
+  // Nova de verdade só na primeira vez: depois são atualizações dela (entregue, progresso de um
+  // anexo). Pela lista não dá para saber com a conversa fechada (ela só carrega ao abrir).
+  const isNew = !seen.has(message.id) && !list?.some((m) => m.id === message.id);
+  seen.add(message.id);
   const others = s.conversations.filter((c) => c.friend !== friend);
   const current = s.conversations.find((c) => c.friend === friend);
   const last = !current?.last || message.at >= current.last.at ? message : current.last;
@@ -214,6 +233,8 @@ function onMessage(friend: string, message: DmMessage) {
     downloading,
   });
   if (isNew && autoDownloads(message)) void useDmStore.getState().download(friend, message);
+  // Mensagem nova de alguém: toca o aviso, menos se a conversa com ele está aberta e na frente.
+  if (isNew && !message.mine && !(s.open === friend && document.hasFocus())) sound("message");
 }
 
 /** Liga os eventos das conversas ao store. Chamar uma vez, ao abrir o app. */
@@ -240,6 +261,7 @@ export async function listenToDmEvents() {
       if (f.presence.online && !was) retryPending(f.id);
     }
     if (s.status === "signed-out" && prev.status !== "signed-out") {
+      seen.clear();
       useDmStore.setState({ conversations: [], messages: {}, open: null, online: {}, unread: {} });
     }
   });

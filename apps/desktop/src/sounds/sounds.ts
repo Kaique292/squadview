@@ -17,7 +17,8 @@ export type Cue =
   | "undeafen"
   | "stream-start"
   | "stream-stop"
-  | "disconnect";
+  | "disconnect"
+  | "message";
 
 interface Note {
   /** Frequência inicial, em Hz. */
@@ -73,6 +74,11 @@ export const CUES: Record<Cue, Note[]> = {
   ],
   // A conexão caiu de vez: um "tuuun" descendo devagar.
   disconnect: [{ freq: 494, to: 247, at: 0, dur: 0.45, gain: 0.8 }],
+  // Mensagem nova numa conversa: dois toques curtos e claros subindo ("plin-plim").
+  message: [
+    { freq: 988, at: 0, dur: 0.12, gain: 0.65 },
+    { freq: 1319, at: 0.08, dur: 0.24, gain: 0.7 },
+  ],
 };
 
 /** Volume de pico de uma nota em 100%: os avisos ficam abaixo da voz da galera. */

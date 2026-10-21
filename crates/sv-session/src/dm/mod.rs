@@ -287,11 +287,29 @@ impl DmEngine {
                 size: meta.len(),
                 path: Some(local.to_string_lossy().into_owned()),
                 done: 0,
+                gone: false,
             }),
             status: Status::Pending,
         };
         self.queue(friend, message.clone());
         Ok(message)
+    }
+
+    /// Cancela o download do anexo `id`: para de receber (quem manda também para) e apaga o que já
+    /// tinha chegado. A mensagem volta a mostrar "Baixar". Devolve se havia algo baixando.
+    pub fn cancel_download(&self, friend: &str, id: &str) -> bool {
+        let removed = {
+            let mut downloads = lock(&self.inner.downloads);
+            match downloads.get(id) {
+                Some(d) if d.friend == friend => downloads.remove(id),
+                _ => None,
+            }
+        };
+        let Some(download) = removed else { return false };
+        // Se o stream estiver chegando, ele percebe na próxima volta e também apaga.
+        let _ = std::fs::remove_file(part_of(&download.dest));
+        self.inner.progress(friend, id, |f| f.done = 0);
+        true
     }
 
     /// Baixa o anexo `id` do amigo para `dest`. Se já veio uma parte antes, continua de onde parou.
@@ -589,6 +607,7 @@ impl Inner {
                         mime,
                         path: None,
                         done: 0,
+                        gone: false,
                     }),
                     status: Status::Received,
                 };
@@ -745,6 +764,13 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
     let mut reported = done;
     let mut buf = vec![0u8; CHUNK];
     loop {
+        // Cancelado no meio: para de receber (quem manda recebe o "pare") e apaga o que chegou.
+        if !lock(&inner.downloads).contains_key(&header.id) {
+            let _ = recv.stop(0u32.into());
+            drop(file);
+            let _ = tokio::fs::remove_file(&part).await;
+            return;
+        }
         match recv.read(&mut buf).await {
             Ok(Some(n)) => {
                 if file.write_all(&buf[..n]).await.is_err() {
@@ -755,6 +781,17 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
                     reported = done;
                     inner.progress(&friend, &header.id, |f| f.done = done);
                 }
+            }
+            Ok(None) if done < size => {
+                // Quem manda fechou antes do fim: o arquivo não está mais lá.
+                drop(file);
+                let _ = tokio::fs::remove_file(&part).await;
+                lock(&inner.downloads).remove(&header.id);
+                inner.progress(&friend, &header.id, |f| {
+                    f.done = 0;
+                    f.gone = true;
+                });
+                return;
             }
             Ok(None) => break,
             // Caiu no meio: o `.part` fica, e a volta pede a partir daqui.
@@ -783,14 +820,22 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
 async fn send_file(inner: Arc<Inner>, friend: String, id: String, path: PathBuf, offset: u64) {
     let conn = lock(&inner.links).get(&friend).map(|l| l.conn.clone());
     let Some(conn) = conn else { return };
-    let Ok(mut file) = tokio::fs::File::open(&path).await else {
+    let Ok(mut send) = conn.open_uni().await else { return };
+    // O arquivo sumiu (apagado ou movido): o stream fecha sem nada, e quem pediu entende que não
+    // existe mais. Antes, sem resposta nenhuma, o download dele ficava parado em 0% para sempre.
+    let opened = match tokio::fs::File::open(&path).await {
+        Ok(mut file) => {
+            let size = file.metadata().await.map_or(0, |m| m.len());
+            (offset <= size && file.seek(std::io::SeekFrom::Start(offset)).await.is_ok()).then_some((file, size))
+        }
+        Err(_) => None,
+    };
+    let Some((mut file, size)) = opened else {
+        if write_frame(&mut send, &FileHeader { id, offset }).await.is_ok() {
+            let _ = send.finish();
+        }
         return;
     };
-    let size = file.metadata().await.map_or(0, |m| m.len());
-    if offset > size || file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
-        return;
-    }
-    let Ok(mut send) = conn.open_uni().await else { return };
     if write_frame(&mut send, &FileHeader { id: id.clone(), offset })
         .await
         .is_err()
