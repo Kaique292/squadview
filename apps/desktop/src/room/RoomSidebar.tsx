@@ -269,11 +269,6 @@ function RoomChannel() {
           ))}
         </ul>
       </div>
-      {others.length === 0 && (
-        <p className="px-2 pt-3 text-xs text-text-faint">
-          Mande o código da sala para a galera entrar (botão <UserPlus size={12} className="inline" /> lá em cima).
-        </p>
-      )}
     </ScrollArea>
   );
 }
