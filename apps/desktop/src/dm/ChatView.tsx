@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Check, Clock, Download, FileText, FolderOpen, Loader2, Paperclip, SendHorizontal } from "lucide-react";
+import { Check, Clock, Download, FileText, FolderOpen, Loader2, Paperclip, SendHorizontal, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { useFriendsStore } from "../friends/friends-store";
@@ -183,6 +183,7 @@ function AttachmentView(props: { friend: string; message: DmMessage; onMediaLoad
   const file = m.file!;
   const downloading = useDmStore((s) => s.downloading[m.id] ?? false);
   const download = useDmStore((s) => s.download);
+  const cancel = useDmStore((s) => s.cancelDownload);
   const [src, setSrc] = useState<string | null>(null);
   const media = file.mime.startsWith("image/") || file.mime.startsWith("video/");
 
@@ -239,6 +240,7 @@ function AttachmentView(props: { friend: string; message: DmMessage; onMediaLoad
         <p className="text-xs text-text-faint">
           {fileSize(file.size)}
           {inProgress && ` · ${progress}%`}
+          {file.gone && !file.path && " · Não está mais disponível"}
         </p>
         {inProgress && (
           <div
@@ -274,9 +276,20 @@ function AttachmentView(props: { friend: string; message: DmMessage; onMediaLoad
             </button>
           </Tooltip>
         </>
+      ) : inProgress ? (
+        <Tooltip label="Cancelar download" side="top">
+          <button
+            type="button"
+            aria-label={`Cancelar o download de ${file.name}`}
+            onClick={() => void cancel(props.friend, m)}
+            className="rounded p-1.5 text-text-muted hover:bg-surface-hover hover:text-live"
+          >
+            <X size={18} />
+          </button>
+        </Tooltip>
       ) : (
         !m.mine &&
-        !inProgress && (
+        !file.gone && (
           <button
             type="button"
             onClick={() => void saveAs()}
