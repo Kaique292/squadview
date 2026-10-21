@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { FileText, Image, Loader2 } from "lucide-react";
+import { FileText, Image, Loader2, MessageCircle, Paperclip } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Modal, ModalClose } from "../ui/Modal";
 import { toast } from "../ui/toast-store";
@@ -16,6 +16,16 @@ const PARTS: Record<string, { label: string; hint: string; icon: ReactNode }> = 
     label: "Imagens e arquivos baixados",
     hint: "Fotos do Discord e o que a interface baixou. O app baixa de novo quando precisar.",
     icon: <Image size={18} />,
+  },
+  attachments: {
+    label: "Anexos das conversas",
+    hint: "Cópias do que você mandou e o que baixou sem escolher pasta. O que você salvou em outro lugar fica.",
+    icon: <Paperclip size={18} />,
+  },
+  conversations: {
+    label: "Histórico de conversas",
+    hint: "As mensagens privadas guardadas neste PC. Apagar não apaga nada no PC dos seus amigos.",
+    icon: <MessageCircle size={18} />,
   },
   logs: {
     label: "Registros de desempenho",

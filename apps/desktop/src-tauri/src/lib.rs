@@ -126,6 +126,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Fechar a janela principal manda para a bandeja (se ligado em Configurações › Windows).
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -163,6 +164,11 @@ pub fn run() {
             dm::dm_send_file,
             dm::dm_download,
             dm::dm_clear,
+            dm::dm_preview,
+            dm::dm_open,
+            dm::dm_reveal,
+            dm::dm_pick_files,
+            dm::dm_pick_save,
             friends::friends_action,
             friends::friends_status,
             invite::take_pending_invite,

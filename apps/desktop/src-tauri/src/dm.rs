@@ -12,6 +12,8 @@ use sv_net::friends::FriendAction;
 use sv_net::signaling::TurnCredentials;
 use sv_session::dm::{Conversation, DmEngine, DmMessage};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 
 /// Evento com o que mudou nas conversas (`DmEvent` do `sv-session`).
 pub const DM_EVENT: &str = "dm-event";
@@ -222,6 +224,86 @@ pub fn clear_history<R: Runtime>(app: &AppHandle<R>, friend: Option<&str>) {
     }
 }
 
+/// O arquivo de um anexo da conversa, se ele existe neste PC (o caminho vem do nosso histórico,
+/// nunca da interface).
+fn attachment_path<R: Runtime>(app: &AppHandle<R>, friend: &str, id: &str) -> Result<PathBuf, String> {
+    check_friend(friend)?;
+    let path = engine(app)?
+        .messages(friend)
+        .into_iter()
+        .find(|m| m.id == id)
+        .and_then(|m| m.file?.path)
+        .map(PathBuf::from)
+        .ok_or("Esse anexo não está neste PC.")?;
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err("O arquivo não está mais onde estava.".into())
+    }
+}
+
+/// Libera só este anexo para a interface mostrar (imagem ou vídeo) e devolve o caminho. O
+/// protocolo de arquivos do Tauri começa sem nenhuma pasta liberada: cada anexo é liberado aqui.
+#[tauri::command]
+pub fn dm_preview<R: Runtime>(app: AppHandle<R>, friend: String, id: String) -> Result<String, String> {
+    let path = attachment_path(&app, &friend, &id)?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Abre o anexo no programa padrão do Windows.
+#[tauri::command]
+pub fn dm_open<R: Runtime>(app: AppHandle<R>, friend: String, id: String) -> Result<(), String> {
+    let path = attachment_path(&app, &friend, &id)?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Mostra o anexo na pasta dele.
+#[tauri::command]
+pub fn dm_reveal<R: Runtime>(app: AppHandle<R>, friend: String, id: String) -> Result<(), String> {
+    let path = attachment_path(&app, &friend, &id)?;
+    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+/// Escolher arquivos para mandar (vazio: cancelou).
+#[tauri::command]
+pub async fn dm_pick_files<R: Runtime>(app: AppHandle<R>) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Mandar arquivos")
+            .blocking_pick_files()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Onde salvar um anexo que chegou (`None`: cancelou).
+#[tauri::command]
+pub async fn dm_pick_save<R: Runtime>(app: AppHandle<R>, name: String) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Salvar anexo")
+            .set_file_name(name)
+            .blocking_save_file()
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,12 +379,36 @@ mod tests {
         assert!(dm_download(h(), BETO.into(), "nao-existe".into(), None).is_err());
         assert!(dm_download(h(), BETO.into(), sent_id(&t), None).is_err());
 
+        // A cópia existe: dá para liberar para a prévia; o que não existe, não.
+        assert_eq!(
+            dm_preview(h(), BETO.into(), copy_id(&t)).unwrap(),
+            copy.to_string_lossy()
+        );
+        assert!(dm_preview(h(), BETO.into(), "nao-existe".into()).is_err());
+        assert!(dm_open(h(), BETO.into(), "nao-existe".into()).is_err());
+        assert!(dm_reveal(h(), "x".into(), "nao-existe".into()).is_err());
+        std::fs::remove_file(&copy).unwrap();
+        assert_eq!(
+            dm_preview(h(), BETO.into(), copy_id(&t)).unwrap_err(),
+            "O arquivo não está mais onde estava."
+        );
+
         dm_clear(h(), Some(BETO.into())).unwrap();
         assert!(dm_messages(h(), BETO.into()).unwrap().is_empty());
         assert!(dm_clear(h(), Some("../x".into())).is_err());
         stop(t.handle());
         // Sem motor, apagar tudo ainda funciona pela pasta.
         dm_clear(h(), None).unwrap();
+    }
+
+    /// Id do anexo com cópia (o último arquivo mandado ao Beto).
+    fn copy_id(t: &crate::test_support::TestApp) -> String {
+        dm_messages(t.handle().clone(), BETO.into())
+            .unwrap()
+            .into_iter()
+            .rfind(|m| m.file.is_some())
+            .unwrap()
+            .id
     }
 
     /// Id de uma mensagem nossa (que não é anexo de receber).

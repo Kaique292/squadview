@@ -1,0 +1,431 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useAccountStore } from "../account/account-store";
+import { App } from "../App";
+import { listenToFriendsEvents, useFriendsStore } from "../friends/friends-store";
+import { listenToRoomEvents, useRoomStore } from "../room/room-store";
+import { SettingsDialog } from "../settings/SettingsDialog";
+import { useToastStore } from "../ui/toast-store";
+import { AUTO_DOWNLOAD_MAX, autoDownloads, type DmMessage, fileSize, listenToDmEvents, useDmStore } from "./dm-store";
+
+const { invoke, listen, handlers, drop } = vi.hoisted(() => {
+  const handlers = new Map<string, (e: { payload: unknown }) => void>();
+  return {
+    handlers,
+    drop: { handler: null as null | ((e: { payload: { type: string; paths?: string[] } }) => void), off: vi.fn() },
+    invoke: vi.fn(),
+    listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      handlers.set(name, cb);
+      return () => handlers.delete(name);
+    }),
+  };
+});
+vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (p: string) => `asset://${p}` }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: async (cb: NonNullable<typeof drop.handler>) => {
+      drop.handler = cb;
+      return drop.off;
+    },
+  }),
+}));
+
+const ME = "999999999999999999";
+const BETO = "222222222222222222";
+const ONLINE = { online: true, inRoom: false, room: null, live: false };
+
+function msg(partial: Partial<DmMessage> & { id: string }): DmMessage {
+  return { mine: false, at: Date.UTC(2026, 9, 21, 15, 0), status: "received", ...partial };
+}
+
+function emit(name: string, payload: unknown) {
+  act(() => handlers.get(name)!({ payload }));
+}
+
+/** Respostas do Rust de mentira para cada comando. */
+let answers: Record<string, unknown> = {};
+let offs: (() => void)[] = [];
+
+beforeEach(async () => {
+  answers = {
+    friends_status: "online",
+    dm_conversations: [],
+    dm_messages: [],
+    dm_online: false,
+    dm_pick_files: [],
+    dm_pick_save: null,
+    dm_preview: "C:/anexos/foto.png",
+    dm_send_text: msg({ id: "x", mine: true, status: "pending", text: "oi" }),
+  };
+  invoke.mockReset();
+  invoke.mockImplementation(async (cmd: string) => {
+    const a = answers[cmd];
+    if (a instanceof Error) throw a.message;
+    return a;
+  });
+  handlers.clear();
+  localStorage.clear();
+  useToastStore.setState({ toasts: [] });
+  useAccountStore.setState({ profile: { id: ME, username: "k", globalName: "Kaique", avatar: null } });
+  useRoomStore.setState({ code: null, members: [], watching: null });
+  useFriendsStore.setState({
+    status: "online",
+    open: true,
+    friends: [{ id: BETO, name: "Beto", avatar: null, direct: false, presence: ONLINE }],
+  });
+  useDmStore.setState({
+    conversations: [],
+    messages: {},
+    open: null,
+    online: {},
+    unread: {},
+    pendingFiles: null,
+    copyChoice: "ask",
+    downloading: {},
+  });
+  offs = [await listenToDmEvents(), await listenToFriendsEvents(), await listenToRoomEvents()];
+  useFriendsStore.setState({
+    friends: [{ id: BETO, name: "Beto", avatar: null, direct: false, presence: ONLINE }],
+  });
+});
+
+afterEach(() => offs.forEach((off) => off()));
+
+function calls(cmd: string) {
+  return invoke.mock.calls.filter(([c]) => c === cmd).map(([, args]) => args);
+}
+
+async function openBeto() {
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "Mensagem" }));
+  return screen.findByRole("region", { name: "Conversa com Beto" });
+}
+
+describe("mensagens privadas", () => {
+  it("regras: fotos pequenas chegam sozinhas, o resto espera; tamanhos para gente ler", () => {
+    const foto = msg({ id: "1", file: { name: "a.png", size: 1000, mime: "image/png", path: null, done: 0 } });
+    expect(autoDownloads(foto)).toBe(true);
+    expect(autoDownloads({ ...foto, mine: true })).toBe(false);
+    expect(autoDownloads({ ...foto, file: { ...foto.file!, size: AUTO_DOWNLOAD_MAX + 1 } })).toBe(false);
+    expect(autoDownloads({ ...foto, file: { ...foto.file!, mime: "video/mp4" } })).toBe(false);
+    expect(autoDownloads({ ...foto, file: { ...foto.file!, path: "C:/a.png" } })).toBe(false);
+    expect(fileSize(500)).toBe("500 B");
+    expect(fileSize(2048)).toBe("2 KB");
+    expect(fileSize(1.5 * 1024 * 1024)).toBe("1,5 MB");
+    expect(fileSize(2.25 * 1024 * 1024 * 1024)).toBe("2,3 GB");
+  });
+
+  it("sem conversas, a lateral diz isso; com, mostra a última mensagem e as não lidas", async () => {
+    render(<App />);
+    const dms = screen.getByRole("complementary", { name: "Mensagens diretas" });
+    expect(within(dms).getByText("Nenhuma conversa ainda.")).toBeInTheDocument();
+
+    emit("dm-event", { type: "message", friend: BETO, message: msg({ id: "1", text: "bora jogar?" }) });
+    const row = await within(dms).findByRole("button", { name: "Conversa com Beto" });
+    expect(row).toHaveTextContent("bora jogar?");
+    expect(within(row).getByLabelText("1 não lida(s)")).toBeInTheDocument();
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: msg({ id: "2", mine: true, text: "bora", status: "pending" }),
+    });
+    expect(row).toHaveTextContent("Você: bora");
+
+    fireEvent.click(row);
+    await screen.findByRole("region", { name: "Conversa com Beto" });
+    expect(within(row).queryByLabelText(/não lida/)).not.toBeInTheDocument();
+    fireEvent.click(within(dms).getByRole("button", { name: "Amigos" }));
+    expect(screen.getByRole("region", { name: "Amigos" })).toBeInTheDocument();
+  });
+
+  it("abre a conversa pelo amigo, manda com Enter e mostra pendente e entregue", async () => {
+    answers.dm_messages = [msg({ id: "1", text: "e aí" })];
+    const chat = await openBeto();
+    expect(await within(chat).findByText("e aí")).toBeInTheDocument();
+    expect(within(chat).getByText(/Online/)).toBeInTheDocument();
+
+    const caixa = within(chat).getByRole("textbox", { name: "Mensagem para Beto" });
+    fireEvent.change(caixa, { target: { value: "bora\njogar" } });
+    fireEvent.keyDown(caixa, { key: "Enter", shiftKey: true });
+    expect(calls("dm_send_text")).toHaveLength(0);
+    fireEvent.keyDown(caixa, { key: "Enter" });
+    await waitFor(() => expect(calls("dm_send_text")).toEqual([{ friend: BETO, text: "bora\njogar" }]));
+    await waitFor(() => expect(caixa).toHaveValue(""));
+
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: msg({ id: "2", mine: true, text: "bora", status: "pending" }),
+    });
+    expect(within(chat).getByText("Esperando Beto ficar online")).toBeInTheDocument();
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: msg({ id: "2", mine: true, text: "bora", status: "delivered" }),
+    });
+    expect(within(chat).getByText("Entregue")).toBeInTheDocument();
+    emit("dm-event", { type: "online", friend: BETO, online: true });
+    expect(within(chat).getByText("Conectado direto")).toBeInTheDocument();
+    emit("dm-event", { type: "unreachable", friend: BETO });
+    expect(within(chat).queryByText("Conectado direto")).not.toBeInTheDocument();
+  });
+
+  it("não deixando mandar, avisa e não limpa a caixa", async () => {
+    answers.dm_send_text = new Error("mensagem vazia");
+    const chat = await openBeto();
+    const caixa = within(chat).getByRole("textbox", { name: "Mensagem para Beto" });
+    fireEvent.change(caixa, { target: { value: "oi" } });
+    fireEvent.click(within(chat).getByRole("button", { name: "Enviar" }));
+    await waitFor(() => expect(useToastStore.getState().toasts[0]).toMatchObject({ message: "mensagem vazia" }));
+    expect(caixa).toHaveValue("oi");
+  });
+
+  it("primeiro anexo pergunta da cópia; lembrar a escolha não pergunta de novo", async () => {
+    answers.dm_pick_files = ["C:/Videos/clipe.mp4"];
+    const chat = await openBeto();
+    fireEvent.click(within(chat).getByRole("button", { name: "Anexar arquivos" }));
+    const modal = await screen.findByRole("dialog", { name: "Mandar arquivo" });
+    expect(calls("dm_send_file")).toHaveLength(0);
+    fireEvent.click(within(modal).getByRole("checkbox"));
+    fireEvent.click(within(modal).getByRole("button", { name: /Guardar uma cópia/ }));
+    await waitFor(() =>
+      expect(calls("dm_send_file")).toEqual([{ friend: BETO, path: "C:/Videos/clipe.mp4", keepCopy: true }]),
+    );
+    expect(useDmStore.getState().copyChoice).toBe("keep");
+    expect(localStorage.getItem("squadview.anexos.copia")).toBe("keep");
+
+    fireEvent.click(within(chat).getByRole("button", { name: "Anexar arquivos" }));
+    await waitFor(() => expect(calls("dm_send_file")).toHaveLength(2));
+    expect(screen.queryByRole("dialog", { name: "Mandar arquivo" })).not.toBeInTheDocument();
+  });
+
+  it("só mandar sem lembrar pergunta de novo; fechar o modal não manda nada", async () => {
+    answers.dm_pick_files = ["C:/a.zip", "C:/b.zip"];
+    const chat = await openBeto();
+    fireEvent.click(within(chat).getByRole("button", { name: "Anexar arquivos" }));
+    let modal = await screen.findByRole("dialog", { name: "Mandar 2 arquivos" });
+    fireEvent.click(within(modal).getByRole("button", { name: /Só mandar/ }));
+    await waitFor(() => expect(calls("dm_send_file")).toHaveLength(2));
+    expect(calls("dm_send_file")[0]).toMatchObject({ keepCopy: false });
+    expect(useDmStore.getState().copyChoice).toBe("ask");
+
+    fireEvent.click(within(chat).getByRole("button", { name: "Anexar arquivos" }));
+    modal = await screen.findByRole("dialog", { name: "Mandar 2 arquivos" });
+    fireEvent.keyDown(modal, { key: "Escape" });
+    await waitFor(() => expect(useDmStore.getState().pendingFiles).toBeNull());
+    expect(calls("dm_send_file")).toHaveLength(2);
+    // Cancelar a escolha de arquivos não abre nada.
+    answers.dm_pick_files = [];
+    fireEvent.click(within(chat).getByRole("button", { name: "Anexar arquivos" }));
+    await waitFor(() => expect(calls("dm_pick_files")).toHaveLength(3));
+    expect(useDmStore.getState().pendingFiles).toBeNull();
+  });
+
+  it("foto pequena chega sozinha e aparece; arquivo grande pede onde salvar e mostra o progresso", async () => {
+    const chat = await openBeto();
+    const foto = msg({ id: "f", file: { name: "print.png", size: 50_000, mime: "image/png", path: null, done: 0 } });
+    emit("dm-event", { type: "message", friend: BETO, message: foto });
+    await waitFor(() => expect(calls("dm_download")).toEqual([{ friend: BETO, id: "f", dest: null }]));
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: { ...foto, file: { ...foto.file!, path: "C:/anexos/f-print.png", done: 50_000 } },
+    });
+    const img = await within(chat).findByRole("img", { name: "print.png" });
+    expect(img).toHaveAttribute("src", "asset://C:/anexos/foto.png");
+    // A foto cresce a conversa ao carregar: continua no fim.
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    fireEvent.load(img);
+    expect(scroll).toHaveBeenCalledWith({ block: "end" });
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+    fireEvent.click(within(chat).getByRole("button", { name: "Abrir print.png" }));
+    expect(calls("dm_open")).toEqual([{ friend: BETO, id: "f" }]);
+
+    const zip = msg({
+      id: "z",
+      file: { name: "mapa.zip", size: 10_000_000, mime: "application/zip", path: null, done: 0 },
+    });
+    emit("dm-event", { type: "message", friend: BETO, message: zip });
+    expect(calls("dm_download")).toHaveLength(1);
+    answers.dm_pick_save = "D:/Downloads/mapa.zip";
+    fireEvent.click(within(chat).getByRole("button", { name: /Baixar/ }));
+    await waitFor(() =>
+      expect(calls("dm_download")).toContainEqual({ friend: BETO, id: "z", dest: "D:/Downloads/mapa.zip" }),
+    );
+    emit("dm-event", { type: "message", friend: BETO, message: { ...zip, file: { ...zip.file!, done: 5_000_000 } } });
+    expect(within(chat).getByRole("progressbar", { name: "Baixando mapa.zip" })).toHaveAttribute("aria-valuenow", "50");
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: { ...zip, file: { ...zip.file!, done: 10_000_000, path: "D:/Downloads/mapa.zip" } },
+    });
+    fireEvent.click(within(chat).getByRole("button", { name: "Mostrar mapa.zip na pasta" }));
+    expect(calls("dm_reveal")).toEqual([{ friend: BETO, id: "z" }]);
+    fireEvent.click(within(chat).getByRole("button", { name: "Abrir mapa.zip" }));
+    expect(calls("dm_open")).toContainEqual({ friend: BETO, id: "z" });
+  });
+
+  it("arrastar arquivos para a janela manda para a conversa aberta", async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    useDmStore.setState({ copyChoice: "send" });
+    try {
+      const chat = await openBeto();
+      await waitFor(() => expect(drop.handler).not.toBeNull());
+      const caixa = within(chat).getByRole("textbox", { name: "Mensagem para Beto" });
+      act(() => drop.handler!({ payload: { type: "enter" } }));
+      expect(caixa).toHaveAttribute("placeholder", "Solte para mandar");
+      act(() => drop.handler!({ payload: { type: "drop", paths: ["C:/a.txt"] } }));
+      expect(caixa).toHaveAttribute("placeholder", "Conversar com Beto");
+      await waitFor(() => expect(calls("dm_send_file")).toEqual([{ friend: BETO, path: "C:/a.txt", keepCopy: false }]));
+      // Arquivo que não dá para mandar avisa, e os outros seguem.
+      answers.dm_send_file = new Error("Arquivo grande demais.");
+      act(() => drop.handler!({ payload: { type: "drop", paths: ["C:/b.iso"] } }));
+      await waitFor(() =>
+        expect(useToastStore.getState().toasts[0]).toMatchObject({ message: "Arquivo grande demais." }),
+      );
+      fireEvent.click(
+        within(screen.getByRole("complementary", { name: "Mensagens diretas" })).getByRole("button", {
+          name: "Amigos",
+        }),
+      );
+      expect(drop.off).toHaveBeenCalled();
+    } finally {
+      delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      drop.handler = null;
+    }
+  });
+
+  it("separa os dias, agrupa a mesma pessoa e mostra as fotos de perfil", async () => {
+    useFriendsStore.setState({
+      friends: [{ id: BETO, name: "Beto", avatar: "abc", direct: false, presence: { ...ONLINE, online: false } }],
+    });
+    useAccountStore.setState({ profile: null });
+    const ontem = Date.UTC(2026, 9, 20, 15, 0);
+    answers.dm_messages = [
+      msg({ id: "1", at: ontem, text: "ontem" }),
+      msg({ id: "2", at: ontem + 1000, text: "junto" }),
+      msg({ id: "3", text: "hoje", mine: true, status: "delivered" }),
+    ];
+    useDmStore.setState({
+      conversations: [
+        { friend: BETO, last: null, pending: 0 },
+        {
+          friend: "4",
+          last: msg({ id: "f", file: { name: "x.zip", size: 1, mime: "application/zip", path: null, done: 0 } }),
+          pending: 0,
+        },
+      ],
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Conversa com Beto" }));
+    const chat = await screen.findByRole("region", { name: "Conversa com Beto" });
+    await within(chat).findByText("ontem");
+    expect(within(chat).getByText(/20 de outubro/)).toBeInTheDocument();
+    expect(within(chat).getByText(/21 de outubro/)).toBeInTheDocument();
+    expect(within(chat).getAllByText("Beto", { selector: "span.font-semibold" })).toHaveLength(2);
+    expect(within(chat).getByText("Você")).toBeInTheDocument();
+    expect(within(chat).getByText(/Offline/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conversa com Alguém" })).toHaveTextContent("Anexo: x.zip");
+  });
+
+  it("vídeo baixado toca na conversa; cancelar o salvar não baixa; erro ao baixar avisa", async () => {
+    answers.dm_messages = [
+      msg({ id: "v", file: { name: "clipe.mp4", size: 1, mime: "video/mp4", path: "C:/clipe.mp4", done: 1 } }),
+      msg({ id: "d", file: { name: "doc.pdf", size: 1, mime: "application/pdf", path: null, done: 0 } }),
+    ];
+    answers.dm_preview = "C:/clipe.mp4";
+    const chat = await openBeto();
+    expect(await within(chat).findByLabelText("clipe.mp4")).toHaveAttribute("src", "asset://C:/clipe.mp4");
+    fireEvent.click(within(chat).getByRole("button", { name: /Baixar/ }));
+    await waitFor(() => expect(calls("dm_pick_save")).toHaveLength(1));
+    expect(calls("dm_download")).toHaveLength(0);
+
+    answers.dm_download = new Error("Esse anexo não está nesta conversa.");
+    answers.dm_pick_save = "D:/doc.pdf";
+    fireEvent.click(within(chat).getByRole("button", { name: /Baixar/ }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts[0]).toMatchObject({ message: "Esse anexo não está nesta conversa." }),
+    );
+    expect(useDmStore.getState().downloading.d).toBe(false);
+  });
+
+  it("anexo que sumiu do PC fica como cartão; amigo que saiu da lista aparece como Alguém", async () => {
+    answers.dm_messages = [
+      msg({
+        id: "p",
+        mine: true,
+        status: "delivered",
+        file: { name: "a.png", size: 9, mime: "image/png", path: "C:/a.png", done: 9 },
+      }),
+    ];
+    answers.dm_preview = new Error("O arquivo não está mais onde estava.");
+    useDmStore.setState({
+      conversations: [{ friend: "333333333333333333", last: msg({ id: "o", text: "oi" }), pending: 0 }],
+    });
+    const chat = await openBeto();
+    expect(await within(chat).findByText("a.png")).toBeInTheDocument();
+    expect(within(chat).queryByRole("img", { name: "a.png" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conversa com Alguém" })).toBeInTheDocument();
+  });
+
+  it("erro ao abrir a conversa avisa; sair da conta limpa as conversas", async () => {
+    answers.dm_messages = new Error("Entre com o Discord para conversar.");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Mensagem" }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts[0]).toMatchObject({ message: "Entre com o Discord para conversar." }),
+    );
+    emit("friends-status", "signed-out");
+    expect(useDmStore.getState()).toMatchObject({ conversations: [], open: null });
+    answers.dm_conversations = [{ friend: BETO, last: msg({ id: "1", text: "oi" }), pending: 0 }];
+    emit("friends-status", "online");
+    await waitFor(() => expect(useDmStore.getState().conversations).toHaveLength(1));
+    answers.dm_conversations = new Error("Entre com o Discord");
+    await act(() => useDmStore.getState().load());
+    expect(useDmStore.getState().conversations).toHaveLength(1);
+  });
+
+  it("configurações: a escolha da cópia e as partes novas da limpeza", async () => {
+    answers.storage_usage = [
+      { id: "attachments", bytes: 2048 },
+      { id: "conversations", bytes: 1024 },
+    ];
+    render(<SettingsDialog trigger={<button type="button">Configurações</button>} />);
+    fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+    const nav = screen.getByRole("navigation", { name: "Categorias" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Mensagens" }));
+    const opcoes = screen.getByRole("radiogroup", { name: "Anexos que você manda" });
+    expect(within(opcoes).getByRole("radio", { name: /Perguntar/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(opcoes).getByRole("radio", { name: /Só mandar/ }));
+    expect(useDmStore.getState().copyChoice).toBe("send");
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Armazenamento" }));
+    const partes = await screen.findByRole("list", { name: "Partes do app" });
+    expect(within(partes).getByText("Anexos das conversas")).toBeInTheDocument();
+    expect(within(partes).getByText("Histórico de conversas")).toBeInTheDocument();
+  });
+
+  it("sem armazenamento, a escolha vale até fechar o app", async () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("bloqueado");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("bloqueado");
+    });
+    vi.resetModules();
+    const { useDmStore: fresh } = await import("./dm-store");
+    expect(fresh.getState().copyChoice).toBe("ask");
+    fresh.getState().setCopyChoice("keep");
+    expect(fresh.getState().copyChoice).toBe("keep");
+    get.mockRestore();
+    setItem.mockRestore();
+  });
+
+  it("escolha salva de antes vale ao abrir o app", async () => {
+    localStorage.setItem("squadview.anexos.copia", "send");
+    vi.resetModules();
+    const { useDmStore: fresh } = await import("./dm-store");
+    expect(fresh.getState().copyChoice).toBe("send");
+  });
+});

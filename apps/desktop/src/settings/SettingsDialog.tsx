@@ -5,6 +5,7 @@ import {
   Gamepad2,
   HardDrive,
   Loader2,
+  MessageCircle,
   LogOut,
   Monitor,
   Mic,
@@ -27,12 +28,14 @@ import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
 import { DiagnosticsSection } from "./DiagnosticsSection";
+import { MessagesSection } from "./MessagesSection";
 import { usePresenceSettings } from "./presence-store";
 import { StorageSection } from "./StorageSection";
 import { VoiceSection } from "./VoiceSection";
 import { WindowsSection } from "./WindowsSection";
 
-type Page = "conta" | "voz" | "sons" | "discord" | "aparencia" | "windows" | "desempenho" | "armazenamento";
+type Page =
+  "conta" | "voz" | "sons" | "mensagens" | "discord" | "aparencia" | "windows" | "desempenho" | "armazenamento";
 
 interface Item {
   id: Page;
@@ -71,6 +74,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         icon: <Bell size={18} />,
         keywords: "aviso notificação mudo surdo entrar sair alerta",
       },
+      {
+        id: "mensagens",
+        label: "Mensagens",
+        icon: <MessageCircle size={18} />,
+        keywords: "conversa anexo arquivo cópia privada",
+      },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
       {
         id: "windows",
@@ -104,6 +113,7 @@ const TITLES: Record<Page, string> = {
   conta: "Minha conta",
   voz: "Voz e vídeo",
   sons: "Sons",
+  mensagens: "Mensagens",
   discord: "Status no Discord",
   aparencia: "Aparência",
   windows: "Configurações do Windows",
@@ -164,6 +174,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
                 {page === "conta" && <AccountSection />}
                 {page === "voz" && <VoiceSection />}
                 {page === "sons" && <SoundsSection />}
+                {page === "mensagens" && <MessagesSection />}
                 {page === "discord" && <PresenceSection />}
                 {page === "aparencia" && <AppearanceSection />}
                 {page === "windows" && <WindowsSection />}
