@@ -20,6 +20,16 @@ O app roda ao lado de jogos. Em código de captura, encode, rede e renderizaçã
 - Nada de bloquear a thread de mídia com I/O ou locks disputados.
 - Toda mudança nesses crates diz no PR como foi medida (skill `perf-check`).
 
+## Higiene de build (disco)
+
+Em out/2026 a `target/` chegou a **133 GB** (117 GB em `target/debug`, 11,6 GB em `target/llvm-cov-target`, 3,6 GB em `release`) e quase lotou o disco C: do Kaique, travando o PC. A causa: build incremental e informação de debug acumulando a cada combinação de features e flags, mais o `llvm-cov`, com sessões automatizadas compilando e testando sem parar e sem limpar. Detalhes em `docs/desenvolvimento.md` ("Tamanho da target/").
+
+- **Antes** de rodar build, teste ou cobertura em Rust, rode `./scripts/clean-build.ps1` (só mostra os tamanhos). Se a `target/` passar de **20 GB**, limpe: `./scripts/clean-build.ps1 -IfOverGB 20`.
+- Nunca rode `cargo llvm-cov` (ou `yarn test:rs`) repetidamente sem limpar no final: `./scripts/clean-build.ps1 -Coverage`.
+- Worktrees em `.claude/worktrees` têm a **própria** `target/`. Ao terminar o trabalho num worktree, apague a `target/` dele (`./scripts/clean-build.ps1 -Worktrees`) ou o worktree inteiro.
+- Prefira `cargo check`/`clippy`/`test` de um crate (`-p`) a rodar o workspace inteiro a cada mudança.
+- Não mude o `.cargo/config.toml` para voltar o debug completo; para depurar com variáveis, use `CARGO_PROFILE_DEV_DEBUG=full` só naquela execução.
+
 ## Mapa do código
 
 | Caminho              | O quê                                 |
