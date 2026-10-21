@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0](https://github.com/Kaique292/squadview/compare/v0.6.0...v0.7.0) (2026-10-21)
+
+
+### ✨ Novidades
+
+* **ui:** abas com a barra deslizando e o conteúdo trocando com animação ([#52](https://github.com/Kaique292/squadview/issues/52)) ([7ef3f19](https://github.com/Kaique292/squadview/commit/7ef3f19d9a0e8c8068778e76ee77a6fd85f5dff3))
+* **ui:** checkbox padrão do app, animado ao marcar e ao desmarcar ([#51](https://github.com/Kaique292/squadview/issues/51)) ([cde6f3b](https://github.com/Kaique292/squadview/commit/cde6f3b30e6dc81c7070629978953861a2099e92))
+* **ui:** efeito de fala inteiro na lista e cores misturadas onde se tocam ([#53](https://github.com/Kaique292/squadview/issues/53)) ([d0331c7](https://github.com/Kaique292/squadview/commit/d0331c70f35c47b673ccb363c568213e4cda2537))
+* **ui:** live como um quadro da sala, com menu e detalhes em gráficos ([#54](https://github.com/Kaique292/squadview/issues/54)) ([4cdfe88](https://github.com/Kaique292/squadview/commit/4cdfe882eb8ec0210042a3218625d3f6b0f46bf4))
+
+
+### 🐛 Correções
+
+* **app:** ícone do servidor volta a abrir a imagem escolhida ([#50](https://github.com/Kaique292/squadview/issues/50)) ([aebc53c](https://github.com/Kaique292/squadview/commit/aebc53c9def9cca0ce082d10290aa371a4a729ef))
+* **ui:** rolagem das configurações com a barra do app, não a do Windows ([#48](https://github.com/Kaique292/squadview/issues/48)) ([01fd0a7](https://github.com/Kaique292/squadview/commit/01fd0a71d2b62306f03d9d595e7c228523966c1d))
+
+
+### 📝 Documentação
+
+* README e site da versão 0.7 ([#56](https://github.com/Kaique292/squadview/issues/56)) ([58db852](https://github.com/Kaique292/squadview/commit/58db8527b1069d88bf513689957fef54369666fc))
+
 ## [0.6.0](https://github.com/Kaique292/squadview/compare/v0.5.0...v0.6.0) (2026-10-21)
 
 
