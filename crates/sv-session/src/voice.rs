@@ -84,11 +84,30 @@ struct Peer {
     speaking: bool,
 }
 
+/// O que escolhemos para a voz de uma pessoa (volume já em ganho, e silenciar).
+#[derive(Debug, Clone, Copy)]
+struct PeerPrefs {
+    volume: f32,
+    muted: bool,
+}
+
+impl Default for PeerPrefs {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            muted: false,
+        }
+    }
+}
+
 struct Shared {
     settings: Mutex<VoiceSettings>,
     muted: AtomicBool,
     deafened: AtomicBool,
     peers: Mutex<HashMap<String, Peer>>,
+    /// Volume e silenciar que escolhemos para cada pessoa, guardados à parte: valem também quando
+    /// a voz com ela cai e liga de novo (antes, a pessoa voltava com volume 1 e sem silenciar).
+    peer_prefs: Mutex<HashMap<String, PeerPrefs>>,
     /// A saída precisa ser reaberta (outro dispositivo).
     reopen_output: AtomicBool,
     stop: AtomicBool,
@@ -102,6 +121,7 @@ impl Shared {
             muted: AtomicBool::new(false),
             deafened: AtomicBool::new(false),
             peers: Mutex::new(HashMap::new()),
+            peer_prefs: Mutex::new(HashMap::new()),
             reopen_output: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             on_event,
@@ -122,11 +142,12 @@ impl Shared {
 
     fn add_peer(&self, member: &str) -> Result<(), String> {
         let decoder = VoiceDecoder::new().map_err(|e| e.to_string())?;
+        let prefs = lock(&self.peer_prefs).get(member).copied().unwrap_or_default();
         lock(&self.peers).entry(member.to_owned()).or_insert(Peer {
             jitter: JitterBuffer::new(JITTER_PACKETS),
             decoder,
-            volume: 1.0,
-            muted: false,
+            volume: prefs.volume,
+            muted: prefs.muted,
             last_voice: None,
             speaking: false,
         });
@@ -154,12 +175,15 @@ impl Shared {
     }
 
     fn set_peer_volume(&self, member: &str, volume: f32) {
+        let gain = sv_media::volume_gain(volume);
+        lock(&self.peer_prefs).entry(member.to_owned()).or_default().volume = gain;
         if let Some(peer) = lock(&self.peers).get_mut(member) {
-            peer.volume = sv_media::volume_gain(volume);
+            peer.volume = gain;
         }
     }
 
     fn set_peer_muted(&self, member: &str, muted: bool) {
+        lock(&self.peer_prefs).entry(member.to_owned()).or_default().muted = muted;
         if let Some(peer) = lock(&self.peers).get_mut(member) {
             peer.muted = muted;
         }
@@ -707,6 +731,26 @@ mod tests {
         assert_eq!(engine.peers(), ["ana"]);
         assert!(lock(&events).is_empty());
         assert!(format!("{engine:?}").starts_with("VoiceEngine"));
+    }
+
+    #[test]
+    fn silenciar_e_volume_valem_mesmo_quando_a_voz_reconecta() {
+        let (engine, _, _) = engine();
+        engine.add_peer("ana").unwrap();
+        engine.set_peer_muted("ana", true);
+        engine.set_peer_volume("ana", 0.5);
+        // A voz com a Ana caiu e voltou: antes, ela voltava com volume 1 e sem silenciar.
+        engine.remove_peer("ana");
+        engine.add_peer("ana").unwrap();
+        let peers = lock(&engine.shared.peers);
+        let ana = &peers["ana"];
+        assert!(ana.muted, "a Ana voltou sem silenciar");
+        assert_eq!(ana.volume, sv_media::volume_gain(0.5));
+        drop(peers);
+        // Escolhido antes de a voz ligar também vale.
+        engine.set_peer_muted("beto", true);
+        engine.add_peer("beto").unwrap();
+        assert!(lock(&engine.shared.peers)["beto"].muted);
     }
 
     #[test]
