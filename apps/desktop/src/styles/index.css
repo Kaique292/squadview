@@ -161,7 +161,9 @@
 
 /*
  * Efeito de fala em volta da foto (`VoiceAura`). Fica atrás da foto, centralizado; aparece e
- * anima só enquanto a pessoa fala (parado, a animação fica pausada e não gasta nada).
+ * anima só enquanto a pessoa fala (parado, a animação fica pausada e não gasta nada). Só se anima
+ * transform e opacity de elementos inteiros, nunca o que está dentro de um SVG: assim a GPU faz
+ * tudo sem redesenhar.
  */
 .voice-aura {
   position: absolute;
@@ -180,13 +182,17 @@
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
 }
-/* Gira e pulsa em volta do centro do desenho (o 0,0 do viewBox, que vai de -50 a 50). */
-.voice-aura * {
-  transform-box: view-box;
-  transform-origin: 0 0;
-}
 .voice-aura:not([data-active]) * {
   animation-play-state: paused;
+}
+/* Camadas inteiras (o pulso e cada `<svg>`) do tamanho do efeito: só elas se animam, na GPU. */
+.aura-pulse,
+.aura-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 .aura-spin {
   animation: aura-spin linear infinite;
@@ -197,10 +203,8 @@
 .aura-pulse {
   animation: aura-pulse 1.6s ease-in-out infinite;
 }
-.voice-aura .aura-bar {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: aura-bar ease-in-out infinite alternate;
+.aura-breathe {
+  animation: aura-breathe ease-in-out infinite;
 }
 @keyframes aura-spin {
   to {
@@ -216,12 +220,44 @@
     transform: scale(1.04);
   }
 }
-@keyframes aura-bar {
-  from {
-    transform: scaleY(0.25);
+/*
+ * Encolhendo, o pé das barras entra atrás da foto: parece o nível do equalizador baixando.
+ * Vários batimentos num ciclo longo: cada volta do ciclo custa trabalho na thread da interface
+ * (ciclos de meio segundo custavam ~15% com a sala cheia falando; de 3 s, quase nada).
+ */
+@keyframes aura-breathe {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.6;
   }
-  to {
-    transform: scaleY(1);
+  12% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  24% {
+    transform: scale(0.9);
+    opacity: 0.75;
+  }
+  38% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+  63% {
+    transform: scale(1.02);
+    opacity: 0.9;
+  }
+  75% {
+    transform: scale(0.86);
+    opacity: 0.65;
+  }
+  88% {
+    transform: scale(1.1);
+    opacity: 1;
   }
 }
 /* Menos movimento: o efeito aparece parado (a regra geral acima o faria piscar). */

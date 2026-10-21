@@ -134,7 +134,7 @@ describe("configurações: efeito de fala", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Cor #3ba0ff" }));
     // Só a prévia muda: nada foi aplicado ainda.
     const previa = screen.getByRole("img", { name: "Prévia: Raios" });
-    expect(previa.querySelector("svg[data-effect=rays]")).toHaveAttribute("data-active");
+    expect(previa.querySelector("[data-effect=rays]")).toHaveAttribute("data-active");
     expect(useSpeakingEffectStore.getState().effect).toBeNull();
     expect(invoke).not.toHaveBeenCalledWith("room_set_effect", expect.anything());
 

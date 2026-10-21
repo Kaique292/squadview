@@ -77,20 +77,20 @@ describe("efeito de fala", () => {
     emit("room-members", [ME, ANA, BETO]);
     const grade = screen.getByRole("list", { name: "Quem está na voz" });
     // Ninguém falando: o efeito existe, mas fica parado e invisível.
-    expect(grade.querySelector("svg[data-effect=rays]")).not.toHaveAttribute("data-active");
+    expect(grade.querySelector("[data-effect=rays]")).not.toHaveAttribute("data-active");
 
     emit("voice-speaking", { memberId: ANA.id, speaking: true });
     emit("voice-speaking", { memberId: BETO.id, speaking: true });
     emit("voice-speaking", { memberId: null, speaking: true });
-    expect(grade.querySelector("svg[data-effect=rays]")).toHaveAttribute("data-active");
+    expect(grade.querySelector("[data-effect=rays]")).toHaveAttribute("data-active");
     // O nosso vem do que escolhemos aqui.
-    expect(grade.querySelector("svg[data-effect=waves]")).toHaveAttribute("data-active");
+    expect(grade.querySelector("[data-effect=waves]")).toHaveAttribute("data-active");
     // O card de quem fala com efeito ganha a borda na cor dele.
     const anaCard = within(grade).getByRole("button", { name: "Pôr Ana em foco" });
     expect(anaCard.style.borderColor).toBe("rgb(167, 139, 250)");
     // O efeito desconhecido do Beto vira o anel verde padrão.
     const betoCard = within(grade).getByRole("button", { name: "Pôr Beto em foco" });
-    expect(betoCard.querySelector("svg[data-effect]")).toBeNull();
+    expect(betoCard.querySelector("[data-effect]")).toBeNull();
     expect(betoCard.querySelector(".ring-online")).not.toBeNull();
 
     // Na lista de membros da lateral também.
@@ -98,6 +98,6 @@ describe("efeito de fala", () => {
       .getAllByText("Ana")
       .map((el) => el.closest("li"))
       .find(Boolean)!;
-    expect(lista.querySelector("svg[data-effect=rays]")).toHaveAttribute("data-active");
+    expect(lista.querySelector("[data-effect=rays]")).toHaveAttribute("data-active");
   });
 });
