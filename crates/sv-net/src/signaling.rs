@@ -146,9 +146,36 @@ enum Incoming {
     JoinRequestClosed {
         id: String,
     },
+    /// Credenciais do repassador TURN (ADR 0014). Só no Worker com o repassador configurado.
+    Turn(TurnCredentials),
     Error {
         code: String,
     },
+}
+
+/// Credenciais temporárias do repassador TURN, como o Worker manda (formato `iceServers`).
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct TurnCredentials {
+    pub urls: Vec<String>,
+    pub username: String,
+    pub credential: String,
+}
+
+impl std::fmt::Debug for TurnCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A senha não vai para o registro.
+        f.debug_struct("TurnCredentials")
+            .field("urls", &self.urls)
+            .field("username", &self.username)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TurnCredentials {
+    /// O repassador por UDP, com o endereço resolvido (consulta o DNS: rodar fora do caminho quente).
+    pub fn server(&self) -> Option<crate::TurnServer> {
+        crate::TurnServer::from_urls(&self.urls, &self.username, &self.credential)
+    }
 }
 
 /// O que acontece na sala.
@@ -176,6 +203,8 @@ pub enum RoomEvent {
     },
     /// O pedido foi respondido por alguém ou venceu.
     JoinRequestClosed(String),
+    /// O repassador TURN desta sala (para quem não conecta direto).
+    Turn(TurnCredentials),
     /// Erro vindo do Worker (ex.: `room-full`, `version-mismatch`).
     Error(String),
     /// A conexão com a sinalização caiu ou foi fechada.
@@ -197,6 +226,7 @@ impl RoomEvent {
             },
             Incoming::JoinRequest { id, from } => Self::JoinRequest { id, from },
             Incoming::JoinRequestClosed { id } => Self::JoinRequestClosed(id),
+            Incoming::Turn(credentials) => Self::Turn(credentials),
             Incoming::Error { code } => Self::Error(code),
         })
     }
@@ -517,6 +547,15 @@ mod tests {
             parse(r#"{"type":"join-request-closed","id":"cc"}"#),
             Some(RoomEvent::JoinRequestClosed("cc".into()))
         );
+        let turn = parse(
+            r#"{"type":"turn","urls":["turn:turn.cloudflare.com:3478?transport=udp"],"username":"u","credential":"segredo"}"#,
+        );
+        let Some(RoomEvent::Turn(credentials)) = turn else {
+            panic!("esperava as credenciais do repassador: {turn:?}")
+        };
+        assert_eq!(credentials.username, "u");
+        // A senha não aparece no registro.
+        assert!(!format!("{credentials:?}").contains("segredo"));
         assert_eq!(
             serde_json::to_string(&Outgoing::Verify { session: "abc.def" }).unwrap(),
             r#"{"type":"verify","session":"abc.def"}"#

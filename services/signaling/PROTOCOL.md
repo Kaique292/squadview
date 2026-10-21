@@ -63,6 +63,14 @@ Desde a 0.3.0 ([ADR 0011](../../docs/adr/0011-amigos-e-presenca.md)):
 - `{"type":"join-request-closed","id":"<id>"}` (servidor → todos): o pedido foi respondido ou venceu (60 s).
 - Só quem foi aceito recebe o código da sala, pelo próprio registro.
 
+### Repassador TURN
+
+Desde a 0.5.0 ([ADR 0014](../../docs/adr/0014-conexao-em-camadas.md)), para quem não conecta direto (CGNAT):
+
+- `{"type":"turn","urls":["turn:turn.cloudflare.com:3478?transport=udp",...],"username":"...","credential":"..."}` (servidor → quem acabou de entrar): credenciais do repassador TURN. Só vai se o Worker tiver um provedor configurado (Cloudflare, Metered ou servidor fixo; ver `wrangler.toml`). Apps antigos ignoram.
+- Sinal `relay-request` (entre apps, pelo `signal`): quem não alcança quem transmite pede a um membro que já assiste para repassar. A resposta é um `watch-accept` ou `watch-deny` normal.
+- Nos sinais, `watch-accept` e `voice-answer` ganham o campo opcional `relay` (`"ip:porta"`): o endereço que quem aceita pegou emprestado no repassador. Quem conecta tenta os `candidates` e, se não fechar em 1,5 s, também o `relay`. O Worker não olha os sinais; o campo é só entre os apps.
+
 ## Amigos e presença
 
 | Requisição                                                            | Resposta                                                                                          |

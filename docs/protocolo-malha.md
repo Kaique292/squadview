@@ -58,9 +58,12 @@ O planejamento está em `sv_mesh::plan` e é testado com o simulador `sv_mesh::s
 
 ## Atravessar NAT
 
-1. Os membros trocam candidatos de endereço pela sinalização.
-2. Tentam conexão direta (hole punching UDP).
-3. Se falhar (CGNAT simétrico), a faixa vem de quem tem rede aberta; se não houver ninguém com vaga, do repassador na nuvem.
+Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
+
+1. Os membros trocam candidatos de endereço pela sinalização. Quem aceita a conexão manda também o seu endereço no repassador TURN (`relay`), se tiver.
+2. Quem conecta tenta direto (hole punching UDP), por IPv4 e IPv6 ao mesmo tempo. No IPv6 não há NAT: o furo dos dois lados só abre o firewall do roteador.
+3. Se não fechar em 1,5 s (CGNAT simétrico), tenta também pelo `relay`. Já funciona para vídeo e voz entre dois membros.
+4. Se ainda não der, pede `relay-request` a um membro que já assiste aquele stream, e ele repassa os frames como estão. Já funciona para o vídeo, com um salto. Na malha (Fase 3), isso vira as faixas vindas de membros com rede aberta e vaga, e o repassador fica só para quem não alcança ninguém.
 
 ## Mensagens (esboço)
 

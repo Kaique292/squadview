@@ -3,6 +3,7 @@ import { generateRoomCode } from "./room-code";
 import { type Attachment, type Connection, randomPeerId, RoomState, type VerifiedProfile } from "./room-state";
 import { bearer, route } from "./router";
 import { exchangeDiscordToken, type Profile, signSession, verifySession } from "./session";
+import { TurnCache, type TurnEnv, turnProvider } from "./turn";
 import {
   type JoinResult,
   type Peers,
@@ -12,7 +13,7 @@ import {
   UserState,
 } from "./user-state";
 
-interface Env {
+interface Env extends TurnEnv {
   ROOMS: DurableObjectNamespace<Room>;
   USERS: DurableObjectNamespace<User>;
   /** Segredo das sessões (`wrangler secret put SESSION_SECRET`). Sem ele, só as salas funcionam. */
@@ -99,8 +100,18 @@ export class Room extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /** Credenciais do repassador, guardadas enquanto a sala está acordada. */
+  private readonly turn = new TurnCache(async () => turnProvider(this.env)?.() ?? null);
+
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    this.state.message(connection(ws), message, await this.verifiedJoin(message));
+    const conn = connection(ws);
+    const wasIn = !!conn.getAttachment()?.member;
+    this.state.message(conn, message, await this.verifiedJoin(message));
+    // Acabou de entrar: manda o repassador (só quem é da sala recebe a credencial).
+    if (!wasIn && conn.getAttachment()?.member) {
+      const turn = await this.turn.get();
+      if (turn) conn.send({ type: "turn", ...turn });
+    }
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {

@@ -64,7 +64,7 @@ async fn assiste_um_stream_de_ponta_a_ponta() {
         let k = keyframes.clone();
         broadcaster.add(conn, Arc::new(move || *k.lock().unwrap() += 1));
     };
-    let connect = viewer.connect(streamer.candidates(), streamer.fingerprint());
+    let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
     let (_, conn) = tokio::join!(accept, connect);
     let conn = conn.expect("conectar");
 
@@ -126,7 +126,7 @@ async fn quem_nao_foi_autorizado_nao_conecta() {
     let intruder = Peer::bind(&[]).await.unwrap();
     // Ninguém autorizado: o handshake falha do lado de quem transmite.
     let accept = tokio::time::timeout(Duration::from_secs(3), streamer.accept());
-    let connect = intruder.connect(streamer.candidates(), streamer.fingerprint());
+    let connect = intruder.connect(streamer.candidates(), None, streamer.fingerprint());
     let (accepted, connected) = tokio::join!(accept, connect);
     assert!(accepted.is_err(), "não podia aceitar ninguém");
     // A conexão pode até abrir do lado do cliente e cair logo; o que importa é não receber nada.
@@ -143,7 +143,7 @@ async fn nao_conecta_em_quem_tem_outra_fingerprint() {
     streamer.allowed().allow(viewer.fingerprint());
     // Alguém se passando por quem transmite (fingerprint diferente da combinada).
     let fake = "00".repeat(32);
-    let result = viewer.connect(streamer.candidates(), &fake).await;
+    let result = viewer.connect(streamer.candidates(), None, &fake).await;
     assert!(result.is_err());
 }
 
@@ -154,7 +154,7 @@ async fn conexao_de_voz_chega_marcada_como_voz_e_com_quem_e() {
     ana.allowed().allow(beto.fingerprint());
 
     let accept = ana.accept();
-    let connect = beto.connect_for(ana.candidates(), ana.fingerprint(), Purpose::Voice);
+    let connect = beto.connect_for(ana.candidates(), None, ana.fingerprint(), Purpose::Voice);
     let (accepted, conn) = tokio::join!(accept, connect);
     let accepted = accepted.expect("aceitar");
     let conn = conn.expect("conectar");
@@ -199,7 +199,7 @@ async fn dois_enderecos_que_respondem_viram_uma_conexao_so() {
     // Todos os endereços de quem transmite, repetidos: várias tentativas chegam ao mesmo tempo.
     let targets: Vec<_> = streamer.candidates().iter().copied().cycle().take(6).collect();
     let conn = viewer
-        .connect(&targets, streamer.fingerprint())
+        .connect(&targets, None, streamer.fingerprint())
         .await
         .expect("conectar");
     // Dá tempo para as tentativas que perderam chegarem e serem fechadas.
@@ -220,11 +220,58 @@ async fn quem_sai_antes_do_primeiro_frame_deixa_de_contar() {
         let accepted = streamer.accept().await.expect("aceitar");
         broadcaster.add(accepted.conn, Arc::new(|| {}));
     };
-    let connect = viewer.connect(streamer.candidates(), streamer.fingerprint());
+    let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
     let (_, conn) = tokio::join!(accept, connect);
     let conn = conn.expect("conectar");
     assert_eq!(broadcaster.viewer_count(), 1);
 
     conn.close(0u32.into(), b"tchau");
     assert_eq!(settle(&broadcaster, |n| n == 0).await, 0, "saiu: não conta mais");
+}
+
+/// Conecta só pelo IPv6 (o caminho grátis para quem está atrás de CGNAT no IPv4). Só roda num PC
+/// com IPv6 global; sem ele, avisa e pula.
+#[tokio::test(flavor = "multi_thread")]
+async fn conecta_so_pelo_ipv6_quando_os_dois_tem() {
+    let ana = Peer::bind(&[]).await.unwrap();
+    let beto = Peer::bind(&[]).await.unwrap();
+    let only_v6: Vec<_> = ana.candidates().iter().copied().filter(|a| a.is_ipv6()).collect();
+    if only_v6.is_empty() {
+        eprintln!("pulado: este PC não tem IPv6 global");
+        return;
+    }
+    ana.allowed().allow(beto.fingerprint());
+    // Como na sala: quem aceita "fura" na direção de quem pede (abre o firewall), e quem pede conecta.
+    ana.punch(beto.candidates());
+    let started = std::time::Instant::now();
+    let accept = ana.accept();
+    let connect = beto.connect(&only_v6, None, ana.fingerprint());
+    let (accepted, conn) = tokio::join!(accept, connect);
+    let conn = conn.expect("conectar pelo IPv6");
+    eprintln!("IPv6 conectou em {:?}", started.elapsed());
+    assert!(conn.remote_address().is_ipv6());
+    assert!(accepted.expect("aceitar").conn.remote_address().is_ipv6());
+}
+
+// Bug achado com o IPv6: com mais endereços, duas tentativas completavam ao mesmo tempo, quem
+// aceitava entregava a que o outro lado ia descartar, e a voz caía. Agora só sai a que ficou.
+#[tokio::test(flavor = "multi_thread")]
+async fn varias_tentativas_de_voz_entregam_so_a_que_ficou() {
+    for _ in 0..5 {
+        let ana = Peer::bind(&[]).await.unwrap();
+        let beto = Peer::bind(&[]).await.unwrap();
+        ana.allowed().allow(beto.fingerprint());
+        ana.punch(beto.candidates());
+        let targets: Vec<_> = ana.candidates().iter().copied().cycle().take(8).collect();
+        let accept = ana.accept();
+        let connect = beto.connect_for(&targets, None, ana.fingerprint(), Purpose::Voice);
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let (accepted, conn) = (accepted.expect("aceitar"), conn.expect("conectar"));
+        conn.send_datagram(bytes::Bytes::from_static(b"oi")).unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(3), accepted.conn.read_datagram())
+            .await
+            .expect("a voz foi para a conexão descartada")
+            .expect("datagrama");
+        assert_eq!(&got[..], b"oi");
+    }
 }

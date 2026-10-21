@@ -23,9 +23,21 @@ pub enum Signal {
         candidates: Vec<SocketAddr>,
         fingerprint: String,
         stream: StreamDescription,
+        /// Nosso endereço no repassador TURN (ADR 0014): quem assiste tenta por ele se o direto
+        /// não fechar. Ausente em apps antigos ou sem repassador.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<SocketAddr>,
     },
     /// Quem transmite recusou (não está ao vivo, ou atingiu o limite de espectadores).
     WatchDeny { reason: String },
+    /// Repasse pela sala (ADR 0014): quem não conecta em `streamer` pede a quem já assiste para
+    /// receber por ele. Quem ajuda responde com um `WatchAccept` (ou `WatchDeny`). Apps antigos
+    /// ignoram, e quem pediu tenta o próximo.
+    RelayRequest {
+        streamer: String,
+        candidates: Vec<SocketAddr>,
+        fingerprint: String,
+    },
     /// Voz (ADR 0010): quem tem o id menor chama, com seus endereços e fingerprint.
     VoiceOffer {
         candidates: Vec<SocketAddr>,
@@ -35,6 +47,9 @@ pub enum Signal {
     VoiceAnswer {
         candidates: Vec<SocketAddr>,
         fingerprint: String,
+        /// Nosso endereço no repassador TURN, como no [`Signal::WatchAccept`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<SocketAddr>,
     },
 }
 

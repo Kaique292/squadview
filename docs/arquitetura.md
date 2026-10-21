@@ -36,7 +36,7 @@ flowchart LR
 2. **Codifica uma vez, repassa muitas.** Quem repassa só encaminha pacotes já codificados: nada de decodificar e recodificar. Repassar custa upload, quase nada de CPU.
 3. **Quem joga trabalha menos.** A malha evita usar como repassador quem está em partida online.
 4. **Internet fraca não derruba ninguém.** Duas camadas de qualidade (1080p60 e 720p30); cada membro recebe a que aguenta.
-5. **Sem servidor de mídia.** A sinalização só troca endereços. Se dois membros não se enxergam (CGNAT), um terceiro membro faz a ponte.
+5. **Sem servidor de mídia.** A sinalização só troca endereços. Se dois membros não se enxergam (CGNAT), tentam por IPv6, depois por um repassador TURN opcional e por quem já assiste o mesmo stream ([ADR 0014](adr/0014-conexao-em-camadas.md)).
 
 ## Crates e responsabilidades
 

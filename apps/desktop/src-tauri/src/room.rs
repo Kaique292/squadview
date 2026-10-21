@@ -253,10 +253,12 @@ pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
     .await
 }
 
-/// Conta para a sala quem estamos assistindo (quem transmite vê quantos e quem assistem).
-fn announce_watching<R: Runtime>(app: &AppHandle<R>, member_id: Option<&str>) {
+/// Conta para a sala quem estamos assistindo (quem transmite vê quantos e quem assistem) e deixa a
+/// sala repassar esse stream a quem não alcança quem transmite (ADR 0014).
+fn announce_watching<R: Runtime>(app: &AppHandle<R>, watching: Option<sv_session::RelaySource>) {
     if let Some(room) = lock(&app.state::<RoomState>()).room.as_ref() {
-        room.set_watching(member_id);
+        room.set_watching(watching.as_ref().map(|s| s.streamer.as_str()));
+        room.set_relay_source(watching);
     }
 }
 
@@ -335,7 +337,20 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
                 crate::voice::VoiceFailed { member_id, reason },
             );
         }
-        RoomUpdate::WatchReady { member, conn, desc } => start_watching(app, member, conn, desc),
+        RoomUpdate::WatchReady {
+            member,
+            conn,
+            desc,
+            path,
+        } => start_watching(app, member, conn, desc, path),
+        // O repassador TURN da sala (ADR 0014): só para o registro, a interface não muda.
+        RoomUpdate::Relay(result) => {
+            let detail = match &result {
+                Ok(addr) => json!({ "ready": true, "addr": addr.to_string() }),
+                Err(reason) => json!({ "ready": false, "reason": reason }),
+            };
+            app.state::<Diagnostics>().write("relay", &detail);
+        }
         RoomUpdate::WatchFailed { member_id, reason } => {
             app.state::<Diagnostics>()
                 .write("watch-failed", &json!({ "reason": reason }));
@@ -387,6 +402,7 @@ fn start_watching<R: Runtime>(
     member: Member,
     conn: quinn::Connection,
     desc: sv_net::protocol::StreamDescription,
+    path: sv_session::WatchPath,
 ) {
     let target = match preview::video_target(app) {
         Ok(t) => t,
@@ -455,15 +471,16 @@ fn start_watching<R: Runtime>(
 
     app.state::<Diagnostics>().write(
         "watch-start",
-        &json!({ "member": member.name, "desc": format!("{desc:?}") }),
+        &json!({ "member": member.name, "desc": format!("{desc:?}"), "path": path.label() }),
     );
+    let relay = view.relay_source(&member.id);
     let state = app.state::<RoomState>();
     lock(&state).watching = Some(Watching {
         member: member.clone(),
         view,
     });
     preview::set_watching(app, true);
-    announce_watching(app, Some(&member.id));
+    announce_watching(app, Some(relay));
     let _ = app.emit(WATCH_STARTED_EVENT, member);
 }
 

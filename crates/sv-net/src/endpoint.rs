@@ -2,20 +2,32 @@
 //! "furar" o NAT na direção do outro e conectar/receber conexões.
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::sync::Arc;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, Connection, Endpoint, EndpointConfig, ServerConfig, TokioRuntime, TransportConfig, VarInt};
+use tokio::sync::mpsc;
 
 use crate::cert::fingerprint;
 use crate::cert::{Allowed, AllowedClients, ExpectFingerprint, Identity, provider};
+use crate::turn::{TurnError, TurnServer, TurnSocket};
 use crate::{ALPN, VOICE_ALPN, stun};
 
 /// Quanto tempo tentar conectar antes de desistir.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+/// Quanto esperar a conexão direta antes de tentar também pelo repassador (ADR 0014): direto é
+/// melhor (sem custo e sem desvio), então o repassador só entra se o direto não fechar logo.
+pub const RELAY_AFTER: Duration = Duration::from_millis(1500);
+/// Quanto quem aceita segura uma conexão nova antes de entregar. Quem conecta tenta vários
+/// endereços ao mesmo tempo (IPv4, IPv6, rede local, repassador) e fica com o primeiro; às vezes
+/// outro também completa e é fechado logo em seguida. Se ele fosse entregue, a voz trocava a
+/// conexão boa pela que ia fechar e caía.
+const SETTLE: Duration = Duration::from_millis(250);
+/// Tamanho de pacote pelo repassador: cabe com o cabeçalho do TURN sem fragmentar.
+const RELAY_MTU: u16 = 1200;
 /// Por quanto tempo mandar pacotes de "furo" depois de combinar a conexão.
 const PUNCH_FOR: Duration = Duration::from_secs(4);
 /// De quanto em quanto tempo "lembrar" o roteador da nossa porta. Sem tráfego, muitos roteadores
@@ -94,10 +106,38 @@ pub struct Accepted {
     pub fingerprint: Option<String>,
 }
 
+/// O ponto QUIC pelo repassador (ADR 0014): só aceita conexões, que chegam pelo endereço emprestado.
+#[derive(Debug)]
+struct Relay {
+    socket: Arc<TurnSocket>,
+    endpoint: Endpoint,
+}
+
+impl Relay {
+    fn close(&self) {
+        self.endpoint.close(VarInt::from_u32(0), b"tchau");
+        self.socket.close();
+    }
+}
+
+/// O ponto QUIC por IPv6, quando o PC tem endereço IPv6 global. No IPv6 não há NAT (nem CGNAT):
+/// cada PC tem endereço público, e o "furo" dos dois lados abre o firewall do roteador. É a saída
+/// grátis para quem está atrás de CGNAT no IPv4 (ADR 0014).
+#[derive(Debug)]
+struct V6 {
+    endpoint: Endpoint,
+    punch: UdpSocket,
+}
+
 /// Um membro na rede.
 #[derive(Debug)]
 pub struct Peer {
     endpoint: Endpoint,
+    v6: Option<V6>,
+    /// Conexões aceitas pelo caminho direto e pelo repassador, numa fila só.
+    accepted: tokio::sync::Mutex<mpsc::UnboundedReceiver<Accepted>>,
+    accepted_tx: mpsc::UnboundedSender<Accepted>,
+    relay: Mutex<Option<Relay>>,
     punch: UdpSocket,
     identity: Arc<Identity>,
     allowed: Allowed,
@@ -125,7 +165,7 @@ impl Peer {
         })
         .await
         .map_err(io::Error::other)?;
-        let candidates = candidates(public, local_ip(), port);
+        let mut candidates = candidates(public, local_ip(), port);
 
         let identity = Arc::new(Identity::generate());
         let allowed = Allowed::default();
@@ -137,12 +177,31 @@ impl Peer {
         socket.set_nonblocking(true)?;
         let endpoint = Endpoint::new(
             EndpointConfig::default(),
-            Some(server_config(&identity, &allowed)?),
+            Some(server_config(&identity, &allowed, false)?),
             socket,
             Arc::new(TokioRuntime),
         )?;
+        let (accepted_tx, accepted) = mpsc::unbounded_channel();
+        tokio::spawn(accept_loop(endpoint.clone(), accepted_tx.clone()));
+        // IPv6, se houver: um socket à parte, para o caminho IPv4 continuar igual.
+        let v6 = match global_ipv6() {
+            Some(ip) => match bind_v6(&identity, &allowed) {
+                Ok((v6, port)) => {
+                    tokio::spawn(accept_loop(v6.endpoint.clone(), accepted_tx.clone()));
+                    // Logo depois do público IPv4: os dois são tentados ao mesmo tempo.
+                    candidates.insert(1.min(candidates.len()), SocketAddr::new(IpAddr::V6(ip), port));
+                    Some(v6)
+                }
+                Err(_) => None,
+            },
+            None => None,
+        };
         Ok(Self {
             endpoint,
+            v6,
+            accepted: tokio::sync::Mutex::new(accepted),
+            accepted_tx,
+            relay: Mutex::new(None),
             punch,
             identity,
             allowed,
@@ -162,6 +221,38 @@ impl Peer {
         &self.candidates
     }
 
+    /// Pede um endereço no repassador TURN e passa a aceitar conexões por ele também. Devolve o
+    /// endereço emprestado (vai no `relay` das respostas). Chamar de novo troca o repassador.
+    pub async fn enable_relay(&self, server: TurnServer) -> Result<SocketAddr, TurnError> {
+        let socket = TurnSocket::open(server).await?;
+        let relayed = socket.relayed();
+        let endpoint = Endpoint::new_with_abstract_socket(
+            EndpointConfig::default(),
+            Some(server_config(&self.identity, &self.allowed, true)?),
+            socket.clone(),
+            Arc::new(TokioRuntime),
+        )?;
+        tokio::spawn(accept_loop(endpoint.clone(), self.accepted_tx.clone()));
+        let previous = lock(&self.relay).replace(Relay { socket, endpoint });
+        if let Some(old) = previous {
+            old.close();
+        }
+        Ok(relayed)
+    }
+
+    /// O nosso endereço no repassador, se houver.
+    pub fn relay_addr(&self) -> Option<SocketAddr> {
+        lock(&self.relay).as_ref().map(|r| r.socket.relayed())
+    }
+
+    /// Quem vai conectar em nós pelo repassador precisa de permissão lá (por IP). Chamar com os
+    /// endereços que a pessoa mandou, antes de responder com o nosso `relay`.
+    pub fn permit_relay(&self, peers: &[SocketAddr]) {
+        if let Some(r) = lock(&self.relay).as_ref() {
+            r.socket.permit(peers);
+        }
+    }
+
     pub fn fingerprint(&self) -> &str {
         &self.identity.fingerprint
     }
@@ -174,13 +265,18 @@ impl Peer {
     /// Manda pacotes curtos para os endereços do outro durante alguns segundos. Isso abre o caminho
     /// no nosso roteador para os pacotes dele entrarem (hole punching). O QUIC ignora esses pacotes.
     pub fn punch(&self, targets: &[SocketAddr]) {
-        let Ok(socket) = self.punch.try_clone() else { return };
+        let Ok(v4) = self.punch.try_clone() else { return };
+        // IPv6: o "furo" abre o firewall do roteador para o outro (não há NAT para atravessar).
+        let v6 = self.v6.as_ref().and_then(|v| v.punch.try_clone().ok());
         let targets = targets.to_vec();
         tokio::task::spawn_blocking(move || {
             let until = std::time::Instant::now() + PUNCH_FOR;
             while std::time::Instant::now() < until {
                 for t in &targets {
-                    let _ = socket.send_to(b"svpunch", t);
+                    let socket = if t.is_ipv6() { v6.as_ref() } else { Some(&v4) };
+                    if let Some(socket) = socket {
+                        let _ = socket.send_to(b"svpunch", t);
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -188,31 +284,54 @@ impl Peer {
     }
 
     /// Conecta em quem tem a fingerprint `expected` para assistir, tentando todos os endereços ao
-    /// mesmo tempo.
-    pub async fn connect(&self, targets: &[SocketAddr], expected: &str) -> Result<Connection, ConnectError> {
-        self.connect_for(targets, expected, Purpose::Stream).await
+    /// mesmo tempo (e o repassador do outro, se o direto não fechar logo).
+    pub async fn connect(
+        &self,
+        targets: &[SocketAddr],
+        relay: Option<SocketAddr>,
+        expected: &str,
+    ) -> Result<Connection, ConnectError> {
+        self.connect_for(targets, relay, expected, Purpose::Stream).await
     }
 
-    /// Como [`Peer::connect`], para o propósito escolhido (vídeo ou voz).
+    /// Como [`Peer::connect`], para o propósito escolhido (vídeo ou voz). Em camadas (ADR 0014):
+    /// primeiro os endereços diretos; depois de [`RELAY_AFTER`] sem sucesso, também o endereço do
+    /// outro no repassador. Fica com a primeira que fechar.
     pub async fn connect_for(
         &self,
         targets: &[SocketAddr],
+        relay: Option<SocketAddr>,
         expected: &str,
         purpose: Purpose,
     ) -> Result<Connection, ConnectError> {
         self.punch(targets);
-        let config =
-            client_config(&self.identity, expected, purpose).map_err(|e| ConnectError::Other(e.to_string()))?;
+        let direct =
+            client_config(&self.identity, expected, purpose, false).map_err(|e| ConnectError::Other(e.to_string()))?;
         let mut attempts = tokio::task::JoinSet::new();
         for &target in targets {
-            let Ok(connecting) = self.endpoint.connect_with(config.clone(), target, "squadview") else {
+            // Cada família pelo seu socket; endereço IPv6 sem IPv6 aqui: não dá para tentar.
+            let endpoint = match (target.is_ipv6(), &self.v6) {
+                (false, _) => &self.endpoint,
+                (true, Some(v6)) => &v6.endpoint,
+                (true, None) => continue,
+            };
+            let Ok(connecting) = endpoint.connect_with(direct.clone(), target, "squadview") else {
                 continue;
             };
-            attempts.spawn(connecting);
+            attempts.spawn(async move { connecting.await.ok() });
+        }
+        if let Some(relay) = relay {
+            let config = client_config(&self.identity, expected, purpose, true)
+                .map_err(|e| ConnectError::Other(e.to_string()))?;
+            let endpoint = self.endpoint.clone();
+            attempts.spawn(async move {
+                tokio::time::sleep(RELAY_AFTER).await;
+                endpoint.connect_with(config, relay, "squadview").ok()?.await.ok()
+            });
         }
         let result = tokio::time::timeout(CONNECT_TIMEOUT, async {
             while let Some(attempt) = attempts.join_next().await {
-                if let Ok(Ok(conn)) = attempt {
+                if let Ok(Some(conn)) = attempt {
                     return Some(conn);
                 }
             }
@@ -226,31 +345,58 @@ impl Peer {
         }
     }
 
-    /// Espera a próxima conexão autorizada. `None` quando o ponto fecha.
+    /// Espera a próxima conexão autorizada (direta ou pelo repassador). `None` quando o ponto fecha.
     pub async fn accept(&self) -> Option<Accepted> {
-        loop {
-            let incoming = self.endpoint.accept().await?;
-            // Certificado não autorizado falha aqui, no handshake; segue esperando a próxima.
-            if let Ok(conn) = incoming.await {
-                return Some(Accepted {
-                    purpose: purpose_of(&conn),
-                    fingerprint: peer_fingerprint(&conn),
-                    conn,
-                });
-            }
-        }
+        self.accepted.lock().await.recv().await
     }
 
     pub fn close(&self) {
         self.keepalive.store(false, Ordering::Relaxed);
         self.endpoint.close(VarInt::from_u32(0), b"tchau");
+        if let Some(v6) = &self.v6 {
+            v6.endpoint.close(VarInt::from_u32(0), b"tchau");
+        }
+        if let Some(relay) = lock(&self.relay).take() {
+            relay.close();
+        }
     }
 }
 
 impl Drop for Peer {
     fn drop(&mut self) {
         self.keepalive.store(false, Ordering::Relaxed);
+        if let Some(relay) = lock(&self.relay).take() {
+            relay.close();
+        }
     }
+}
+
+/// Aceita as conexões de um ponto (direto ou repassador) e põe na fila do [`Peer`]. Termina quando
+/// o ponto fecha ou ninguém mais lê a fila.
+async fn accept_loop(endpoint: Endpoint, accepted: mpsc::UnboundedSender<Accepted>) {
+    while let Some(incoming) = endpoint.accept().await {
+        let tx = accepted.clone();
+        // Cada handshake corre à parte: um lento (pelo repassador) não segura os outros.
+        tokio::spawn(async move {
+            // Certificado não autorizado falha aqui, no handshake, e a conexão é descartada.
+            let Ok(conn) = incoming.await else { return };
+            // A tentativa que perdeu do outro lado fecha logo: essa não é entregue.
+            if tokio::time::timeout(SETTLE, conn.closed()).await.is_err() {
+                let _ = tx.send(Accepted {
+                    purpose: purpose_of(&conn),
+                    fingerprint: peer_fingerprint(&conn),
+                    conn,
+                });
+            }
+        });
+        if accepted.is_closed() {
+            return;
+        }
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Manda um pedido STUN (20 bytes) de tempos em tempos pelo mesmo socket do QUIC, para o
@@ -280,8 +426,13 @@ fn spawn_nat_keepalive(socket: UdpSocket, server: &'static str, alive: Arc<Atomi
         });
 }
 
-fn transport() -> Arc<TransportConfig> {
+/// `relayed`: pacotes pequenos e sem procurar MTU maior (o TURN soma 36 bytes a cada pacote).
+fn transport(relayed: bool) -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
+    if relayed {
+        t.initial_mtu(RELAY_MTU);
+        t.mtu_discovery_config(None);
+    }
     t.max_concurrent_uni_streams(VarInt::from_u32(512));
     t.max_concurrent_bidi_streams(VarInt::from_u32(4));
     t.keep_alive_interval(Some(Duration::from_secs(4)));
@@ -293,7 +444,7 @@ fn transport() -> Arc<TransportConfig> {
     Arc::new(t)
 }
 
-fn server_config(identity: &Identity, allowed: &Allowed) -> io::Result<ServerConfig> {
+fn server_config(identity: &Identity, allowed: &Allowed, relayed: bool) -> io::Result<ServerConfig> {
     let mut tls = rustls::ServerConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(io::Error::other)?
@@ -304,11 +455,11 @@ fn server_config(identity: &Identity, allowed: &Allowed) -> io::Result<ServerCon
     tls.alpn_protocols = vec![ALPN.to_vec(), VOICE_ALPN.to_vec()];
     let crypto = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
-    config.transport_config(transport());
+    config.transport_config(transport(relayed));
     Ok(config)
 }
 
-fn client_config(identity: &Identity, expected: &str, purpose: Purpose) -> io::Result<ClientConfig> {
+fn client_config(identity: &Identity, expected: &str, purpose: Purpose, relayed: bool) -> io::Result<ClientConfig> {
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(io::Error::other)?
@@ -319,7 +470,7 @@ fn client_config(identity: &Identity, expected: &str, purpose: Purpose) -> io::R
     tls.alpn_protocols = vec![purpose.alpn().to_vec()];
     let crypto = QuicClientConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ClientConfig::new(Arc::new(crypto));
-    config.transport_config(transport());
+    config.transport_config(transport(relayed));
     Ok(config)
 }
 
@@ -343,6 +494,46 @@ fn peer_fingerprint(conn: &Connection) -> Option<String> {
         .downcast::<Vec<rustls::pki_types::CertificateDer<'static>>>()
         .ok()?;
     certs.first().map(fingerprint)
+}
+
+/// Abre o ponto IPv6 (só IPv6: o Windows já cria o socket assim) e devolve a porta dele.
+fn bind_v6(identity: &Identity, allowed: &Allowed) -> io::Result<(V6, u16)> {
+    let socket = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0))?;
+    let port = socket.local_addr()?.port();
+    let punch = socket.try_clone()?;
+    socket.set_nonblocking(true)?;
+    let endpoint = Endpoint::new(
+        EndpointConfig::default(),
+        Some(server_config(identity, allowed, false)?),
+        socket,
+        Arc::new(TokioRuntime),
+    )?;
+    Ok((V6 { endpoint, punch }, port))
+}
+
+/// O endereço IPv6 global desta máquina (o que sai para a internet), se houver. Sem NAT, ele é o
+/// próprio endereço público.
+fn global_ipv6() -> Option<Ipv6Addr> {
+    // `connect` em UDP não manda nada: só escolhe a interface e o endereço de origem.
+    let probe = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).ok()?;
+    probe
+        .connect((Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888), 53))
+        .ok()?;
+    match probe.local_addr().ok()?.ip() {
+        IpAddr::V6(ip) if is_global_v6(ip) => Some(ip),
+        _ => None,
+    }
+}
+
+/// Unicast global (2000::/3): nem link-local, nem ULA da rede de casa, nem loopback, nem o 6to4/
+/// Teredo de compatibilidade (que não atravessam firewall de verdade).
+fn is_global_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    let global_unicast = s[0] & 0xE000 == 0x2000;
+    let teredo = s[0] == 0x2001 && s[1] == 0;
+    let documentation = s[0] == 0x2001 && s[1] == 0x0DB8;
+    let six_to_four = s[0] == 0x2002;
+    global_unicast && !teredo && !documentation && !six_to_four
 }
 
 /// IP desta máquina na rede local (o da interface que sai para a internet).
@@ -375,6 +566,17 @@ pub(crate) fn candidates(public: Option<SocketAddr>, local: Option<IpAddr>, port
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn so_ipv6_global_de_verdade_vira_candidato() {
+        for ip in ["2804:14c:1:2::3", "2001:4860::8888", "2600::1"] {
+            assert!(is_global_v6(ip.parse().unwrap()), "{ip}");
+        }
+        // Link-local, rede de casa (ULA), loopback, Teredo, 6to4 e documentação: não.
+        for ip in ["fe80::1", "fd00::1", "::1", "2001:0::1", "2002::1", "2001:db8::1", "::"] {
+            assert!(!is_global_v6(ip.parse().unwrap()), "{ip}");
+        }
+    }
 
     #[test]
     fn nat_simetrico_e_quando_cada_servidor_ve_uma_porta() {

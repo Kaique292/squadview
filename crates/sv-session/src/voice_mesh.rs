@@ -163,7 +163,7 @@ mod tests {
         callee.allowed().allow(caller.fingerprint());
         let (accepted, conn) = tokio::join!(
             callee.accept(),
-            caller.connect_for(callee.candidates(), callee.fingerprint(), Purpose::Voice)
+            caller.connect_for(callee.candidates(), None, callee.fingerprint(), Purpose::Voice)
         );
         let accepted = accepted.expect("aceitar");
         assert_eq!(accepted.purpose, Purpose::Voice);

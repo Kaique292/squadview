@@ -52,7 +52,9 @@ Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
 - [ ] Simulcast com 2 camadas no encoder (1080p60 e 720p30)
 - [ ] Faixas e paridade no envio (`sv-net`) e remontagem na recepção
 - [ ] Repasse pela faixa da casa e troca de pai sem congelar
-- [ ] Repassador na nuvem de reserva (MoQ/TURN), opt-in
+- [x] Repassador na nuvem de reserva (TURN da Cloudflare), só quando o direto não fecha ([ADR 0014](adr/0014-conexao-em-camadas.md)); por enquanto entre dois membros, a malha usa depois
+- [x] Repasse por um membro da sala que já assiste (camada do meio da ADR 0014), um salto, só vídeo e som do jogo
+- [x] Conexão direta também por IPv6 (sem CGNAT)
 - [ ] Voz em salas grandes: só quem está falando é repassado
 - [ ] Sinalização para centenas de membros (e gossip para milhares)
 
