@@ -32,7 +32,6 @@ const OP_CLOSE: u32 = 2;
 #[serde(rename_all = "camelCase")]
 pub struct PresenceInfo {
     pub members: u32,
-    pub max_members: u32,
     pub live: bool,
     /// Nome de quem estamos assistindo.
     pub watching: Option<String>,
@@ -197,10 +196,14 @@ fn activity(info: &PresenceInfo) -> Value {
     } else {
         "Numa sala com a galera".to_owned()
     };
+    // A sala não tem limite (ADR 0012): sem o "(3 de 8)" do Discord, quantos estão vai no texto.
+    let state = match info.members {
+        0 | 1 => "Na sala".to_owned(),
+        n => format!("Na sala com {n} pessoas"),
+    };
     let mut activity = json!({
         "details": details,
-        "state": "Na sala",
-        "party": { "size": [info.members.max(1), info.max_members.max(info.members)] },
+        "state": state,
         "timestamps": { "start": info.joined_at_ms },
         "assets": { "large_image": "logo", "large_text": "SquadView" },
         "instance": false,
@@ -258,7 +261,6 @@ mod tests {
     fn info() -> PresenceInfo {
         PresenceInfo {
             members: 3,
-            max_members: 8,
             live: false,
             watching: Some("Minato".into()),
             joined_at_ms: 1_760_000_000_000,
@@ -324,7 +326,8 @@ mod tests {
     fn atividade_mostra_o_que_a_pessoa_esta_fazendo() {
         let live = activity(&PresenceInfo { live: true, ..info() });
         assert_eq!(live["details"], "Transmitindo a tela");
-        assert_eq!(live["party"]["size"], json!([3, 8]));
+        assert_eq!(live["state"], "Na sala com 3 pessoas");
+        assert!(live.get("party").is_none());
         assert_eq!(live["timestamps"]["start"], 1_760_000_000_000_i64);
         assert!(live.get("buttons").is_none());
 
@@ -333,6 +336,8 @@ mod tests {
             ..info()
         });
         assert_eq!(idle["details"], "Numa sala com a galera");
+        let alone = activity(&PresenceInfo { members: 1, ..info() });
+        assert_eq!(alone["state"], "Na sala");
     }
 
     #[test]

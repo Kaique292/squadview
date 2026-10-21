@@ -1,11 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  MAX_MEMBERS,
-  MAX_MESSAGE_BYTES,
-  RATE_LIMIT_MESSAGES,
-  RATE_LIMIT_WINDOW_MS,
-  type ServerMessage,
-} from "./protocol";
+import { MAX_MESSAGE_BYTES, RATE_LIMIT_MESSAGES, RATE_LIMIT_WINDOW_MS, type ServerMessage } from "./protocol";
 import { type Attachment, CLOSE, type Connection, randomPeerId, RoomState } from "./room-state";
 
 /** Estado de um "WebSocket" falso. */
@@ -127,11 +121,13 @@ describe("entrar na sala", () => {
     expect(c.closedWith?.code).toBe(CLOSE.versionMismatch);
   });
 
-  it(`recusa o ${MAX_MEMBERS + 1}º membro`, () => {
-    for (let i = 0; i < MAX_MEMBERS; i++) join(`m${i}`);
+  it("não tem limite de pessoas: o 21º entra e vê os outros 20", () => {
+    for (let i = 0; i < 20; i++) join(`m${i}`);
     const extra = join("Extra");
-    expect(extra.last()).toEqual({ type: "error", code: "room-full" });
-    expect(extra.closedWith?.code).toBe(CLOSE.roomFull);
+    const welcome = extra.last() as { type: string; members: unknown[] };
+    expect(welcome.type).toBe("welcome");
+    expect(welcome.members).toHaveLength(20);
+    expect(extra.closedWith).toBeNull();
   });
 
   it("não deixa entrar duas vezes pela mesma conexão", () => {

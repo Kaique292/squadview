@@ -3,7 +3,6 @@
  */
 
 export const PROTOCOL_VERSION = 1;
-export const MAX_MEMBERS = 8;
 export const MAX_NAME_LENGTH = 32;
 /** Tamanho máximo de uma mensagem bruta, em bytes. */
 export const MAX_MESSAGE_BYTES = 16 * 1024;
@@ -93,6 +92,8 @@ export type ClientMessage =
   | { type: "verify"; session: string }
   | { type: "leave" };
 
+/** `room-full` não é mais mandado: a sala não tem limite de pessoas (ADR 0012). Fica no contrato
+ * porque os apps ainda entendem o código de um Worker antigo. */
 export type ErrorCode =
   "room-full" | "invalid-message" | "version-mismatch" | "not-joined" | "unknown-peer" | "rate-limited";
 

@@ -2,7 +2,6 @@ import {
   byteLength,
   type ClientMessage,
   type ErrorCode,
-  MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
   type Member,
   parseClientMessage,
@@ -85,7 +84,6 @@ export const CLOSE = {
   normal: 1000,
   invalid: 4400,
   versionMismatch: 4426,
-  roomFull: 4409,
   rateLimited: 4429,
 } as const;
 
@@ -224,8 +222,8 @@ export class RoomState {
       ? { id: verified, avatar: msg.discord?.id === verified ? msg.discord.avatar : null }
       : msg.discord;
     if (protocol !== PROTOCOL_VERSION) return this.fail(conn, "version-mismatch", CLOSE.versionMismatch);
+    // Sem limite de pessoas (ADR 0012): a sala aceita quem chegar.
     const others = this.joined().filter(([c]) => c.key !== conn.key);
-    if (others.length >= MAX_MEMBERS) return this.fail(conn, "room-full", CLOSE.roomFull);
 
     const taken = new Set(others.map(([, m]) => m.id));
     let id = this.newPeerId();
