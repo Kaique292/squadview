@@ -13,6 +13,7 @@ import {
   SERVER_ID,
   type ServerError,
   type ServerOp,
+  type ServerPresence,
   type ServerResult,
   type ServerSnapshot,
 } from "./server-state";
@@ -100,6 +101,8 @@ export type UserServerMessage =
   | { type: "dm-signal"; from: string; payload: Record<string, unknown> }
   /** O amigo não está online agora: a mensagem espera no nosso PC. */
   | { type: "dm-unreachable"; id: string }
+  /** Quem está em cada sala de um servidor nosso (ADR 0018). */
+  | { type: "server-presence"; server: string; presence: ServerPresence }
   /** Credenciais do repassador TURN, pedidas para a conversa direta. */
   | ({ type: "turn" } & TurnCredentials)
   | {
@@ -145,6 +148,10 @@ export interface Peers {
   /** Um pedido ao servidor; ele mesmo avisa os outros membros (não quem pediu). */
   serverAct(server: string, actor: Profile, op: ServerOp): Promise<ServerResult>;
   serverSnapshot(server: string): Promise<ServerSnapshot | null>;
+  /** Avisa o servidor que entramos numa sala dele (`code`), saímos (`null`) ou mudou o ao vivo. */
+  serverSetPresence(server: string, member: string, code: string | null, live: boolean): Promise<void>;
+  /** Quem está em cada sala do servidor agora. */
+  serverPresence(server: string): Promise<ServerPresence>;
   /** Nome ou foto mudou: o servidor atualiza e avisa os outros. */
   serverRefresh(server: string, profile: Profile): Promise<void>;
   /** Entrega o sinal da conversa ao registro do amigo. `false` se ele não está online. */
@@ -305,6 +312,43 @@ export class UserState {
   private servers(): string[] {
     return this.store.get<string[]>("servers") ?? [];
   }
+  /** Código de sala → servidor nosso dono dela (montado com os retratos dos servidores). */
+  private serverRooms(): Record<string, string> {
+    return this.store.get<Record<string, string>>("serverRooms") ?? {};
+  }
+  /** Onde avisamos o servidor que estamos (para avisar a saída depois). */
+  private reported(): { server: string; code: string; live: boolean } | null {
+    return this.store.get<{ server: string; code: string; live: boolean } | null>("reported") ?? null;
+  }
+
+  /** Guarda (ou tira, com `rooms` vazio) as salas de um servidor no índice código → servidor. */
+  private indexServer(server: string, rooms: { code: string }[]): void {
+    this.update<Record<string, string>>("serverRooms", {}, (index) => {
+      for (const [code, owner] of Object.entries(index)) if (owner === server) delete index[code];
+      for (const r of rooms) index[r.code] = server;
+    });
+  }
+
+  /**
+   * Conta ao servidor da nossa sala onde estamos (ADR 0018): entrou, saiu, trocou de sala ou mudou
+   * o ao vivo. Fora de uma sala de servidor nosso, avisa só a saída da anterior.
+   */
+  private async reportServerPresence(gone?: UserConnection): Promise<void> {
+    // A conexão que acabou de fechar (`gone`) ainda pode aparecer na lista: não conta.
+    const conns = this.connections().filter((c) => c.key !== gone?.key);
+    const room = conns.map((c) => c.getAttachment()?.status.room).find((r) => r) ?? null;
+    const live = conns.some((c) => c.getAttachment()?.status.live);
+    const server = room ? this.serverRooms()[room.code] : undefined;
+    const now = server && room ? { server, code: room.code, live } : null;
+    const before = this.reported();
+    if (before?.server === now?.server && before?.code === now?.code && before?.live === now?.live) return;
+    this.store.put("reported", now);
+    const calls: Promise<void>[] = [];
+    if (before && before.server !== now?.server)
+      calls.push(this.peers.serverSetPresence(before.server, this.id, null, false));
+    if (now) calls.push(this.peers.serverSetPresence(now.server, this.id, now.code, now.live));
+    await Promise.all(calls.map((c) => c.catch(() => {})));
+  }
 
   private update<T>(key: string, fallback: T, change: (value: T) => void): void {
     const value = this.store.get<T>(key) ?? fallback;
@@ -335,6 +379,7 @@ export class UserState {
     const others = this.connections().filter((c) => c.key !== conn.key);
     if (others.length === 0) await this.announce(OFFLINE);
     else await this.announce();
+    await this.reportServerPresence(conn);
   }
 
   /** Mensagem do app. */
@@ -359,7 +404,7 @@ export class UserState {
       }
       case "status": {
         conn.setAttachment({ ...attachment, status: { room: msg.room, live: msg.live } });
-        await this.announce();
+        await Promise.all([this.announce(), this.reportServerPresence()]);
         return;
       }
       case "friend-request":
@@ -503,6 +548,14 @@ export class UserState {
     if (!room) return { kind: "not-in-room" };
     const me = this.profile();
     if (friend.direct) return { kind: "approved", code: room.code, room: room.name, by: me.name };
+    // Sala de um servidor do qual nós dois somos membros: entra direto (ADR 0018).
+    const server = this.serverRooms()[room.code];
+    if (server) {
+      const snapshot = await this.peers.serverSnapshot(server).catch(() => null);
+      const member = (id: string) => !!snapshot?.members.some((m) => m.id === id);
+      if (member(this.id) && member(from.id))
+        return { kind: "approved", code: room.code, room: room.name, by: me.name };
+    }
     const asked = await this.peers.askRoom(room.code, from).catch(() => false);
     return asked ? { kind: "pending", friend: me.name } : { kind: "not-in-room" };
   }
@@ -524,7 +577,16 @@ export class UserState {
     this.update<string[]>("servers", [], (list) => {
       if (!list.includes(server.id)) list.push(server.id);
     });
+    this.indexServer(server.id, server.rooms);
     this.broadcast({ type: "server", server });
+    // Uma sala nova pode ser a nossa (entramos nela antes de o índice saber dela).
+    void this.reportServerPresence();
+  }
+
+  /** Alguém entrou ou saiu de uma sala de um servidor nosso. */
+  onServerPresence(server: string, presence: ServerPresence): void {
+    if (!this.servers().includes(server)) return;
+    this.broadcast({ type: "server-presence", server, presence });
   }
 
   /**
@@ -539,6 +601,7 @@ export class UserState {
 
   /** Fomos tirados do servidor, ou ele foi apagado. */
   onServerRemoved(id: string): void {
+    this.indexServer(id, []);
     if (!this.servers().includes(id)) return;
     this.update<string[]>("servers", [], (list) => list.splice(list.indexOf(id), 1));
     this.broadcast({ type: "server-removed", id });
@@ -588,7 +651,15 @@ export class UserState {
         "servers",
         ids.filter((id) => !gone.has(id)),
       );
-    conn.send({ type: "servers", servers: found.filter((s): s is ServerSnapshot => mine(s)) });
+    const servers = found.filter((s): s is ServerSnapshot => mine(s));
+    for (const s of servers) this.indexServer(s.id, s.rooms);
+    conn.send({ type: "servers", servers });
+    // E quem está em cada sala deles agora.
+    const presences = await Promise.all(servers.map((s) => this.peers.serverPresence(s.id).catch(() => null)));
+    servers.forEach((s, i) => {
+      const presence = presences[i];
+      if (presence) conn.send({ type: "server-presence", server: s.id, presence });
+    });
   }
 
   private async sendFriendRequest(conn: UserConnection, id: string): Promise<void> {

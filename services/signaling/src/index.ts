@@ -2,7 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import { generateRoomCode } from "./room-code";
 import { type Attachment, type Connection, randomPeerId, RoomState, type VerifiedProfile } from "./room-state";
 import { bearer, route } from "./router";
-import { type ServerOp, type ServerResult, type ServerSnapshot, ServerState } from "./server-state";
+import {
+  type ServerOp,
+  type ServerPresence,
+  type ServerResult,
+  type ServerSnapshot,
+  ServerState,
+} from "./server-state";
 import { exchangeDiscordToken, type Profile, signSession, verifySession } from "./session";
 import { TurnCache, type TurnEnv, turnProvider } from "./turn";
 import {
@@ -231,6 +237,9 @@ export class User extends DurableObject<Env> {
   onServerRemoved(id: string): void {
     this.state.onServerRemoved(id);
   }
+  onServerPresence(server: string, presence: ServerPresence): void {
+    this.state.onServerPresence(server, presence);
+  }
   onDmSignal(from: string, payload: Record<string, unknown>): boolean {
     return this.state.onDmSignal(from, payload);
   }
@@ -262,6 +271,24 @@ export class Server extends DurableObject<Env> {
     const result = this.state.act(actor, op);
     if (result.ok && id) this.notify(id, actor.id, result.snapshot, result.removed);
     return result;
+  }
+
+  /** Um membro entrou numa sala daqui, saiu ou mudou o ao vivo (ADR 0018): avisa todos. */
+  setPresence(member: string, code: string | null, live: boolean): void {
+    const state = this.state;
+    const snapshot = state.snapshot();
+    if (!snapshot || !state.setPresence(member, code, live)) return;
+    const presence = state.presence();
+    for (const id of state.memberIds())
+      this.ctx.waitUntil(
+        user(this.env, id)
+          .onServerPresence(snapshot.id, presence)
+          .catch(() => {}),
+      );
+  }
+
+  presence(): ServerPresence {
+    return this.state.presence();
   }
 
   refresh(profile: Profile): void {
@@ -319,6 +346,8 @@ function peers(env: Env): Peers {
     serverCreate: async (id, name, owner) => server(env, id).create(id, name, owner),
     serverAct: async (id, actor, op) => server(env, id).act(actor, op),
     serverSnapshot: async (id) => server(env, id).snapshot(),
+    serverSetPresence: async (id, member, code, live) => server(env, id).setPresence(member, code, live),
+    serverPresence: async (id) => server(env, id).presence(),
     serverRefresh: async (id, profile) => server(env, id).refresh(profile),
     dmSignal: async (to, from, payload) => user(env, to).onDmSignal(from, payload),
     turn: async () => (await turnProvider(env)?.()) ?? null,
