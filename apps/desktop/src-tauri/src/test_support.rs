@@ -43,9 +43,10 @@ impl Drop for TestApp {
 pub struct Events(mpsc::Receiver<String>);
 
 impl Events {
-    /// Espera um evento cujo JSON satisfaça `pred` (falha depois de 10 s).
+    /// Espera um evento cujo JSON satisfaça `pred` (falha depois de 30 s: na esteira o Worker local
+    /// às vezes demora para acordar um Durable Object; só é teto, segue assim que chega).
     pub fn wait(&self, what: &str, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             let payload = self

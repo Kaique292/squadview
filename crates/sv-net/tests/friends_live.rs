@@ -14,6 +14,10 @@ use sv_net::signaling::new_room_code;
 use sv_net::{DiscordUser, RoomClient, RoomEvent};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+/// Quanto esperar o Worker local: na esteira ele roda numa máquina compartilhada e às vezes
+/// demora segundos para acordar um Durable Object. Só é teto: o teste segue assim que chega.
+const WORKER_WAIT: Duration = Duration::from_secs(30);
+
 /// Worker local e o segredo das sessões dele. `None`: teste pulado.
 fn worker() -> Option<(String, String)> {
     let url = std::env::var("SQUADVIEW_SIGNALING_URL").ok();
@@ -41,7 +45,7 @@ fn fresh_ids() -> (String, String) {
 
 /// Espera uma mensagem do registro que satisfaça `pred`.
 async fn wait(rx: &mut UnboundedReceiver<FriendsEvent>, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + WORKER_WAIT;
     loop {
         let event = tokio::time::timeout_at(deadline, rx.recv())
             .await
@@ -56,7 +60,7 @@ async fn wait(rx: &mut UnboundedReceiver<FriendsEvent>, what: &str, pred: impl F
 }
 
 async fn room_event(rx: &mut UnboundedReceiver<RoomEvent>, what: &str, pred: impl Fn(&RoomEvent) -> bool) -> RoomEvent {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + WORKER_WAIT;
     loop {
         let event = tokio::time::timeout_at(deadline, rx.recv())
             .await

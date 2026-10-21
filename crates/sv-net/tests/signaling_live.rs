@@ -17,10 +17,14 @@ fn worker() -> Option<String> {
     url
 }
 
+/// Quanto esperar o Worker local: na esteira ele roda numa máquina compartilhada e às vezes
+/// demora segundos para acordar um Durable Object. Só é teto: o teste segue assim que chega.
+const WORKER_WAIT: Duration = Duration::from_secs(30);
+
 async fn next(rx: &mut UnboundedReceiver<RoomEvent>) -> RoomEvent {
-    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    tokio::time::timeout(WORKER_WAIT, rx.recv())
         .await
-        .expect("nada em 5 s")
+        .expect("nada em 30 s")
         .expect("canal fechou")
 }
 

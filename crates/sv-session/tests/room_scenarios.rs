@@ -30,7 +30,9 @@ fn worker() -> Option<String> {
     url
 }
 
-const WAIT: Duration = Duration::from_secs(10);
+/// Quanto esperar o Worker local: na esteira ele roda numa máquina compartilhada e às vezes
+/// demora segundos para acordar um Durable Object. Só é teto: o teste segue assim que chega.
+const WAIT: Duration = Duration::from_secs(30);
 
 /// Um membro de verdade (`Room`) e o que chega para a interface dele.
 struct Someone {
