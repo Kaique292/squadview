@@ -1,7 +1,7 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
- * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`
- * ou `#demo=servidor`.
+ * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`,
+ * `#demo=servidor`, `#demo=transmitindo` ou `#demo=detalhes`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
 import { useAccountStore } from "../account/account-store";
@@ -10,7 +10,7 @@ import { useFriendsStore } from "../friends/friends-store";
 import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
 import { useServersStore } from "../servers/servers-store";
-import { type Source, sourceKey, useStreamStore } from "../stream/stream-store";
+import { type Source, type StreamStats, sourceKey, useStreamStore } from "../stream/stream-store";
 
 // Lobo e Yondaime assistem o Minato: o 👁 2 aparece ao lado do "Ao vivo".
 const MEMBERS = [
@@ -149,6 +149,53 @@ const CONVERSATIONS = [
   },
 ];
 
+/** Um minuto de medições da nossa live (a cada 500 ms), com cara de partida de verdade. */
+function liveHistory(): StreamStats[] {
+  return Array.from({ length: 120 }, (_, i) => ({
+    rttMs: 18,
+    audioActive: true,
+    audioError: null,
+    audioKbps: 128,
+    audioLevel: 0.42 + 0.2 * Math.abs(Math.sin(i / 3)),
+    audioLost: 0,
+    sourceFps: 144,
+    fps: 30 - (i % 37 === 0 ? 2 : 0),
+    bitrateKbps: 4200 + 900 * Math.sin(i / 9) + 250 * Math.sin(i / 2.3),
+    encodeMs: 1.6 + 0.5 * Math.sin(i / 4) + 0.15 * Math.sin(i * 1.7),
+    latencyMs: 13 + 3 * Math.sin(i / 7) + 1.2 * Math.sin(i * 1.3),
+    latencyP95Ms: 22,
+    dropped: 0,
+    width: 1280,
+    height: 720,
+    encoder: "NVIDIA H.264 Encoder MFT",
+  }));
+}
+
+/** A nossa live no ar: no lugar do vídeo nativo (que não existe no navegador), uma imagem do jogo. */
+function goLive() {
+  const history = liveHistory();
+  useStreamStore.setState({
+    status: "live",
+    quality: { resolution: "720", fps: 30 },
+    stats: history.at(-1),
+    history,
+    system: { gpu3d: 64, gpuEncode: 17, gpuDecode: 0, cpu: 22 },
+    current: { source: SOURCES[0].id, audioPid: 1, lastAudioPid: 1 },
+  });
+  useRoomStore.setState({
+    members: MEMBERS.map((m) =>
+      m.id === "eu" ? { ...m, live: true } : { ...m, watching: m.id === "a" ? null : "eu" },
+    ),
+  });
+  setTimeout(() => {
+    const area = document.querySelector<HTMLElement>('[data-testid="area-do-video"]');
+    if (area) {
+      area.style.background = `center / cover url("${thumbnail("#0a3d62", "#c89b3c", "")}")`;
+      area.replaceChildren();
+    }
+  }, 250);
+}
+
 /** Respostas de mentira do Rust, para as telas que perguntam algo a ele. */
 const FAKE_COMMANDS: Record<string, unknown> = {
   diagnostics_status: { enabled: true, files: 3 },
@@ -208,6 +255,7 @@ export function runDemo(scene: string) {
     });
   }
   if (scene === "servidor") useServersStore.setState({ servers: SERVERS, selected: "s1" });
+  if (scene === "transmitindo" || scene === "detalhes") goLive();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
     // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).
@@ -218,5 +266,18 @@ export function runDemo(scene: string) {
     if (scene === "sala" || scene === "servidor") click("Pôr Lobo em foco");
     if (scene === "transmitir") click("Transmitir minha tela");
     if (scene === "config") click("Configurações");
+    // Os detalhes da live abrem pelo menu dela (botão direito no quadro).
+    if (scene === "detalhes") {
+      document
+        .querySelector("[data-stream-tile]")
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 400, clientY: 300 }));
+      setTimeout(
+        () =>
+          [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+            .find((i) => i.textContent?.includes("Detalhes da transmissão"))
+            ?.click(),
+        200,
+      );
+    }
   }, 300);
 }
