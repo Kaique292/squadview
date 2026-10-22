@@ -173,6 +173,74 @@ fn amigo_offline_a_mensagem_espera_e_vai_quando_ele_volta() {
     });
 }
 
+/// Regressão da instabilidade na CI: com os dois chamando juntos, as duas conexões (uma aberta por
+/// cada lado) podem chegar em qualquer ordem em cada PC. Em todas as combinações, os dois precisam
+/// ficar com a mesma; antes, ficava a última que chegava, e em duas das quatro ordens cada um ficava
+/// com uma diferente (e fechava a do outro).
+#[test]
+fn em_qualquer_ordem_os_dois_ficam_com_a_mesma_conexao() {
+    // A conexão aberta pela Ana (id menor) e a aberta pelo Beto.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Conn {
+        DaAna,
+        DoBeto,
+    }
+    let dialer = |me: &str, c: Conn| (c == Conn::DaAna) == (me == ANA);
+    // O que sobra num PC depois de receber as duas, na ordem dada.
+    let survivor = |me: &str, friend: &str, order: [Conn; 2]| {
+        let mut current: Option<Conn> = None;
+        for c in order {
+            let facts = current.map(|old| LinkFacts {
+                dialed_by_me: dialer(me, old),
+                age: Duration::from_millis(50),
+                alive: true,
+            });
+            if !keeps_existing(me, friend, facts, dialer(me, c)) {
+                current = Some(c);
+            }
+        }
+        current.unwrap()
+    };
+    let orders = [[Conn::DaAna, Conn::DoBeto], [Conn::DoBeto, Conn::DaAna]];
+    for ana_order in orders {
+        for beto_order in orders {
+            let a = survivor(ANA, BETO, ana_order);
+            let b = survivor(BETO, ANA, beto_order);
+            assert_eq!(a, b, "Ana recebeu {ana_order:?}, Beto {beto_order:?}");
+            assert_eq!(a, Conn::DaAna, "fica a conexão aberta por quem tem o id menor");
+        }
+    }
+}
+
+#[test]
+fn conexao_nova_depois_da_janela_ou_com_a_antiga_fechada_substitui() {
+    let old = |age_s: u64, alive: bool| {
+        Some(LinkFacts {
+            dialed_by_me: true,
+            age: Duration::from_secs(age_s),
+            alive,
+        })
+    };
+    // Ana (id menor) tem a conexão preferida; a do Beto chega:
+    assert!(
+        keeps_existing(ANA, BETO, old(1, true), false),
+        "chamada cruzada: fica a da Ana"
+    );
+    assert!(
+        !keeps_existing(ANA, BETO, old(60, true), false),
+        "o Beto reabriu o app: fica a nova"
+    );
+    assert!(
+        !keeps_existing(ANA, BETO, old(1, false), false),
+        "a antiga já caiu: fica a nova"
+    );
+    assert!(!keeps_existing(ANA, BETO, None, false), "sem conexão: fica a nova");
+    assert!(
+        !keeps_existing(ANA, BETO, old(1, true), true),
+        "a Ana chamou de novo: fica a nova"
+    );
+}
+
 #[test]
 fn os_dois_chamando_juntos_fica_uma_conexao_so() {
     let (ana, beto, _) = pair("juntos");

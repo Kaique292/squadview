@@ -33,6 +33,10 @@ use frame::{FEATURE_REACTIONS, FileHeader, MAX_REACTIONS, parse_frame, read_fram
 
 /// Uma oferta sem resposta por esse tempo pode ser repetida (o amigo pode ter caído no meio).
 const OFFER_RETRY: Duration = Duration::from_secs(10);
+/// Duas conexões com o mesmo amigo abertas dentro desse tempo vieram dos dois chamando juntos:
+/// fica a mesma nos dois lados (ver [`keeps_existing`]). Depois disso, a nova é uma volta (o amigo
+/// reabriu o app) e substitui a antiga.
+const GLARE_WINDOW: Duration = Duration::from_secs(10);
 /// De quanto em quanto o progresso de um arquivo é avisado (bytes).
 const PROGRESS_EVERY: u64 = 512 * 1024;
 const CHUNK: usize = 256 * 1024;
@@ -105,6 +109,35 @@ impl std::fmt::Display for SendError {
 struct Link {
     conn: Connection,
     control: Arc<tokio::sync::Mutex<SendStream>>,
+    /// Fomos nós que conectamos (respondendo a oferta do amigo, foi ele).
+    dialed_by_me: bool,
+    since: Instant,
+}
+
+/// O que importa de uma conexão que já existe para decidir se ela fica.
+#[derive(Debug, Clone, Copy)]
+struct LinkFacts {
+    dialed_by_me: bool,
+    age: Duration,
+    alive: bool,
+}
+
+/// Chegou outra conexão com o amigo: a que já existe fica? Os dois lados precisam escolher a
+/// **mesma**. Antes ficava a última que chegava, e quando os dois chamavam juntos as duas podiam
+/// chegar em ordens diferentes nos dois PCs: cada um ficava com uma e fechava a do outro, e as
+/// mensagens paravam (o teste `os_dois_chamando_juntos_fica_uma_conexao_so` falhava na CI).
+///
+/// Regra: dentro da janela de [`GLARE_WINDOW`], vence a conexão aberta por quem tem o id menor,
+/// que é também quem os dois escolhem para chamar quando as ofertas se cruzam. Fora dela, ou com a
+/// antiga já fechada, fica a nova.
+fn keeps_existing(me: &str, friend: &str, existing: Option<LinkFacts>, new_dialed_by_me: bool) -> bool {
+    let Some(old) = existing else { return false };
+    if !old.alive || old.age >= GLARE_WINDOW {
+        return false;
+    }
+    // A conexão aberta pelo id menor: por nós se o nosso id é o menor, senão pelo amigo.
+    let preferred = |dialed_by_me: bool| dialed_by_me == (me < friend);
+    preferred(old.dialed_by_me) && !preferred(new_dialed_by_me)
 }
 
 /// Um download em andamento (sobrevive a quedas: na volta, pede de onde parou).
@@ -578,7 +611,7 @@ impl Inner {
                     Ok(conn) => match conn.open_bi().await {
                         Ok((mut send, recv)) => {
                             if write_frame(&mut send, &Frame::Hello).await.is_ok() {
-                                self.attach(from, conn, send, recv).await;
+                                self.attach(from, conn, send, recv, true).await;
                             }
                         }
                         Err(_) => conn.close(0u32.into(), b"sem controle"),
@@ -589,17 +622,39 @@ impl Inner {
         }
     }
 
-    /// Conexão aberta (por nós ou pelo amigo): passa a ser a do amigo, manda o que estava
-    /// pendente e retoma os downloads.
-    async fn attach(self: &Arc<Self>, friend: String, conn: Connection, send: SendStream, recv: RecvStream) {
-        let control = Arc::new(tokio::sync::Mutex::new(send));
-        let previous = lock(&self.links).insert(
-            friend.clone(),
-            Link {
-                conn: conn.clone(),
-                control,
-            },
-        );
+    /// Conexão aberta (por nós, `dialed_by_me`, ou pelo amigo): passa a ser a do amigo, manda o que
+    /// estava pendente e retoma os downloads. Se já existe outra e os dois lados ficam com ela (ver
+    /// [`keeps_existing`]), a nova é fechada.
+    async fn attach(
+        self: &Arc<Self>,
+        friend: String,
+        conn: Connection,
+        send: SendStream,
+        recv: RecvStream,
+        dialed_by_me: bool,
+    ) {
+        let previous = {
+            let mut links = lock(&self.links);
+            let existing = links.get(&friend).map(|l| LinkFacts {
+                dialed_by_me: l.dialed_by_me,
+                age: l.since.elapsed(),
+                alive: l.conn.close_reason().is_none(),
+            });
+            if keeps_existing(&self.me, &friend, existing, dialed_by_me) {
+                drop(links);
+                conn.close(0u32.into(), b"duplicada");
+                return;
+            }
+            links.insert(
+                friend.clone(),
+                Link {
+                    conn: conn.clone(),
+                    control: Arc::new(tokio::sync::Mutex::new(send)),
+                    dialed_by_me,
+                    since: Instant::now(),
+                },
+            )
+        };
         if let Some(old) = previous {
             old.conn.close(0u32.into(), b"trocada");
         }
@@ -843,7 +898,7 @@ async fn accept_loop(inner: Arc<Inner>, peer: Arc<Peer>) {
                         Ok((send, mut recv)) => {
                             // O primeiro quadro é o `Hello` de quem conectou.
                             if let Ok(Some(Frame::Hello)) = read_frame::<_, Frame>(&mut recv).await {
-                                inner.attach(friend, accepted.conn, send, recv).await;
+                                inner.attach(friend, accepted.conn, send, recv, false).await;
                             }
                         }
                         Err(_) => accepted.conn.close(0u32.into(), b"sem controle"),
@@ -913,7 +968,7 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
         // Cancelado no meio: para de receber (quem manda recebe o "pare") e apaga o que chegou.
         if !lock(&inner.downloads).contains_key(&header.id) {
             let _ = recv.stop(0u32.into());
-            drop(file);
+            close(file).await;
             let _ = tokio::fs::remove_file(&part).await;
             return;
         }
@@ -930,7 +985,7 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
             }
             Ok(None) if done < size => {
                 // Quem manda fechou antes do fim: o arquivo não está mais lá.
-                drop(file);
+                close(file).await;
                 let _ = tokio::fs::remove_file(&part).await;
                 lock(&inner.downloads).remove(&header.id);
                 inner.progress(&friend, &header.id, |f| {
@@ -951,7 +1006,7 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
     if file.flush().await.is_err() || done != size {
         return;
     }
-    drop(file);
+    close(file).await;
     if tokio::fs::rename(&part, &download.dest).await.is_ok() {
         lock(&inner.downloads).remove(&header.id);
         let dest = download.dest.to_string_lossy().into_owned();
@@ -960,6 +1015,14 @@ async fn receive_file(inner: Arc<Inner>, friend: String, mut recv: RecvStream) {
             f.path = Some(dest);
         });
     }
+}
+
+/// Fecha o arquivo de verdade antes de apagar ou renomear. Um `tokio::fs::File` descartado pode
+/// continuar aberto por um instante numa thread de bloqueio, e no Windows um arquivo aberto não é
+/// apagado nem renomeado: o `.part` ficava para trás (o teste
+/// `arquivo_apagado_por_quem_mandou_avisa_em_vez_de_travar` falhava de vez em quando).
+async fn close(file: tokio::fs::File) {
+    drop(file.into_std().await);
 }
 
 /// Manda o arquivo pedido, de `offset` até o fim, num stream só dele.
