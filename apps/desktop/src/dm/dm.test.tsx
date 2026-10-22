@@ -14,6 +14,7 @@ import {
   listenToDmEvents,
   useDmStore,
 } from "./dm-store";
+import { stamp } from "./ChatView";
 
 const { invoke, listen, handlers, drop } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -92,6 +93,7 @@ beforeEach(async () => {
     pendingFiles: null,
     copyChoice: "ask",
     downloading: {},
+    replying: {},
   });
   offs = [await listenToDmEvents(), await listenToFriendsEvents(), await listenToRoomEvents()];
   useFriendsStore.setState({
@@ -159,7 +161,7 @@ describe("mensagens privadas", () => {
     fireEvent.keyDown(caixa, { key: "Enter", shiftKey: true });
     expect(calls("dm_send_text")).toHaveLength(0);
     fireEvent.keyDown(caixa, { key: "Enter" });
-    await waitFor(() => expect(calls("dm_send_text")).toEqual([{ friend: BETO, text: "bora\njogar" }]));
+    await waitFor(() => expect(calls("dm_send_text")).toEqual([{ friend: BETO, text: "bora\njogar", replyTo: null }]));
     await waitFor(() => expect(caixa).toHaveValue(""));
 
     emit("dm-event", {
@@ -559,5 +561,152 @@ describe("mensagens privadas", () => {
     vi.resetModules();
     const { useDmStore: fresh } = await import("./dm-store");
     expect(fresh.getState().copyChoice).toBe("send");
+  });
+});
+
+describe("reações, respostas e a hora das mensagens", () => {
+  it("a hora fica como no Discord: só a hora hoje, Ontem às ontem, e data e hora antes", () => {
+    const now = new Date(2026, 9, 22, 10, 30).getTime();
+    expect(stamp(new Date(2026, 9, 22, 0, 0).getTime(), now)).toBe("00:00");
+    expect(stamp(new Date(2026, 9, 21, 23, 59).getTime(), now)).toBe("Ontem às 23:59");
+    expect(stamp(new Date(2026, 9, 19, 14, 45).getTime(), now)).toBe("19/10/2026 14:45");
+    // Virada de mês: no dia 1º, o dia 31 é ontem.
+    expect(stamp(new Date(2026, 9, 31, 22, 0).getTime(), new Date(2026, 10, 1, 0, 10).getTime())).toBe(
+      "Ontem às 22:00",
+    );
+  });
+
+  it("a barra da mensagem reage com um clique, pelo seletor e responde", async () => {
+    const oi = msg({ id: "1", text: "bora jogar?", at: Date.now() - 60_000 });
+    answers.dm_messages = [oi];
+    answers.dm_react = { ...oi, reactions: [{ emoji: "👍", mine: true, theirs: false }] };
+    const chat = await openBeto();
+    const barra = await within(chat).findByRole("toolbar", { name: "Ações da mensagem de Beto" });
+    fireEvent.click(within(barra).getByRole("button", { name: "Reagir com 👍" }));
+    await waitFor(() => expect(calls("dm_react")).toEqual([{ friend: BETO, id: "1", emoji: "👍", on: true }]));
+    // A reação aparece embaixo, marcada como nossa.
+    const nossa = await within(chat).findByRole("button", { name: "👍 1" });
+    expect(nossa).toHaveAttribute("aria-pressed", "true");
+    // Clicar nela tira.
+    answers.dm_react = { ...oi, reactions: [] };
+    fireEvent.click(nossa);
+    await waitFor(() => expect(calls("dm_react")[1]).toEqual({ friend: BETO, id: "1", emoji: "👍", on: false }));
+    await waitFor(() => expect(within(chat).queryByRole("button", { name: "👍 1" })).toBeNull());
+
+    // Mais reações, pelo seletor.
+    fireEvent.pointerDown(within(barra).getByRole("button", { name: "Adicionar reação" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const grade = await screen.findByRole("menu", { name: "Adicionar reação" });
+    fireEvent.click(within(grade).getByRole("menuitem", { name: "Reagir com 🔥" }));
+    await waitFor(() => expect(calls("dm_react")[2]).toEqual({ friend: BETO, id: "1", emoji: "🔥", on: true }));
+
+    // Responder: a caixa mostra a quem, e a mensagem vai com a resposta.
+    fireEvent.click(within(barra).getByRole("button", { name: "Responder" }));
+    expect(await within(chat).findByText(/Respondendo a/)).toHaveTextContent("Respondendo a Beto");
+    const caixa = within(chat).getByRole("textbox", { name: "Mensagem para Beto" });
+    fireEvent.change(caixa, { target: { value: "bora!" } });
+    fireEvent.keyDown(caixa, { key: "Enter" });
+    await waitFor(() => expect(calls("dm_send_text")).toEqual([{ friend: BETO, text: "bora!", replyTo: "1" }]));
+    await waitFor(() => expect(within(chat).queryByText(/Respondendo a/)).toBeNull());
+  });
+
+  it("a resposta pode ser cancelada pelo X ou pelo Esc", async () => {
+    answers.dm_messages = [msg({ id: "1", text: "oi", mine: true, at: Date.now() - 60_000 })];
+    const chat = await openBeto();
+    const barra = await within(chat).findByRole("toolbar", { name: "Ações da mensagem de Kaique" });
+    fireEvent.click(within(barra).getByRole("button", { name: "Responder" }));
+    // A nossa própria mensagem: "Respondendo a" quem somos.
+    expect(await within(chat).findByText(/Respondendo a/)).toHaveTextContent("Respondendo a Kaique");
+    fireEvent.click(within(chat).getByRole("button", { name: "Cancelar resposta" }));
+    expect(within(chat).queryByText(/Respondendo a/)).toBeNull();
+
+    fireEvent.click(within(barra).getByRole("button", { name: "Responder" }));
+    const caixa = within(chat).getByRole("textbox", { name: "Mensagem para Beto" });
+    fireEvent.keyDown(caixa, { key: "Escape" });
+    expect(within(chat).queryByText(/Respondendo a/)).toBeNull();
+    // Esc sem resposta não faz nada (nem manda).
+    fireEvent.keyDown(caixa, { key: "Escape" });
+    expect(calls("dm_send_text")).toHaveLength(0);
+  });
+
+  it("a resposta mostra o que foi respondido e leva até lá; sem a original, avisa", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    answers.dm_messages = [
+      msg({ id: "1", text: "viu o clutch?", at: Date.now() - 120_000 }),
+      msg({ id: "2", text: "vi!", mine: true, replyTo: "1", at: Date.now() - 60_000 }),
+      msg({ id: "3", text: "e esse?", replyTo: "sumiu", at: Date.now() - 30_000 }),
+      msg({
+        id: "4",
+        file: { name: "mapa.zip", size: 1, mime: "application/zip", path: null, done: 0 },
+        at: Date.now() - 20_000,
+      }),
+      msg({ id: "5", text: "esse arquivo", replyTo: "4", at: Date.now() - 10_000 }),
+    ];
+    const chat = await openBeto();
+    const [ir, irArquivo] = await within(chat).findAllByRole("button", { name: "Ir para a mensagem de Beto" });
+    expect(ir).toHaveTextContent("@Betoviu o clutch?");
+    fireEvent.click(ir);
+    expect(scroll).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+    expect(within(chat).getByText("A mensagem original não está mais aqui")).toBeInTheDocument();
+    // Resposta a um anexo mostra o nome do arquivo.
+    expect(irArquivo).toHaveTextContent("📎 mapa.zip");
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  it("reações das duas pessoas somam, e a dica diz quem reagiu", async () => {
+    answers.dm_messages = [
+      msg({
+        id: "1",
+        text: "gg",
+        at: Date.now() - 60_000,
+        reactions: [
+          { emoji: "🔥", mine: true, theirs: true },
+          { emoji: "😂", mine: false, theirs: true },
+          { emoji: "👀", mine: true, theirs: false },
+        ],
+      }),
+    ];
+    // A dica do Radix mede o tamanho do conteúdo.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const chat = await openBeto();
+    const fogo = await within(chat).findByRole("button", { name: "🔥 2" });
+    expect(fogo).toHaveAttribute("aria-pressed", "true");
+    const riso = within(chat).getByRole("button", { name: "😂 1" });
+    expect(riso).toHaveAttribute("aria-pressed", "false");
+    fireEvent.focus(fogo);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Você e Beto reagiram com 🔥");
+    fireEvent.blur(fogo);
+    fireEvent.focus(riso);
+    expect(await screen.findByRole("tooltip", {}, { timeout: 2000 })).toHaveTextContent("Beto reagiu com 😂");
+    vi.unstubAllGlobals();
+  });
+
+  it("reação numa mensagem antiga, com a conversa fechada, não conta como nova", () => {
+    useDmStore.setState({
+      conversations: [{ friend: BETO, last: msg({ id: "9", text: "última", at: 2_000 }), pending: 0 }],
+    });
+    emit("dm-event", {
+      type: "message",
+      friend: BETO,
+      message: msg({ id: "1", text: "antiga", at: 1_000, reactions: [{ emoji: "🔥", mine: false, theirs: true }] }),
+    });
+    expect(useDmStore.getState().unread[BETO]).toBeUndefined();
+    expect(playCue).not.toHaveBeenCalledWith("message", expect.anything());
+  });
+
+  it("falha ao reagir avisa, sem mudar nada", async () => {
+    answers.dm_react = new Error("Amigo inválido.");
+    await useDmStore.getState().react(BETO, msg({ id: "1", text: "oi" }), "👍");
+    expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "warning", message: "Amigo inválido." });
   });
 });

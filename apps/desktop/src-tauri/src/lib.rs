@@ -161,6 +161,7 @@ pub fn run() {
             dm::dm_messages,
             dm::dm_online,
             dm::dm_cancel_download,
+            dm::dm_react,
             dm::dm_retry,
             dm::dm_send_text,
             dm::dm_send_file,

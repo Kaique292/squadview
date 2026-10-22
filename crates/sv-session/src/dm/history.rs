@@ -43,6 +43,17 @@ pub struct Attachment {
     pub gone: bool,
 }
 
+/// Uma reação numa mensagem: o emoji e quem reagiu com ele (nós, o amigo ou os dois).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reaction {
+    pub emoji: String,
+    #[serde(default)]
+    pub mine: bool,
+    #[serde(default)]
+    pub theirs: bool,
+}
+
 /// Uma mensagem da conversa.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +68,14 @@ pub struct DmMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<Attachment>,
     pub status: Status,
+    /// A mensagem que esta responde (o `id` dela).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<Reaction>,
+    /// As nossas reações mudaram e o amigo ainda não ficou sabendo (vão quando conectar).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reactions_unsent: bool,
 }
 
 /// Resumo de uma conversa, para a lista da lateral.
@@ -128,6 +147,13 @@ impl History {
                 .filter(|m| m.mine && m.status == Status::Pending)
                 .cloned()
                 .collect()
+        })
+    }
+
+    /// Mensagens em que as nossas reações mudaram e o amigo ainda não soube.
+    pub fn unsent_reactions(&self, friend: &str) -> Vec<DmMessage> {
+        self.with(friend, |list| {
+            list.iter().filter(|m| m.reactions_unsent).cloned().collect()
         })
     }
 
@@ -228,6 +254,9 @@ pub(crate) mod tests {
             text: Some(format!("msg {id}")),
             file: None,
             status,
+            reply_to: None,
+            reactions: Vec::new(),
+            reactions_unsent: false,
         }
     }
 

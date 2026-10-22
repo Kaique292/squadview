@@ -160,9 +160,29 @@ pub fn dm_online<R: Runtime>(app: AppHandle<R>, friend: String) -> Result<bool, 
 }
 
 #[tauri::command]
-pub fn dm_send_text<R: Runtime>(app: AppHandle<R>, friend: String, text: String) -> Result<DmMessage, String> {
+pub fn dm_send_text<R: Runtime>(
+    app: AppHandle<R>,
+    friend: String,
+    text: String,
+    reply_to: Option<String>,
+) -> Result<DmMessage, String> {
     check_friend(&friend)?;
-    engine(&app)?.send_text(&friend, &text).map_err(|e| e.to_string())
+    engine(&app)?
+        .reply(&friend, &text, reply_to.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Põe ou tira a nossa reação numa mensagem. Devolve a mensagem como ficou.
+#[tauri::command]
+pub fn dm_react<R: Runtime>(
+    app: AppHandle<R>,
+    friend: String,
+    id: String,
+    emoji: String,
+    on: bool,
+) -> Result<Option<DmMessage>, String> {
+    check_friend(&friend)?;
+    Ok(engine(&app)?.react(&friend, &id, &emoji, on))
 }
 
 /// Manda um arquivo. `keep_copy`: o app guarda uma cópia (senão, só aponta para o original).
@@ -342,7 +362,7 @@ mod tests {
         let erro = dm_conversations(t.handle().clone()).unwrap_err();
         assert!(erro.contains("Discord"));
         assert_eq!(
-            dm_send_text(t.handle().clone(), "x".into(), "oi".into()).unwrap_err(),
+            dm_send_text(t.handle().clone(), "x".into(), "oi".into(), None).unwrap_err(),
             "Amigo inválido."
         );
         // Sem motor, os avisos do registro só são reconhecidos (nada a fazer).
@@ -363,8 +383,27 @@ mod tests {
         let t = test_app();
         login(&t);
         let h = || t.handle().clone();
-        let sent = dm_send_text(h(), BETO.into(), "oi".into()).unwrap();
-        assert_eq!(dm_messages(h(), BETO.into()).unwrap(), vec![sent]);
+        let sent = dm_send_text(h(), BETO.into(), "oi".into(), None).unwrap();
+        assert_eq!(dm_messages(h(), BETO.into()).unwrap(), vec![sent.clone()]);
+        // Responder guarda de qual mensagem; reagir põe e tira a nossa reação.
+        let reply = dm_send_text(h(), BETO.into(), "isso".into(), Some(sent.id.clone())).unwrap();
+        assert_eq!(reply.reply_to.as_deref(), Some(sent.id.as_str()));
+        let reacted = dm_react(h(), BETO.into(), sent.id.clone(), "🔥".into(), true)
+            .unwrap()
+            .unwrap();
+        assert!(reacted.reactions.iter().any(|r| r.emoji == "🔥" && r.mine));
+        let removed = dm_react(h(), BETO.into(), sent.id.clone(), "🔥".into(), false)
+            .unwrap()
+            .unwrap();
+        assert!(removed.reactions.is_empty());
+        assert_eq!(
+            dm_react(h(), BETO.into(), sent.id.clone(), "não é emoji".into(), true).unwrap(),
+            None
+        );
+        assert_eq!(
+            dm_react(h(), "x".into(), sent.id.clone(), "🔥".into(), true).unwrap_err(),
+            "Amigo inválido."
+        );
         assert_eq!(dm_conversations(h()).unwrap()[0].friend, BETO);
         assert!(!dm_online(h(), BETO.into()).unwrap());
         // Ninguém online para responder o sinal: chega o aviso do registro.
@@ -428,7 +467,7 @@ mod tests {
 
     /// Id de uma mensagem nossa (que não é anexo de receber).
     fn sent_id(t: &crate::test_support::TestApp) -> String {
-        dm_send_text(t.handle().clone(), BETO.into(), "de novo".into())
+        dm_send_text(t.handle().clone(), BETO.into(), "de novo".into(), None)
             .unwrap()
             .id
     }
@@ -456,6 +495,9 @@ mod tests {
                     gone: false,
                 }),
                 status: sv_session::dm::Status::Received,
+                reply_to: None,
+                reactions: Vec::new(),
+                reactions_unsent: false,
             },
         );
         let dest = PathBuf::from(dm_download(h(), BETO.into(), "b-1".into(), None).unwrap());

@@ -18,8 +18,15 @@ pub const MAX_TEXT_CHARS: usize = 4000;
 pub enum Frame {
     /// Primeiro quadro de quem conectou: abre o stream de controle para os dois lados poderem falar.
     Hello,
-    /// Mensagem de texto. `id` é de quem manda; repetir o mesmo `id` não duplica.
-    Text { id: String, at: u64, body: String },
+    /// Mensagem de texto. `id` é de quem manda; repetir o mesmo `id` não duplica. `reply_to`: a
+    /// mensagem que ela responde (apps antigos ignoram o campo e mostram só o texto).
+    Text {
+        id: String,
+        at: u64,
+        body: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
+    },
     /// Chegou (texto ou o aviso de um arquivo).
     Ack { id: String },
     /// Há um arquivo para baixar; quem recebe decide se e quando pede.
@@ -32,6 +39,28 @@ pub enum Frame {
     },
     /// Manda o arquivo a partir de `offset` (o que já chegou antes fica: é a retomada).
     FileRequest { id: String, offset: u64 },
+    /// As nossas reações agora na mensagem `id` (o conjunto inteiro: tirar uma também chega).
+    /// Só vai para quem avisou que entende (ver `FEATURE_REACTIONS`): app antigo derrubava a conexão
+    /// ao receber um quadro que não conhece.
+    Reactions { id: String, emojis: Vec<String> },
+}
+
+/// Recurso que cada lado anuncia no `dm-offer` e no `dm-answer`: entende o quadro `reactions`.
+pub const FEATURE_REACTIONS: &str = "reactions";
+/// Reações diferentes numa mensagem, no máximo.
+pub const MAX_REACTIONS: usize = 20;
+/// Tamanho máximo de um emoji (bytes): cabe qualquer emoji composto, não cabe texto.
+pub const MAX_EMOJI_BYTES: usize = 32;
+
+/// Um emoji que dá para guardar e mandar (não vazio, curto e sem espaço).
+pub fn valid_emoji(emoji: &str) -> bool {
+    !emoji.is_empty() && emoji.len() <= MAX_EMOJI_BYTES && !emoji.chars().any(char::is_whitespace)
+}
+
+/// Um quadro de controle: o que este app entende, ou `None` para um tipo que ele não conhece
+/// (de um app mais novo), que é ignorado em vez de derrubar a conexão.
+pub fn parse_frame(value: serde_json::Value) -> Option<Frame> {
+    serde_json::from_value(value).ok()
 }
 
 /// Começo do stream de um arquivo.
@@ -81,6 +110,17 @@ mod tests {
                 id: "a-1".into(),
                 at: 1,
                 body: "oi, bora jogar?".into(),
+                reply_to: None,
+            },
+            Frame::Text {
+                id: "a-3".into(),
+                at: 3,
+                body: "bora".into(),
+                reply_to: Some("b-1".into()),
+            },
+            Frame::Reactions {
+                id: "b-1".into(),
+                emojis: vec!["🔥".into(), "❤️".into()],
             },
             Frame::Ack { id: "a-1".into() },
             Frame::FileOffer {
@@ -113,6 +153,7 @@ mod tests {
             id: "x".into(),
             at: 0,
             body: "a".repeat(MAX_FRAME_BYTES),
+            reply_to: None,
         };
         assert!(write_frame(&mut Vec::new(), &grande).await.is_err());
         let mut falso = (MAX_FRAME_BYTES as u32 + 1).to_be_bytes().to_vec();
@@ -126,6 +167,40 @@ mod tests {
         let mut cortado = 10u32.to_be_bytes().to_vec();
         cortado.extend_from_slice(b"{\"ki");
         assert!(read_frame::<_, Frame>(&mut cortado.as_slice()).await.is_err());
+    }
+
+    #[test]
+    fn tipo_desconhecido_e_ignorado_e_texto_antigo_sem_resposta_ainda_vale() {
+        // Um quadro de um app mais novo: este app ignora em vez de derrubar a conexão.
+        assert_eq!(parse_frame(serde_json::json!({"kind": "do-futuro", "x": 1})), None);
+        // Texto de um app antigo (sem `reply_to`).
+        assert_eq!(
+            parse_frame(serde_json::json!({"kind": "text", "id": "a", "at": 1, "body": "oi"})),
+            Some(Frame::Text {
+                id: "a".into(),
+                at: 1,
+                body: "oi".into(),
+                reply_to: None
+            })
+        );
+        // Sem resposta, o campo nem vai (app antigo lê igual).
+        let json = serde_json::to_value(Frame::Text {
+            id: "a".into(),
+            at: 1,
+            body: "oi".into(),
+            reply_to: None,
+        })
+        .unwrap();
+        assert!(json.get("replyTo").is_none() && json.get("reply_to").is_none());
+    }
+
+    #[test]
+    fn emoji_valido_e_curto_e_sem_espaco() {
+        assert!(valid_emoji("🔥"));
+        assert!(valid_emoji("👨‍👩‍👧‍👦"));
+        assert!(!valid_emoji(""));
+        assert!(!valid_emoji("oi tudo"));
+        assert!(!valid_emoji(&"a".repeat(MAX_EMOJI_BYTES + 1)));
     }
 
     #[test]
