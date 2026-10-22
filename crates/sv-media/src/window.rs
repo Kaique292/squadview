@@ -14,7 +14,7 @@
 //! da thread do vídeo: converte a textura NV12 direto no back buffer, centralizada e sem distorcer.
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Once, mpsc};
+use std::sync::{Arc, Mutex, Once, OnceLock, mpsc};
 use std::thread::JoinHandle;
 
 use sv_gpu::{Converter, Gpu, GpuFrame, Size, fit_inside};
@@ -52,6 +52,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, Result, w};
 
+use crate::composition::Layer;
+
 /// Onde o vídeo aparece.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowTarget {
@@ -59,6 +61,9 @@ pub enum WindowTarget {
     Standalone { title: String },
     /// Dentro da janela do app (`parent` é o HWND dela). Começa escondida até receber a posição.
     Embedded { parent: isize },
+    /// Desenhado por baixo da interface da janela `parent`, pelo DirectComposition (ADR 0021): a
+    /// interface fica por cima com mistura de verdade, sem recortes. Sem janela própria.
+    Composed { parent: isize },
 }
 
 /// O que o usuário fez dentro da área do vídeo embutida (na janela solta, a própria janela
@@ -116,6 +121,8 @@ struct Shared {
     hovering: AtomicBool,
     /// O último lugar pedido pela interface: reaplicado ao voltar do picture in picture.
     layout: Mutex<EmbeddedLayout>,
+    /// No modo [`WindowTarget::Composed`]: o vídeo por baixo da interface.
+    layer: OnceLock<Arc<Layer>>,
 }
 
 /// O que a interface pediu para a janela embutida (posição, visível e recortes).
@@ -184,6 +191,10 @@ impl WindowControl {
     /// Move e redimensiona a área do vídeo. Tamanho zero esconde.
     pub fn set_bounds(&self, b: Bounds) {
         self.shared.layout().bounds = b;
+        if let Some(layer) = self.shared.layer.get() {
+            layer.set_area(b);
+            return;
+        }
         let show = show_flag(b.width > 0 && b.height > 0);
         self.position(b.x, b.y, b.width as i32, b.height as i32, show);
     }
@@ -191,6 +202,10 @@ impl WindowControl {
     /// Esconde (ex.: um modal abriu por cima) ou mostra de novo, na última posição.
     pub fn set_visible(&self, visible: bool) {
         self.shared.layout().visible = visible;
+        if let Some(layer) = self.shared.layer.get() {
+            layer.set_visible(visible);
+            return;
+        }
         self.position(0, 0, 0, 0, show_flag(visible) | SWP_NOMOVE | SWP_NOSIZE);
     }
 
@@ -199,7 +214,11 @@ impl WindowControl {
     /// Vazio: o vídeo volta a ocupar a área toda. Não mexe no desenho (o swap chain continua igual).
     pub fn set_holes(&self, holes: &[Hole]) {
         holes.clone_into(&mut self.shared.layout().holes);
-        if self.shared.closed.load(Ordering::Relaxed) || self.shared.pip.load(Ordering::Relaxed) {
+        // Por baixo da interface, nada precisa de recorte: ela já aparece por cima.
+        if self.shared.layer.get().is_some()
+            || self.shared.closed.load(Ordering::Relaxed)
+            || self.shared.pip.load(Ordering::Relaxed)
+        {
             return;
         }
         // SAFETY: HWND vivo (não fechado).
@@ -222,6 +241,30 @@ impl WindowControl {
                 LPARAM(0),
             );
         }
+    }
+
+    /// Raio dos cantos do quadro (pixels físicos): o vídeo acompanha a borda arredondada. Só no modo
+    /// [`WindowTarget::Composed`].
+    pub fn set_corner_radius(&self, radius: u32) {
+        if let Some(layer) = self.shared.layer.get() {
+            layer.set_radius(radius);
+        }
+    }
+
+    /// Leva o vídeo para a janela `hwnd` (a do picture in picture, que o app abre) ou de volta para
+    /// a do app (`None`). Só no modo [`WindowTarget::Composed`]; devolve se deu.
+    pub fn set_host(&self, hwnd: Option<isize>) -> bool {
+        self.shared.layer.get().is_some_and(|layer| layer.move_to(hwnd).is_ok())
+    }
+
+    /// O HWND da janela do vídeo (0 no modo [`WindowTarget::Composed`], que não tem janela).
+    pub fn hwnd(&self) -> isize {
+        self.hwnd
+    }
+
+    /// O vídeo por baixo da interface (modo [`WindowTarget::Composed`]).
+    pub fn layer(&self) -> Option<&Arc<Layer>> {
+        self.shared.layer.get()
     }
 
     /// Recebe os eventos de tela cheia e de picture in picture (substitui o callback anterior).
@@ -262,6 +305,15 @@ impl VideoWindow {
     /// até a interface informar a posição.
     pub fn open(target: WindowTarget, video: Size) -> Result<Self> {
         let shared = Arc::new(Shared::default());
+        if let WindowTarget::Composed { parent } = target {
+            // Sem janela própria: o vídeo é um visual na árvore da janela do app.
+            let _ = shared.layer.set(Layer::new(parent)?);
+            return Ok(Self {
+                hwnd: 0,
+                shared,
+                thread: None,
+            });
+        }
         shared
             .embedded
             .store(matches!(target, WindowTarget::Embedded { .. }), Ordering::Relaxed);
@@ -293,6 +345,17 @@ impl VideoWindow {
 
     /// Cria o renderer que desenha nesta superfície.
     pub fn renderer(&self, gpu: &Gpu) -> Result<Renderer> {
+        if let Some(layer) = self.shared.layer.get() {
+            return Ok(Renderer {
+                gpu: gpu.clone(),
+                swapchain: layer.swapchain(gpu)?,
+                converter: None,
+                size: Size::new(1, 1),
+                shared: self.shared.clone(),
+                layer: Some(layer.clone()),
+                video: Size::new(0, 0),
+            });
+        }
         // SAFETY: criação da fábrica DXGI e da swapchain para um HWND vivo.
         let swapchain = unsafe {
             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
@@ -318,6 +381,8 @@ impl VideoWindow {
             converter: None,
             size: Size::new(1, 1),
             shared: self.shared.clone(),
+            layer: None,
+            video: Size::new(0, 0),
         })
     }
 }
@@ -325,6 +390,12 @@ impl VideoWindow {
 impl Drop for VideoWindow {
     fn drop(&mut self) {
         self.shared.dropping.store(true, Ordering::Relaxed);
+        if let Some(layer) = self.shared.layer.get() {
+            // Sem janela para fechar: o vídeo some na hora (quem ainda guarda o controle não o traz de volta).
+            self.shared.closed.store(true, Ordering::Relaxed);
+            layer.set_visible(false);
+            return;
+        }
         if !self.is_closed() {
             // SAFETY: o HWND ainda existe (não foi fechado); a mensagem é tratada na thread dele.
             unsafe {
@@ -344,6 +415,11 @@ pub struct Renderer {
     converter: Option<Converter>,
     size: Size,
     shared: Arc<Shared>,
+    /// No modo [`WindowTarget::Composed`]: o swap chain tem o tamanho da imagem, e o visual vai
+    /// para onde ela fica.
+    layer: Option<Arc<Layer>>,
+    /// O tamanho do vídeo do último quadro (só avisa a camada quando muda).
+    video: Size,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -361,10 +437,20 @@ impl Renderer {
         // Para o picture in picture manter a proporção do vídeo (só dois números, sem alocar).
         self.shared.video_width.store(frame.size.width, Ordering::Relaxed);
         self.shared.video_height.store(frame.size.height, Ordering::Relaxed);
-        let window = Size::new(
-            self.shared.width.load(Ordering::Relaxed),
-            self.shared.height.load(Ordering::Relaxed),
-        );
+        let window = match &self.layer {
+            Some(layer) => {
+                if frame.size != self.video {
+                    self.video = frame.size;
+                    layer.set_video(frame.size);
+                }
+                // O quadro inteiro: a imagem vai centralizada dentro dele (o conversor pinta as faixas).
+                layer.image_size().unwrap_or(Size::new(0, 0))
+            }
+            None => Size::new(
+                self.shared.width.load(Ordering::Relaxed),
+                self.shared.height.load(Ordering::Relaxed),
+            ),
+        };
         if window.width == 0 || window.height == 0 {
             return Ok(());
         }
@@ -430,7 +516,8 @@ fn window_thread(target: WindowTarget, video: Size, shared: Arc<Shared>, ready: 
                     None,
                 ),
                 // Filha da janela do app, sem borda e escondida até a interface dizer onde ficar.
-                WindowTarget::Embedded { parent } => (
+                // O modo de composição não abre janela (não chega aqui); fica junto do embutido.
+                WindowTarget::Embedded { parent } | WindowTarget::Composed { parent } => (
                     HSTRING::new(),
                     WS_CHILD | WS_CLIPSIBLINGS,
                     0,
@@ -1270,6 +1357,135 @@ mod tests {
 
         drop(video);
         drop(app);
+    }
+
+    /// Um vídeo por baixo da interface da janela `app`. `None` se esta máquina não tem
+    /// DirectComposition (servidor sem área de trabalho): o teste é pulado.
+    fn composto(app: &VideoWindow) -> Option<VideoWindow> {
+        match VideoWindow::open(WindowTarget::Composed { parent: app.hwnd }, Size::new(1920, 1080)) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("pulado: sem DirectComposition aqui ({e})");
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn video_por_baixo_da_interface_fica_so_na_area_da_imagem() {
+        let app = solta("SquadView (app, composição)");
+        let Some(video) = composto(&app) else { return };
+        let control = video.control();
+        let layer = control.layer().expect("modo de composição").clone();
+        // Sem área nem quadro ainda: nada aparece.
+        assert_eq!(layer.placed(), None);
+        let quadro = Bounds {
+            x: 10,
+            y: 20,
+            width: 640,
+            height: 360,
+        };
+        control.set_bounds(quadro);
+        assert_eq!(layer.placed(), None, "sem quadro do vídeo ainda");
+        layer.set_video(Size::new(1920, 1080));
+        assert_eq!(layer.placed(), Some((app.hwnd, quadro)));
+        control.set_corner_radius(8);
+
+        // Imagem estreita: o vídeo continua cobrindo o quadro (as faixas ficam dentro dele).
+        layer.set_video(Size::new(1000, 1000));
+        assert_eq!(layer.placed(), Some((app.hwnd, quadro)));
+
+        // Esconder e mostrar; tamanho zero também esconde.
+        control.set_visible(false);
+        assert_eq!(layer.placed(), None);
+        control.set_visible(true);
+        assert!(layer.placed().is_some());
+        control.set_bounds(Bounds::default());
+        assert_eq!(layer.placed(), None);
+        control.set_bounds(quadro);
+
+        // Recortes e o picture in picture antigo não fazem nada aqui (a interface já fica por cima).
+        control.set_holes(&[Hole {
+            bounds: quadro,
+            radius: 4,
+        }]);
+        control.set_pip(true);
+        assert!(layer.placed().is_some());
+        assert!(!video.is_closed());
+
+        // Descartar o vídeo tira da tela, mesmo com o controle ainda guardado.
+        drop(video);
+        assert_eq!(layer.placed(), None);
+        control.set_visible(true);
+        assert!(format!("{layer:?}").contains("Layer"));
+        drop(app);
+    }
+
+    #[test]
+    fn video_por_baixo_vai_para_a_janela_do_picture_in_picture_e_volta() {
+        let app = solta("SquadView (app, PiP composto)");
+        let pip = solta("SquadView (PiP composto)");
+        let Some(video) = composto(&app) else { return };
+        let Some(outro) = composto(&app) else { return };
+        let control = video.control();
+        let layer = control.layer().unwrap().clone();
+        let lugar = Bounds {
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 180,
+        };
+        control.set_bounds(lugar);
+        layer.set_video(Size::new(1920, 1080));
+        // Dois vídeos na mesma janela.
+        outro.control().set_bounds(lugar);
+        outro.control().layer().unwrap().set_video(Size::new(1280, 720));
+        assert!(outro.control().layer().unwrap().placed().is_some());
+
+        assert!(control.set_host(Some(pip.hwnd)));
+        assert_eq!(layer.placed().map(|(h, _)| h), Some(pip.hwnd));
+        // De volta para o app, no mesmo lugar.
+        assert!(control.set_host(None));
+        assert_eq!(layer.placed(), Some((app.hwnd, lugar)));
+        assert!(control.set_host(None), "já está no app: não muda nada");
+        // O outro vídeo não foi afetado.
+        assert!(outro.control().layer().unwrap().placed().is_some());
+
+        // Uma janela solta (sem composição) não tem para onde levar.
+        assert!(!app.control().set_host(Some(pip.hwnd)));
+        assert!(app.control().layer().is_none());
+        app.control().set_corner_radius(4);
+        drop((video, outro, pip, app));
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]
+    fn renderer_por_baixo_desenha_do_tamanho_do_quadro() {
+        let gpu = Gpu::new().unwrap();
+        let app = solta("SquadView (app, render composto)");
+        let video = composto(&app).expect("DirectComposition");
+        let control = video.control();
+        control.set_bounds(Bounds {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 360,
+        });
+        let mut renderer = video.renderer(&gpu).expect("swap chain de composição");
+        // O swap chain tem o tamanho do quadro, qualquer que seja a imagem.
+        renderer.present(&nv12_frame(&gpu, Size::new(512, 512))).unwrap();
+        assert_eq!(renderer.size, Size::new(640, 360));
+        control.set_bounds(Bounds {
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 180,
+        });
+        renderer.present(&nv12_frame(&gpu, Size::new(1920, 1080))).unwrap();
+        assert_eq!(renderer.size, Size::new(320, 180));
+        // Escondido: não desenha nada.
+        control.set_visible(false);
+        renderer.present(&nv12_frame(&gpu, Size::new(1920, 1080))).unwrap();
     }
 
     fn nv12_frame(gpu: &Gpu, size: Size) -> GpuFrame {
