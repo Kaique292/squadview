@@ -5,11 +5,11 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::json;
-use sv_session::{Bounds, DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, SpeakingEffect, WindowEvent};
+use sv_session::{Bounds, DiscordUser, JoinAs, Member, RemoteView, Room, RoomUpdate, SpeakingEffect};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
-use crate::preview::{self, FULLSCREEN_EVENT};
+use crate::preview;
 
 /// Lista de membros (nós primeiro).
 pub const MEMBERS_EVENT: &str = "room-members";
@@ -452,18 +452,6 @@ pub(crate) fn close_pip<R: Runtime>(app: &AppHandle<R>, member_id: Option<&str>)
     }
 }
 
-/// Repassa a todas as lives assistidas o que vale para todos os vídeos: escondidos por um modal e
-/// os recortes dos menus (a posição de cada uma vai pelo `set_watch_bounds`).
-pub fn apply_layout<R: Runtime>(app: &AppHandle<R>, layout: &preview::Layout) -> bool {
-    let state = app.state::<RoomState>();
-    let running = lock(&state);
-    for w in running.watching.values() {
-        w.view.set_video_hidden(layout.hidden);
-        w.view.set_video_holes(layout.holes.clone());
-    }
-    !running.watching.is_empty()
-}
-
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct WatchEnded {
@@ -613,30 +601,6 @@ fn start_watching<R: Runtime>(
             });
         },
     );
-    let event_app = app.clone();
-    let source = member.id.clone();
-    view.on_video_event(move |event| {
-        if preview::emit_pointer(&event_app, Some(&source), event) {
-            return;
-        }
-        let kind = match event {
-            WindowEvent::ToggleFullscreen => "toggle",
-            WindowEvent::ExitFullscreen => "exit",
-            // Dois cliques, Esc ou fechar no picture in picture: a interface traz o vídeo de volta.
-            WindowEvent::ExitPip => {
-                let _ = event_app.emit(PIP_EVENT, json!({ "pip": false, "source": source }));
-                return;
-            }
-            _ => return,
-        };
-        let _ = event_app.emit(FULLSCREEN_EVENT, json!({ "kind": kind, "source": source }));
-    });
-    // A posição chega quando o quadro da live aparecer na sala (`set_watch_bounds`); até lá, fora
-    // da tela. Escondido por um modal e os recortes valem desde já.
-    let layout = preview::layout(app);
-    view.set_video_hidden(layout.hidden);
-    view.set_video_holes(layout.holes);
-
     app.state::<Diagnostics>().write(
         "watch-start",
         &json!({ "member": member.name, "desc": format!("{desc:?}"), "path": path.label() }),
@@ -730,7 +694,6 @@ mod tests {
         set_watch_bounds(state(), "aa".into(), 0, 0, 320, 180, Some(8));
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
-        assert!(!apply_layout(t.handle(), &preview::Layout::default()));
         tauri::async_runtime::block_on(room_stop_watching(t.handle().clone(), "aa".into())).unwrap();
         tauri::async_runtime::block_on(room_leave(t.handle().clone())).unwrap();
     }

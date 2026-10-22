@@ -2,7 +2,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Eye, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useFriendsStore } from "../friends/friends-store";
-import { stopInsideMenu, useOverlayMenu } from "../ui/overlay";
+import { stopInsideMenu } from "../ui/overlay";
 import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
 
 const DEFAULT_PEER = { volume: 100, muted: false };
@@ -19,11 +19,10 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
   const [renaming, setRenaming] = useState(false);
   const { member } = props;
   // O vídeo nativo fica por cima da interface: some enquanto o menu está aberto.
-  const onOpenChange = useOverlayMenu();
 
   return (
     <>
-      <ContextMenu.Root onOpenChange={onOpenChange}>
+      <ContextMenu.Root>
         <ContextMenu.Trigger asChild>{props.children}</ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content

@@ -77,7 +77,7 @@ Em três PRs, cada um com testes e medição. O app continua funcionando entre u
      - clique, dois cliques e botão direito ficam com os eventos normais da página.
    - Testes: os da interface sem os recortes e um de ponta a ponta no app em Rust com o `MockRuntime`.
    - Medição com a `perf-check` antes do PR (1 e 4 lives).
-3. **Limpeza:** apagar o caminho da janela filha (`WindowTarget::Embedded`, `apply_holes`, o tratamento de mouse da janela), o que ficou sem uso na interface (`data-video-hole`, `watchVideoHoles`, `measureHoles`, `video-pointer`) e os comandos `set_video_holes`, `set_video_hidden` e o repasse do mouse (`emit_pointer`), e atualizar `docs/arquitetura.md`. A janela solta (`WindowTarget::Standalone`) fica para o exemplo de terminal.
+3. **Limpeza:** apagar o caminho da janela filha (`WindowTarget::Embedded`, `apply_holes`, o tratamento de mouse da janela), o que ficou sem uso na interface (`data-video-hole`, `watchVideoHoles`, `measureHoles`, `video-pointer`) os comandos `set_video_holes`, `set_video_hidden` e o repasse do mouse (`emit_pointer`), os eventos que vinham da janela do vídeo (`WindowEvent`: dois cliques, F11, Esc, mouse e o picture in picture antigo; agora é a página que recebe tudo isso), e atualizar `docs/arquitetura.md`. A janela solta (`WindowTarget::Standalone`) fica para o exemplo de terminal.
 
 ## Alternativas consideradas
 

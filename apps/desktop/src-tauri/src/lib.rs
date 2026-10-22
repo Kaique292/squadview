@@ -182,8 +182,6 @@ pub fn run() {
             preview::start_preview,
             preview::set_preview_listening,
             preview::set_video_bounds,
-            preview::set_video_hidden,
-            preview::set_video_holes,
             preview::set_fullscreen,
             room::room_join,
             room::room_leave,

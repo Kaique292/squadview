@@ -19,7 +19,6 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { Avatar } from "../ui/Avatar";
-import { holdOverlay } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { inTauri } from "../ui/tauri-env";
 import { Tooltip } from "../ui/Tooltip";
@@ -125,7 +124,6 @@ export function ChatView(props: { friend: string }) {
     document.getElementById(`mensagem-${id}`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
     setFlash(id);
   };
-  useEffect(() => holdOverlay(), []);
   // Mensagem nova (ou a prévia de uma foto que acabou de carregar e cresceu a conversa): rola até o fim.
   // Sem devolver nada: no Chromium novo o `scrollIntoView` devolve uma Promise, e o React a
   // chamaria como limpeza do efeito ao fechar a conversa.

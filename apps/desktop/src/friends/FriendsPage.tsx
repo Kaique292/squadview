@@ -1,12 +1,11 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Check, Loader2, LogIn, MessageCircle, MoreVertical, UserPlus, Users, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, useAccountStore } from "../account/account-store";
 import { useDmStore } from "../dm/dm-store";
 import { useRoomStore } from "../room/room-store";
 import { Avatar } from "../ui/Avatar";
-import { holdOverlay, useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
 import { type Friend, type Person, presenceText, useFriendsStore, useInMyRoom } from "./friends-store";
@@ -27,8 +26,6 @@ export function FriendsPage() {
   const profile = useAccountStore((s) => s.profile);
   const incoming = useFriendsStore((s) => s.incoming);
   const [tab, setTab] = useState<Tab>("online");
-  // O vídeo nativo fica por cima da interface: some enquanto a página está aberta.
-  useEffect(() => holdOverlay(), []);
 
   return (
     <section aria-label="Amigos" className="flex h-full w-full flex-col text-left">
@@ -196,7 +193,6 @@ function FriendRow(props: { friend: Friend }) {
   const waitingFor = useFriendsStore((s) => s.waitingFor);
   const openChat = useDmStore((s) => s.openChat);
   const p = friend.presence;
-  const onMenuOpenChange = useOverlayMenu();
   return (
     <Row person={friend} online={p.online} detail={presenceText(p)}>
       {together ? (
@@ -228,7 +224,7 @@ function FriendRow(props: { friend: Friend }) {
           <UserPlus size={18} />
         </RoundAction>
       )}
-      <Menu.Root onOpenChange={onMenuOpenChange}>
+      <Menu.Root>
         <Menu.Trigger asChild>
           <button
             type="button"

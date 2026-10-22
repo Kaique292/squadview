@@ -21,7 +21,6 @@ import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { Avatar } from "../ui/Avatar";
-import { holdOverlay } from "../ui/overlay";
 import { SoundsSection } from "../sounds/SoundsSection";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Switch } from "../ui/Switch";
@@ -129,8 +128,6 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<Page>("voz");
   const [part, setPart] = useState<string | null>(null);
-  // O vídeo nativo fica por cima da interface: some enquanto as configurações estão abertas.
-  useEffect(() => (open ? holdOverlay() : undefined), [open]);
   // Subitem escolhido: rola até aquela parte da página (depois que ela aparece).
   useEffect(() => {
     if (part) document.getElementById(part)?.scrollIntoView?.({ behavior: "smooth", block: "start" });

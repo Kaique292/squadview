@@ -53,6 +53,15 @@ flowchart LR
 
 Regra de dependência: `sv-core` não depende de ninguém; `sv-mesh` não depende de `sv-net` (recebe medições e devolve decisões), para poder ser testado sem rede.
 
+## Como o vídeo aparece na janela
+
+O vídeo é desenhado **por baixo da interface**, pelo DirectComposition ([ADR 0021](adr/0021-video-por-baixo-da-interface.md)). Não há janela própria para o vídeo:
+
+- **Visual por live:** cada live (a nossa e cada uma que assistimos) é um visual com um swap chain de composição. Os visuais ficam numa árvore presa à janela do app, abaixo da WebView2. A conversão NV12 para a tela acontece na GPU, no back buffer desse swap chain.
+- **Página transparente:** a janela do app e a WebView2 são transparentes. Onde há live passando, os fundos da página (`Backdrop`) abrem um buraco do tamanho e dos cantos do quadro, e o vídeo aparece. Selos, menus, sombras e animações ficam por cima dele, com mistura de verdade.
+- **Posição:** a interface informa a área de cada quadro em pixels físicos (`useVideoSlot`), e o visual acompanha. O mouse e o teclado são da página.
+- **Picture in picture:** é outra janela do app (`pip`), pequena e sempre no topo. O visual da live muda para a árvore dela, e a página dessa janela mostra os controles.
+
 ## Configuração de encode para baixa latência
 
 - Sem B-frames, GOP longo com keyframe sob demanda (quando alguém entra ou perde pacotes demais).

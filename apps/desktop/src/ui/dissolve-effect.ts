@@ -145,7 +145,7 @@ interface DissolveState {
 let nextId = 1;
 /** Último lugar de cada vídeo na tela (px da interface), guardado pelo `useVideoSlot`. */
 const lastVideoRects = new Map<string, Rect>();
-/** A chave da nossa live (a mesma do `video-pointer`; repetida aqui para não criar um ciclo). */
+/** A chave da nossa live (a mesma do `video-key`; repetida aqui para não criar um ciclo). */
 const OWN = "transmissao:minha";
 
 export function rememberVideoRect(rect: Rect, of = OWN) {

@@ -1,7 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { type ReactNode, useEffect } from "react";
-import { holdOverlay } from "./overlay";
+import type { ReactNode } from "react";
 import { ScrollArea } from "./ScrollArea";
 
 interface ModalProps {
@@ -25,8 +24,6 @@ interface ModalProps {
  * entrada e saída, foco preso dentro dele e fechar com Esc ou clicando fora.
  */
 export function Modal(props: ModalProps) {
-  // O vídeo nativo fica por cima da interface: some enquanto o modal estiver aberto.
-  useEffect(() => (props.open ? holdOverlay() : undefined), [props.open]);
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       {props.trigger && <Dialog.Trigger asChild>{props.trigger}</Dialog.Trigger>}

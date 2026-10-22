@@ -104,7 +104,6 @@ function ToastCard(props: {
       role={urgent ? "alert" : "status"}
       aria-label={label}
       // O vídeo nativo abre um buraco aqui: o aviso aparece por cima da live.
-      data-video-hole
       style={{ ...props.style, "--toast-color": color } as CSSProperties}
       className={`pointer-events-auto absolute inset-x-0 top-0 origin-top overflow-hidden rounded-card border border-white/10 ${
         // Os de trás ficam um tom mais claro: a pilha fica visível atrás do da frente.
