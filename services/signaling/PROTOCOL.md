@@ -46,14 +46,15 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Retomada depois de uma queda (ADR 0022)
 
+- O app que sabe voltar manda `"resumable":true` no `join` (quem manda `resume` também conta). **Só esses ganham vaga guardada**: um app que não manda (até a 0.10) sai da sala na hora quando cai, como antes, porque voltaria com outro id e a vaga guardada viraria um "clone" dele na lista.
 - O `welcome` traz `"resume":"<token>"`, com 32 caracteres hexadecimais. É secreto: só quem recebeu conhece.
 - Quem cai sem `leave` continua na sala para os outros por **60 s**, e entra no `members` do `welcome` de quem chega nesse meio-tempo. Um `signal` para essa pessoa se perde sem erro.
-- Para voltar, o app manda `"resume":{"id":"<peerId de antes>","token":"<token>"}` no `join`. Se o token confere, o prazo não venceu e (para conferidos) a conta é a mesma, o app volta com o **mesmo** `you`. Os outros recebem só um `member-updated`, e o membro mantém `live`, `muted` etc. até o próximo `status`. Caso contrário, entra como membro novo.
+- Para voltar, o app manda `"resume":{"id":"<peerId de antes>","token":"<token>"}` no `join`. Se o token confere, o prazo não venceu e (para conferidos) a conta é a mesma, o app volta com o **mesmo** `you`. Os outros recebem só um `member-updated`, e o membro mantém `live`, `muted` etc. até o próximo `status`. Sem token (o app foi reaberto e perdeu o token), um membro **conferido** volta para a vaga da mesma conta do Discord, se ela ainda estiver no prazo. Caso contrário, entra como membro novo.
 - Se a conexão antiga ainda estiver aberta (a queda ainda não chegou ao servidor), ela é fechada com o código 4410 (`replaced`) e ninguém sai da sala.
 - Quem não volta no prazo sai: os outros recebem `member-left`.
 - `leave` e a desconexão por erro tiram o membro na hora, sem prazo.
 - As vagas ficam guardadas no Durable Object e sobrevivem ao reinício da sala.
-- Os campos entraram na 0.11 sem mudar a versão do protocolo: apps antigos ignoram o token e voltam como membros novos.
+- Os campos entraram na 0.11 sem mudar a versão do protocolo: apps antigos ignoram o token, não ganham vaga guardada e voltam como membros novos, como antes.
 
 O nome da sala fica guardado nas conexões de quem está nela: quando o último membro sai, a sala esquece o nome. `room`, `rename`, `room-updated` e os campos `muted`/`deafened` entraram depois da versão 0.1.0 do app, sem mudar a versão do protocolo: apps antigos não mandam `room` e ignoram `room-updated`.
 

@@ -93,9 +93,17 @@ function send(c: FakeConnection, msg: unknown) {
   room.message(wrap(c), JSON.stringify(msg));
 }
 
+/** Entra como o app atual, que sabe voltar para a vaga depois de uma queda (ADR 0022). */
 function join(name: string) {
   const c = connect();
-  send(c, { type: "join", name, protocol: 1 });
+  send(c, { type: "join", name, protocol: 1, resumable: true });
+  return c;
+}
+
+/** Entra como um app até a 0.10, que não sabe voltar para a vaga (nem manda `resumable`). */
+function joinOld(name: string, verified: string | null = null) {
+  const c = connect();
+  room.message(wrap(c), JSON.stringify({ type: "join", name, protocol: 1 }), verified);
   return c;
 }
 
@@ -108,7 +116,7 @@ function tokenOf(c: FakeConnection) {
 /** Entra de novo por uma conexão nova, pedindo a vaga de `old`. */
 function resume(old: FakeConnection, name = "Beto", token = tokenOf(old)) {
   const c = connect();
-  send(c, { type: "join", name, protocol: 1, resume: { id: idOf(old), token } });
+  send(c, { type: "join", name, protocol: 1, resumable: true, resume: { id: idOf(old), token } });
   return c;
 }
 
@@ -640,7 +648,11 @@ describe("voltar depois de uma queda (ADR 0022)", () => {
   it("conferido só volta para a vaga da própria conta", () => {
     join("Ana");
     const beto = connect();
-    room.message(wrap(beto), JSON.stringify({ type: "join", name: "Beto", protocol: 1 }), "222222222222222222");
+    room.message(
+      wrap(beto),
+      JSON.stringify({ type: "join", name: "Beto", protocol: 1, resumable: true }),
+      "222222222222222222",
+    );
     drop(beto);
     const other = connect();
     room.message(
@@ -713,5 +725,85 @@ describe("voltar depois de uma queda (ADR 0022)", () => {
     send(caio, { type: "nada" });
     expect(ana.last()).toEqual({ type: "member-left", id: idOf(caio) });
     expect(seats[idOf(caio)]).toBeUndefined();
+  });
+});
+
+// Regressões do "clone" (DK aparecendo duas vezes, AO VIVO): o Worker da ADR 0022 guardava a vaga de
+// apps 0.10, que não sabem voltar para ela e entram de novo com outro id.
+describe("sem clone de quem sai e volta", () => {
+  function drop(c: FakeConnection) {
+    room.closed(wrap(c));
+    c.close(1006, "caiu");
+  }
+
+  it("app antigo que cai (ou sai sem leave) sai da sala na hora, como antes da retomada", () => {
+    const ana = join("Ana");
+    const dk = joinOld("DK");
+    send(dk, { type: "status", live: true, muted: false, deafened: false });
+    drop(dk);
+    expect(ana.last()).toEqual({ type: "member-left", id: idOf(dk) });
+    expect(wakes).toEqual([]);
+    // Quem chega depois não vê ninguém a mais.
+    expect(join("Caio").last()).toMatchObject({ members: [{ name: "Ana" }] });
+  });
+
+  it("app antigo que volta não deixa clone na lista", () => {
+    const ana = join("Ana");
+    const dk = joinOld("DK");
+    drop(dk);
+    const back = joinOld("DK");
+    const caio = join("Caio");
+    const names = (caio.last() as { members: { name: string }[] }).members.map((m) => m.name);
+    expect(names.sort()).toEqual(["Ana", "DK"]);
+    expect(ana.sent.filter((m) => m.type === "member-left")).toEqual([{ type: "member-left", id: idOf(dk) }]);
+    expect(idOf(back)).not.toBe(idOf(dk));
+  });
+
+  it("app reaberto com a mesma conta conferida retoma a vaga que caiu, sem token", () => {
+    const ana = join("Ana");
+    const dk = connect();
+    room.message(
+      wrap(dk),
+      JSON.stringify({ type: "join", name: "DK", protocol: 1, resumable: true }),
+      "333333333333333333",
+    );
+    drop(dk);
+    const before = ana.sent.length;
+    const again = connect();
+    room.message(
+      wrap(again),
+      JSON.stringify({ type: "join", name: "DK", protocol: 1, resumable: true }),
+      "333333333333333333",
+    );
+    expect(idOf(again)).toBe(idOf(dk));
+    expect(ana.sent.slice(before).map((m) => m.type)).toEqual(["member-updated"]);
+  });
+
+  it("outra conta não pega a vaga de quem caiu", () => {
+    join("Ana");
+    const dk = connect();
+    room.message(
+      wrap(dk),
+      JSON.stringify({ type: "join", name: "DK", protocol: 1, resumable: true }),
+      "333333333333333333",
+    );
+    drop(dk);
+    const other = joinOld("DK", "444444444444444444");
+    expect(idOf(other)).not.toBe(idOf(dk));
+  });
+
+  it("alarme que dispara antes do prazo reagenda, e a vaga sai na hora certa", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    drop(beto);
+    const deadline = RESUME_GRACE_MS;
+    now = deadline - 5;
+    wakes = [];
+    room.expire();
+    expect(wakes).toEqual([deadline]);
+    expect(ana.last()).not.toMatchObject({ type: "member-left" });
+    now = deadline;
+    room.expire();
+    expect(ana.last()).toEqual({ type: "member-left", id: idOf(beto) });
   });
 });

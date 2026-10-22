@@ -129,6 +129,8 @@ enum Outgoing<'a> {
         /// Voltando de uma queda: pede a mesma vaga (ADR 0022).
         #[serde(skip_serializing_if = "Option::is_none")]
         resume: Option<&'a Resume>,
+        /// Sabemos voltar para a vaga: só assim a sala a guarda quando a conexão cai (ADR 0022).
+        resumable: bool,
     },
     Status {
         live: bool,
@@ -355,6 +357,7 @@ impl RoomClient {
             discord,
             session,
             resume,
+            resumable: true,
         })
         .expect("json");
         write
@@ -555,10 +558,11 @@ mod tests {
             discord: None,
             session: None,
             resume: None,
+            resumable: true,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
-        assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1}"#);
+        assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1,"resumable":true}"#);
         let creating = serde_json::to_string(&Outgoing::Join {
             name: "Ana",
             protocol: 1,
@@ -566,9 +570,13 @@ mod tests {
             discord: None,
             session: None,
             resume: None,
+            resumable: true,
         })
         .unwrap();
-        assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
+        assert_eq!(
+            creating,
+            r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera","resumable":true}"#
+        );
         let back = Resume {
             id: "aa".into(),
             token: "ff".into(),
@@ -580,11 +588,12 @@ mod tests {
             discord: None,
             session: None,
             resume: Some(&back),
+            resumable: true,
         })
         .unwrap();
         assert_eq!(
             resuming,
-            r#"{"type":"join","name":"Ana","protocol":1,"resume":{"id":"aa","token":"ff"}}"#
+            r#"{"type":"join","name":"Ana","protocol":1,"resume":{"id":"aa","token":"ff"},"resumable":true}"#
         );
         assert!(!format!("{back:?}").contains("ff"), "o token não vai para o registro");
         assert_eq!(
