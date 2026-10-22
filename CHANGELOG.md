@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.0](https://github.com/Kaique292/squadview/compare/v0.9.0...v0.10.0) (2026-10-22)
+
+
+### ✨ Novidades
+
+* **app:** mostra a live por baixo da interface, com controles no picture in picture ([#81](https://github.com/Kaique292/squadview/issues/81)) ([06bcac8](https://github.com/Kaique292/squadview/commit/06bcac8be4e083ef053ec96b577dd34735d888d8))
+* **app:** reações e respostas nas conversas, com a hora como no Discord ([#80](https://github.com/Kaique292/squadview/issues/80)) ([7b062a1](https://github.com/Kaique292/squadview/commit/7b062a1be6d17cfdb189e5b4cadb7a90d0db3f04))
+* **ui:** sala como a do Discord, com espectadores no topo e a barra embaixo ([#79](https://github.com/Kaique292/squadview/issues/79)) ([1be8a58](https://github.com/Kaique292/squadview/commit/1be8a5879ad868146ed246fd77a41ecb4783a686))
+
+
+### ♻️ Melhorias internas
+
+* **media:** apaga o vídeo em janela por cima da interface ([#82](https://github.com/Kaique292/squadview/issues/82)) ([a9c01b9](https://github.com/Kaique292/squadview/commit/a9c01b997dca4b8495d3fee747f3d8378a6351ae))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e o roadmap para a versão 0.10 ([#83](https://github.com/Kaique292/squadview/issues/83)) ([e362200](https://github.com/Kaique292/squadview/commit/e362200edf6590f560f90fd3fde2660be5845c5e))
+
 ## [0.9.0](https://github.com/Kaique292/squadview/compare/v0.8.0...v0.9.0) (2026-10-21)
 
 
