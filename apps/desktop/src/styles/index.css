@@ -428,3 +428,11 @@ body {
   outline: 2px solid var(--color-brand);
   outline-offset: 4px;
 }
+
+/* Rolagem sem barra (a faixa de quadros da sala rola com a roda do mouse, como no Discord). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
