@@ -76,3 +76,7 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 | `Nack`            | filho → pai       | sequências perdidas                                 |
 | `KeyframeRequest` | membro → streamer | —                                                   |
 | `Bye`             | membro → sala     | saída limpa                                         |
+
+### Fliperama (ADR 0023)
+
+Fora da árvore de vídeo: o jogador abre uma conexão QUIC direta com o host (ALPN `squadview-arcade/1`), aceita só com vaga dada pelo host. Cada datagrama leva o estado completo do controle (`[tipo][seq][host_us][PadState]`), mandado quando muda e a cada 100 ms parado. A vaga é combinada pela sinalização (`arcade-join`, `arcade-seat`, `arcade-deny`, `arcade-leave`). Detalhes em [fliperama.md](fliperama.md).
