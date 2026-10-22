@@ -8,6 +8,7 @@ import {
   PROTOCOL_VERSION,
   RATE_LIMIT_MESSAGES,
   RATE_LIMIT_WINDOW_MS,
+  type Resume,
   type ServerMessage,
 } from "./protocol";
 
@@ -42,6 +43,24 @@ interface PendingRequest {
 /** Quanto tempo um pedido de entrada espera resposta. */
 export const JOIN_REQUEST_TTL_MS = 60_000;
 
+/**
+ * Quanto tempo a vaga de quem caiu espera ele voltar (ADR 0022). Cobre o app perceber a queda
+ * (até 45 s sem resposta) e as primeiras tentativas de voltar; depois disso, ele sai da sala.
+ */
+export const RESUME_GRACE_MS = 60_000;
+
+/**
+ * A vaga de um membro: o que ele precisa para voltar com o mesmo id depois de uma queda.
+ * `until` é `null` enquanto ele está conectado, e o fim do prazo depois que caiu.
+ */
+export interface Seat {
+  token: string;
+  member: Member;
+  room: string | null;
+  verified: string | null;
+  until: number | null;
+}
+
 /** O que a sala faz fora dela: falar com o registro de cada pessoa e guardar pedidos. */
 export interface RoomEffects {
   /** Código desta sala. */
@@ -55,6 +74,11 @@ export interface RoomEffects {
   ): void;
   getRequests(): Record<string, PendingRequest>;
   putRequests(requests: Record<string, PendingRequest>): void;
+  /** Vagas dos membros, por id (ficam guardadas mesmo se a sala reiniciar). */
+  getSeats(): Record<string, Seat>;
+  putSeats(seats: Record<string, Seat>): void;
+  /** Pede um `expire` no instante `at` (no Durable Object, um alarme). */
+  wakeAt(at: number): void;
 }
 
 /** Sem registro de pessoas (testes antigos e Worker sem amigos). */
@@ -64,6 +88,9 @@ const NO_EFFECTS: RoomEffects = {
   joinAnswered: () => {},
   getRequests: () => ({}),
   putRequests: () => {},
+  getSeats: () => ({}),
+  putSeats: () => {},
+  wakeAt: () => {},
 };
 
 /** Uma conexão de WebSocket, vista pela lógica da sala. */
@@ -85,6 +112,8 @@ export const CLOSE = {
   invalid: 4400,
   versionMismatch: 4426,
   rateLimited: 4429,
+  /** O mesmo membro voltou por outra conexão (a antiga ficou pendurada). */
+  replaced: 4410,
 } as const;
 
 /**
@@ -97,6 +126,7 @@ export class RoomState {
     private readonly newPeerId: () => string,
     private readonly now: () => number = Date.now,
     private readonly effects: RoomEffects = NO_EFFECTS,
+    private readonly newToken: () => string = randomResumeToken,
   ) {}
 
   /** Uma conexão nova foi aceita. */
@@ -165,7 +195,8 @@ export class RoomState {
       case "signal": {
         const target = this.joined().find(([, m]) => m.id === msg.to && m.id !== me.id);
         if (!target) {
-          conn.send({ type: "error", code: "unknown-peer" });
+          // Quem caiu e ainda pode voltar não é desconhecido: o sinal só se perde (o app tenta de novo).
+          if (!this.ghosts().some((s) => s.member.id === msg.to)) conn.send({ type: "error", code: "unknown-peer" });
           return;
         }
         target[0].send({ type: "signal", from: me.id, payload: msg.payload });
@@ -198,20 +229,93 @@ export class RoomState {
         return;
       }
       case "leave":
-        conn.setAttachment({ ...attachment, member: null });
-        this.broadcast({ type: "member-left", id: me.id }, conn);
+        this.leave(conn);
         conn.close(CLOSE.normal, "leave");
         return;
     }
   }
 
-  /** A conexão caiu ou foi fechada pelo cliente. */
+  /**
+   * A conexão caiu ou foi fechada sem `leave`. O membro continua na sala para os outros até o fim
+   * do prazo (ADR 0022): se voltar com o token, nada muda para ninguém; se não, sai no `expire`.
+   */
   closed(conn: Connection): void {
     const attachment = conn.getAttachment();
     const me = attachment?.member;
     if (!attachment || !me) return;
     conn.setAttachment({ ...attachment, member: null });
+    const seats = this.effects.getSeats();
+    const seat = seats[me.id];
+    if (!seat) {
+      this.broadcast({ type: "member-left", id: me.id }, conn);
+      return;
+    }
+    seats[me.id] = {
+      ...seat,
+      member: me,
+      room: attachment.room ?? null,
+      verified: attachment.verified ?? null,
+      until: this.now() + RESUME_GRACE_MS,
+    };
+    this.effects.putSeats(seats);
+    this.scheduleExpiry(seats);
+  }
+
+  /**
+   * Fim do prazo: quem caiu e não voltou sai da sala. Vagas sem conexão e sem prazo (a sala
+   * reiniciou e as conexões sumiram sem aviso) ganham o prazo a partir de agora.
+   */
+  expire(): void {
+    const seats = this.effects.getSeats();
+    const connected = new Set(this.joined().map(([, m]) => m.id));
+    const now = this.now();
+    const left: string[] = [];
+    let changed = false;
+    for (const [id, seat] of Object.entries(seats)) {
+      if (connected.has(id)) continue;
+      if (seat.until === null) {
+        seats[id] = { ...seat, until: now + RESUME_GRACE_MS };
+        changed = true;
+      } else if (seat.until <= now) {
+        delete seats[id];
+        left.push(id);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    this.effects.putSeats(seats);
+    for (const id of left) {
+      for (const [c] of this.joined()) c.send({ type: "member-left", id });
+    }
+    this.scheduleExpiry(seats);
+  }
+
+  /** Sai da sala na hora (com `leave` ou por erro): sem prazo para voltar. */
+  private leave(conn: Connection): void {
+    const attachment = conn.getAttachment();
+    const me = attachment?.member;
+    if (!attachment || !me) return;
+    conn.setAttachment({ ...attachment, member: null });
+    const seats = this.effects.getSeats();
+    if (seats[me.id]) {
+      delete seats[me.id];
+      this.effects.putSeats(seats);
+    }
     this.broadcast({ type: "member-left", id: me.id }, conn);
+  }
+
+  /** Acorda a sala no fim do prazo mais próximo. */
+  private scheduleExpiry(seats: Record<string, Seat>): void {
+    const next = Math.min(...Object.values(seats).map((s) => s.until ?? Infinity));
+    if (Number.isFinite(next)) this.effects.wakeAt(next);
+  }
+
+  /** Quem caiu e ainda está no prazo para voltar (continua na sala para os outros). */
+  private ghosts(): Seat[] {
+    const connected = new Set(this.joined().map(([, m]) => m.id));
+    return Object.entries(this.effects.getSeats())
+      .filter(([id]) => !connected.has(id))
+      .map(([, seat]) => seat);
   }
 
   private join(conn: Connection, attachment: Attachment, msg: Extract<ClientMessage, { type: "join" }>): void {
@@ -222,26 +326,69 @@ export class RoomState {
       ? { id: verified, avatar: msg.discord?.id === verified ? msg.discord.avatar : null }
       : msg.discord;
     if (protocol !== PROTOCOL_VERSION) return this.fail(conn, "version-mismatch", CLOSE.versionMismatch);
+
+    const back = this.resumable(msg.resume, verified);
+    if (back) {
+      // A conexão antiga pode estar pendurada (a queda ainda não chegou aqui): esta a substitui.
+      for (const [c, m] of this.joined()) {
+        if (m.id !== back.member.id || c.key === conn.key) continue;
+        const a = c.getAttachment();
+        if (a) c.setAttachment({ ...a, member: null });
+        c.close(CLOSE.replaced, "replaced");
+      }
+    }
+    // Vagas que ficaram de uma sala reiniciada ganham prazo; as vencidas saem.
+    this.expire();
+
     // Sem limite de pessoas (ADR 0012): a sala aceita quem chegar.
     const others = this.joined().filter(([c]) => c.key !== conn.key);
+    const ghosts = this.ghosts().filter((s) => s.member.id !== back?.member.id);
 
-    const taken = new Set(others.map(([, m]) => m.id));
-    let id = this.newPeerId();
-    while (taken.has(id)) id = this.newPeerId();
+    let id = back?.member.id;
+    if (!id) {
+      const taken = new Set([...others.map(([, m]) => m.id), ...Object.keys(this.effects.getSeats())]);
+      id = this.newPeerId();
+      while (taken.has(id)) id = this.newPeerId();
+    }
 
     // Quem cria a sala (entra nela vazia) escolhe o nome; quem chega depois recebe o nome atual.
-    const current = others.map(([c]) => c.getAttachment()?.room).find((r) => r) ?? null;
-    const roomName = others.length === 0 ? room : current;
-    const member: Member = { id, name, live: false, muted: false, deafened: false, discord, verified: !!verified };
+    const current =
+      [...others.map(([c]) => c.getAttachment()?.room), ...ghosts.map((s) => s.room)].find((r) => r) ?? null;
+    const roomName = current ?? (others.length === 0 ? room : null);
+    // Quem volta continua como estava (ao vivo, mudo...) até o próximo `status` dele.
+    const member: Member = back
+      ? { ...back.member, name, discord, verified: !!verified }
+      : { id, name, live: false, muted: false, deafened: false, discord, verified: !!verified };
+    const token = back?.token ?? this.newToken();
+    const seats = this.effects.getSeats();
+    seats[id] = { token, member, room: roomName, verified, until: null };
+    this.effects.putSeats(seats);
+
     conn.setAttachment({ ...attachment, member, room: roomName });
-    conn.send({ type: "welcome", you: id, members: others.map(([, m]) => m), room: roomName });
-    this.broadcast({ type: "member-joined", member }, conn);
+    conn.send({
+      type: "welcome",
+      you: id,
+      members: [...others.map(([, m]) => m), ...ghosts.map((s) => s.member)],
+      room: roomName,
+      resume: token,
+    });
+    // Para os outros, quem voltou nunca saiu: só uma atualização (sem som de entrada).
+    this.broadcast(back ? { type: "member-updated", member } : { type: "member-joined", member }, conn);
 
     if (verified) this.meetOthers(conn, { id: verified, name, avatar: discord?.avatar ?? null });
     // Quem chega vê os pedidos de entrada ainda abertos.
     for (const [requestId, r] of Object.entries(this.liveRequests())) {
       conn.send({ type: "join-request", id: requestId, from: r.from });
     }
+  }
+
+  /** A vaga que `resume` pede, se o token confere, ainda está no prazo e é da mesma conta. */
+  private resumable(resume: Resume | null, verified: string | null): { member: Member; token: string } | null {
+    const seat = resume ? this.effects.getSeats()[resume.id] : undefined;
+    if (!seat || seat.token !== resume?.token) return null;
+    if (seat.until !== null && seat.until <= this.now()) return null;
+    if (seat.verified && seat.verified !== verified) return null;
+    return { member: seat.member, token: seat.token };
   }
 
   /** Recentes: quem é conferido "conhece" os outros conferidos da sala. */
@@ -315,8 +462,8 @@ export class RoomState {
 
   private fail(conn: Connection, code: ErrorCode, closeCode: number): void {
     conn.send({ type: "error", code });
-    // Quem é fechado por erro também sai da sala para os outros.
-    this.closed(conn);
+    // Quem é fechado por erro também sai da sala para os outros, sem prazo para voltar.
+    this.leave(conn);
     conn.close(closeCode, code);
   }
 
@@ -340,4 +487,9 @@ export class RoomState {
 export function randomPeerId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Token de retomada: 32 caracteres hex aleatórios (só quem recebeu o `welcome` conhece). */
+export function randomResumeToken(): string {
+  return randomPeerId() + randomPeerId();
 }

@@ -54,10 +54,11 @@ pub enum RoomUpdate {
     JoinRequestClosed(String),
     /// Erro da sala (cheia, versão diferente...).
     Error(String),
-    /// A conexão com a sinalização caiu; tentando voltar para a sala.
-    Reconnecting,
-    /// Voltamos para a sala depois de uma queda.
-    Reconnected,
+    /// A conexão com a sinalização caiu (`reason`, para o registro); tentando voltar para a sala.
+    Reconnecting { reason: String },
+    /// Voltamos para a sala depois de uma queda. `resumed`: com o mesmo id, sem ninguém ver a
+    /// gente sair (ADR 0022); `false` se a sala não guardou a vaga e entramos como membro novo.
+    Reconnected { resumed: bool },
     /// Perdemos a conexão com a sinalização e não deu para voltar.
     Disconnected,
 }
@@ -144,8 +145,8 @@ impl std::fmt::Debug for RoomUpdate {
                 .finish(),
             Self::JoinRequestClosed(id) => f.debug_tuple("JoinRequestClosed").field(id).finish(),
             Self::Error(e) => f.debug_tuple("Error").field(e).finish(),
-            Self::Reconnecting => f.write_str("Reconnecting"),
-            Self::Reconnected => f.write_str("Reconnected"),
+            Self::Reconnecting { reason } => f.debug_struct("Reconnecting").field("reason", reason).finish(),
+            Self::Reconnected { resumed } => f.debug_struct("Reconnected").field("resumed", resumed).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
         }
     }
@@ -155,8 +156,10 @@ type OnUpdate = Arc<dyn Fn(RoomUpdate) + Send + Sync>;
 
 /// Quanto esperar a resposta de quem transmite a um pedido para assistir.
 const WATCH_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
-/// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total).
-const RECONNECT_DELAYS_S: [u64; 8] = [1, 2, 4, 8, 15, 30, 30, 30];
+/// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total). A
+/// primeira é na hora: a maioria das quedas é só a conexão com a sala, com a internet funcionando,
+/// e a sala guarda a nossa vaga por pouco tempo (ADR 0022).
+const RECONNECT_DELAYS_S: [u64; 9] = [0, 1, 2, 4, 8, 15, 30, 30, 30];
 
 struct Inner {
     /// Trocado quando a sala reconecta depois de uma queda.
@@ -164,6 +167,8 @@ struct Inner {
     signaling_url: String,
     /// Sessão do SquadView, para entrar de novo como conferido ao reconectar.
     session: Mutex<Option<String>>,
+    /// Token do último `welcome`: volta para a mesma vaga se a sinalização cair (ADR 0022).
+    resume: Mutex<Option<String>>,
     code: String,
     peer: Peer,
     me: Mutex<Member>,
@@ -256,19 +261,26 @@ impl Room {
                 discord.as_ref(),
                 session.as_deref(),
                 room_name,
+                None,
             )
             .await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
-                Some(WireEvent::Joined { you, members, room }) => (you, members, room),
+                Some(WireEvent::Joined {
+                    you,
+                    members,
+                    room,
+                    resume,
+                }) => (you, members, room, resume),
                 Some(WireEvent::Error(code)) => return Err(error_message(&code).to_owned()),
                 _ => return Err("o serviço de salas não respondeu".to_owned()),
             };
-            let (you, members, room) = me;
+            let (you, members, room, resume) = me;
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
                 session: Mutex::new(session.clone()),
+                resume: Mutex::new(resume),
                 code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
@@ -492,8 +504,14 @@ impl Room {
     }
 }
 
+/// Quanto esperar o `leave` sair ao deixar a sala.
+const LEAVE_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
+
 impl Drop for Room {
     fn drop(&mut self) {
+        // Antes de o runtime parar: sem o `leave`, a sala guardaria a nossa vaga por 60 s, como se
+        // a gente tivesse caído (ADR 0022).
+        lock(&self.inner.client).leave(LEAVE_FLUSH);
         self.inner.broadcaster.close();
         self.inner.voice.close();
         self.inner.peer.close();
@@ -968,7 +986,8 @@ fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping, relay_
     }
 }
 
-async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
+/// Trata os eventos da sala até a conexão cair. Devolve o motivo da queda.
+async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) -> String {
     while let Some(event) = events.recv().await {
         match event {
             WireEvent::Joined { .. } => {}
@@ -1004,9 +1023,10 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 }
             }
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
-            WireEvent::Disconnected => return,
+            WireEvent::Disconnected(reason) => return reason,
         }
     }
+    "o cliente da sala parou".into()
 }
 
 /// Pede o endereço no repassador TURN (ADR 0014). Só serve a quem não conecta direto: quem pede
@@ -1027,18 +1047,19 @@ async fn enable_relay(inner: Arc<Inner>, credentials: sv_net::signaling::TurnCre
 /// Ouve a sala; se a sinalização cair, volta para ela e continua ouvindo.
 async fn run_session(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
     loop {
-        handle_events(inner.clone(), events).await;
-        match reconnect(&inner).await {
+        let reason = handle_events(inner.clone(), events).await;
+        match reconnect(&inner, reason).await {
             Some(next) => events = next,
             None => return,
         }
     }
 }
 
-/// A sinalização caiu: entra de novo na mesma sala, com o mesmo nome. As conexões QUIC (quem
+/// A sinalização caiu: entra de novo na mesma sala, com o mesmo nome e, se a sala ainda guarda a
+/// vaga, com o mesmo id (ADR 0022): para os outros, a gente nunca saiu. As conexões QUIC (voz, quem
 /// assiste a gente e quem a gente assiste) não dependem dela e continuam. `None` se desistiu.
-async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedReceiver<WireEvent>> {
-    (inner.on_update)(RoomUpdate::Reconnecting);
+async fn reconnect(inner: &Arc<Inner>, reason: String) -> Option<tokio::sync::mpsc::UnboundedReceiver<WireEvent>> {
+    (inner.on_update)(RoomUpdate::Reconnecting { reason });
     for delay in RECONNECT_DELAYS_S {
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         let (name, discord, live) = {
@@ -1048,6 +1069,10 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
         let room_name = lock(&inner.room_name).clone();
         // Copia antes do `await`: um lock não pode atravessar a espera.
         let session = lock(&inner.session).clone();
+        let resume = lock(&inner.resume).clone().map(|token| sv_net::Resume {
+            id: lock(&inner.me).id.clone(),
+            token,
+        });
         let Ok((client, mut events)) = RoomClient::join(
             &inner.signaling_url,
             &inner.code,
@@ -1055,14 +1080,22 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
             discord.as_ref(),
             session.as_deref(),
             room_name.as_deref(),
+            resume.as_ref(),
         )
         .await
         else {
             continue;
         };
         match events.recv().await {
-            Some(WireEvent::Joined { you, members, room }) => {
+            Some(WireEvent::Joined {
+                you,
+                members,
+                room,
+                resume: token,
+            }) => {
+                let resumed = resume.as_ref().is_some_and(|r| r.id == you);
                 *lock(&inner.client) = client;
+                *lock(&inner.resume) = token;
                 lock(&inner.me).id = you;
                 *lock(&inner.members) = members.into_iter().map(|m| (m.id.clone(), m)).collect();
                 if room.is_some() {
@@ -1073,7 +1106,7 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
                 inner.publish_members();
                 inner.offer_voice_to_all();
                 (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
-                (inner.on_update)(RoomUpdate::Reconnected);
+                (inner.on_update)(RoomUpdate::Reconnected { resumed });
                 return Some(events);
             }
             // Sala cheia ou versão diferente: não adianta insistir.
@@ -1271,8 +1304,14 @@ mod tests {
             ),
             (RoomUpdate::JoinRequestClosed("r1".into()), "JoinRequestClosed(\"r1\")"),
             (RoomUpdate::Error("cheia".into()), "Error(\"cheia\")"),
-            (RoomUpdate::Reconnecting, "Reconnecting"),
-            (RoomUpdate::Reconnected, "Reconnected"),
+            (
+                RoomUpdate::Reconnecting { reason: "caiu".into() },
+                "Reconnecting { reason: \"caiu\" }",
+            ),
+            (
+                RoomUpdate::Reconnected { resumed: true },
+                "Reconnected { resumed: true }",
+            ),
             (RoomUpdate::Disconnected, "Disconnected"),
         ];
         for (update, expected) in cases {

@@ -22,7 +22,7 @@ pub mod turn;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
-pub use signaling::{DiscordUser, JoinRequester, Member, RoomClient, RoomEvent, SpeakingEffect};
+pub use signaling::{DiscordUser, JoinRequester, Member, Resume, RoomClient, RoomEvent, SpeakingEffect};
 pub use turn::{TurnError, TurnServer};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.

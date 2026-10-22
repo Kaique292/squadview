@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { MAX_MESSAGE_BYTES, RATE_LIMIT_MESSAGES, RATE_LIMIT_WINDOW_MS, type ServerMessage } from "./protocol";
-import { type Attachment, CLOSE, type Connection, randomPeerId, RoomState } from "./room-state";
+import {
+  type Attachment,
+  CLOSE,
+  type Connection,
+  randomPeerId,
+  RESUME_GRACE_MS,
+  RoomState,
+  type Seat,
+} from "./room-state";
 
 /** Estado de um "WebSocket" falso. */
 class FakeConnection implements Connection {
@@ -30,15 +38,33 @@ let conns: FakeConnection[];
 let now: number;
 let ids: number;
 let room: RoomState;
+let seats: Record<string, Seat>;
+let wakes: number[];
+let tokens: number;
 
 beforeEach(() => {
   conns = [];
   now = 0;
   ids = 0;
+  seats = {};
+  wakes = [];
+  tokens = 0;
   room = new RoomState(
     () => conns.filter((c) => c.closedWith === null).map(wrap),
     () => (ids++).toString(16).padStart(16, "0"),
     () => now,
+    // Vagas guardadas em memória, como no armazenamento do Durable Object.
+    {
+      code: () => null,
+      met: () => {},
+      joinAnswered: () => {},
+      getRequests: () => ({}),
+      putRequests: () => {},
+      getSeats: () => structuredClone(seats),
+      putSeats: (s) => (seats = structuredClone(s)),
+      wakeAt: (at) => wakes.push(at),
+    },
+    () => (tokens++).toString(16).padStart(32, "a"),
   );
 });
 
@@ -73,6 +99,19 @@ function join(name: string) {
   return c;
 }
 
+function tokenOf(c: FakeConnection) {
+  const welcome = c.sent.findLast((m) => m.type === "welcome");
+  if (welcome?.type !== "welcome") throw new Error("sem welcome");
+  return welcome.resume;
+}
+
+/** Entra de novo por uma conexão nova, pedindo a vaga de `old`. */
+function resume(old: FakeConnection, name = "Beto", token = tokenOf(old)) {
+  const c = connect();
+  send(c, { type: "join", name, protocol: 1, resume: { id: idOf(old), token } });
+  return c;
+}
+
 function idOf(c: FakeConnection) {
   const welcome = c.sent.find((m) => m.type === "welcome");
   if (welcome?.type !== "welcome") throw new Error("sem welcome");
@@ -82,7 +121,7 @@ function idOf(c: FakeConnection) {
 describe("entrar na sala", () => {
   it("recebe o próprio id e a lista de quem já está na sala", () => {
     const ana = join("Ana");
-    expect(ana.last()).toEqual({ type: "welcome", you: idOf(ana), members: [], room: null });
+    expect(ana.last()).toEqual({ type: "welcome", you: idOf(ana), members: [], room: null, resume: tokenOf(ana) });
 
     const beto = join("Beto");
     expect(beto.last()).toEqual({
@@ -92,7 +131,9 @@ describe("entrar na sala", () => {
         { id: idOf(ana), name: "Ana", live: false, muted: false, deafened: false, discord: null, verified: false },
       ],
       room: null,
+      resume: tokenOf(beto),
     });
+    expect(tokenOf(beto)).not.toBe(tokenOf(ana));
   });
 
   it("avisa os outros quando alguém entra, mas não avisa a própria pessoa", () => {
@@ -381,12 +422,15 @@ describe("sair da sala", () => {
     expect(beto.closedWith?.code).toBe(CLOSE.normal);
   });
 
-  it("queda da conexão avisa os outros uma vez só", () => {
+  it("queda da conexão avisa os outros uma vez só, no fim do prazo", () => {
     const ana = join("Ana");
     const beto = join("Beto");
     room.closed(wrap(beto));
     room.closed(wrap(beto));
-    expect(ana.sent.filter((m) => m.type === "member-left")).toHaveLength(1);
+    now += RESUME_GRACE_MS;
+    room.expire();
+    room.expire();
+    expect(ana.sent.filter((m) => m.type === "member-left")).toEqual([{ type: "member-left", id: idOf(beto) }]);
   });
 
   it("queda de quem nunca entrou não avisa ninguém", () => {
@@ -449,6 +493,9 @@ describe("amigos na sala (ADR 0011)", () => {
         joinAnswered: (requester, result) => answers.push({ requester, result }),
         getRequests: () => structuredClone(requests) as never,
         putRequests: (r) => (requests = structuredClone(r)),
+        getSeats: () => ({}),
+        putSeats: () => {},
+        wakeAt: () => {},
       },
     );
   });
@@ -537,5 +584,134 @@ describe("amigos na sala (ADR 0011)", () => {
     room.requestJoin({ id: BETO, name: "Beto", avatar: null }, "00000000000000aa");
     const caio = join("Caio");
     expect(caio.last()).toMatchObject({ type: "join-request", id: "00000000000000aa" });
+  });
+});
+
+describe("voltar depois de uma queda (ADR 0022)", () => {
+  /** Simula a queda: o Durable Object chama `closed` e a conexão some da lista. */
+  function drop(c: FakeConnection) {
+    room.closed(wrap(c));
+    c.close(1006, "caiu");
+  }
+
+  it("quem cai e volta no prazo mantém o id, e os outros não veem ninguém sair nem entrar", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "status", live: true, muted: true, deafened: false });
+    const before = ana.sent.length;
+
+    drop(beto);
+    now += 1_400;
+    const back = resume(beto);
+
+    expect(idOf(back)).toBe(idOf(beto));
+    expect(back.last()).toMatchObject({ type: "welcome", members: [{ id: idOf(ana) }], resume: tokenOf(beto) });
+    const seen = ana.sent.slice(before);
+    expect(seen.map((m) => m.type)).toEqual(["member-updated"]);
+    // Continua ao vivo e mudo para os outros até o próximo status.
+    expect(seen[0]).toMatchObject({ member: { id: idOf(beto), live: true, muted: true } });
+  });
+
+  it("quem não volta sai no fim do prazo, e a sala acorda nessa hora", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    now = 5_000;
+    drop(beto);
+    expect(wakes).toEqual([5_000 + RESUME_GRACE_MS]);
+    expect(ana.last()).not.toMatchObject({ type: "member-left" });
+
+    now += RESUME_GRACE_MS - 1;
+    room.expire();
+    expect(ana.last()).not.toMatchObject({ type: "member-left" });
+    now += 1;
+    room.expire();
+    expect(ana.last()).toEqual({ type: "member-left", id: idOf(beto) });
+    // Depois disso o token não vale mais.
+    expect(idOf(resume(beto))).not.toBe(idOf(beto));
+  });
+
+  it("token errado entra como membro novo", () => {
+    join("Ana");
+    const beto = join("Beto");
+    drop(beto);
+    expect(idOf(resume(beto, "Beto", "f".repeat(32)))).not.toBe(idOf(beto));
+  });
+
+  it("conferido só volta para a vaga da própria conta", () => {
+    join("Ana");
+    const beto = connect();
+    room.message(wrap(beto), JSON.stringify({ type: "join", name: "Beto", protocol: 1 }), "222222222222222222");
+    drop(beto);
+    const other = connect();
+    room.message(
+      wrap(other),
+      JSON.stringify({ type: "join", name: "Beto", protocol: 1, resume: { id: idOf(beto), token: tokenOf(beto) } }),
+      "333333333333333333",
+    );
+    expect(idOf(other)).not.toBe(idOf(beto));
+  });
+
+  it("quem chega durante o prazo vê quem caiu na lista", () => {
+    join("Ana");
+    const beto = join("Beto");
+    drop(beto);
+    const caio = join("Caio");
+    expect(caio.last()).toMatchObject({ members: [{ name: "Ana" }, { id: idOf(beto), name: "Beto" }] });
+  });
+
+  it("volta antes de a sala perceber a queda: a conexão antiga é trocada pela nova", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    const back = resume(beto);
+    expect(idOf(back)).toBe(idOf(beto));
+    expect(beto.closedWith?.code).toBe(CLOSE.replaced);
+    // O fechamento atrasado da antiga não tira ninguém da sala.
+    room.closed(wrap(beto));
+    now += RESUME_GRACE_MS;
+    room.expire();
+    expect(ana.sent.some((m) => m.type === "member-left")).toBe(false);
+    send(ana, { type: "signal", to: idOf(beto), payload: { a: 1 } });
+    expect(back.last()).toEqual({ type: "signal", from: idOf(ana), payload: { a: 1 } });
+  });
+
+  it("sala reiniciada: quem volta mantém o id, e quem não volta sai no fim do prazo", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    // Reinício do Durable Object: as conexões somem sem `closed`, as vagas ficam guardadas.
+    ana.close(1012, "reinício");
+    beto.close(1012, "reinício");
+
+    now = 10_000;
+    const back = resume(ana, "Ana");
+    expect(idOf(back)).toBe(idOf(ana));
+    expect(back.last()).toMatchObject({ members: [{ id: idOf(beto) }] });
+    expect(wakes.at(-1)).toBe(10_000 + RESUME_GRACE_MS);
+
+    now += RESUME_GRACE_MS;
+    room.expire();
+    expect(back.last()).toEqual({ type: "member-left", id: idOf(beto) });
+  });
+
+  it("sinal para quem caiu se perde sem erro; para quem nunca esteve, unknown-peer", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    drop(beto);
+    send(ana, { type: "signal", to: idOf(beto), payload: {} });
+    expect(ana.last()).not.toMatchObject({ type: "error" });
+    send(ana, { type: "signal", to: "ffffffffffffffff", payload: {} });
+    expect(ana.last()).toEqual({ type: "error", code: "unknown-peer" });
+  });
+
+  it("quem sai com leave ou por erro não deixa vaga", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    send(beto, { type: "leave" });
+    expect(ana.last()).toEqual({ type: "member-left", id: idOf(beto) });
+    expect(idOf(resume(beto))).not.toBe(idOf(beto));
+
+    const caio = join("Caio");
+    send(caio, { type: "nada" });
+    expect(ana.last()).toEqual({ type: "member-left", id: idOf(caio) });
+    expect(seats[idOf(caio)]).toBeUndefined();
   });
 });

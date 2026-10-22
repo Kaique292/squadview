@@ -67,6 +67,8 @@ export type ClientMessage =
       discord: DiscordUser | null;
       /** Sessão do SquadView (ADR 0011): o servidor confere e o id do Discord passa a valer. */
       session: string | null;
+      /** Voltando de uma queda (ADR 0022): o id e o token do `welcome` anterior. */
+      resume: Resume | null;
     }
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
@@ -97,8 +99,15 @@ export type ClientMessage =
 export type ErrorCode =
   "room-full" | "invalid-message" | "version-mismatch" | "not-joined" | "unknown-peer" | "rate-limited";
 
+/** Volta para a mesma vaga depois de uma queda (ADR 0022). */
+export interface Resume {
+  id: PeerId;
+  token: string;
+}
+
 export type ServerMessage =
-  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null }
+  /** `resume`: token para voltar com o mesmo `you` se a conexão cair (ADR 0022). */
+  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null; resume: string }
   | { type: "room-updated"; name: string }
   | { type: "member-joined"; member: Member }
   | { type: "member-updated"; member: Member }
@@ -128,6 +137,8 @@ export function cleanName(value: unknown): string | null {
 }
 
 export const PEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+/** Token de retomada: 32 caracteres hexadecimais. */
+export const RESUME_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 /** Id de um pedido de entrada (como o peerId). */
 export const REQUEST_ID_PATTERN = PEER_ID_PATTERN;
 /** Snowflake do Discord. */
@@ -160,6 +171,14 @@ function parseDiscord(value: unknown): DiscordUser | null | undefined | false {
   return { id: value.id, avatar };
 }
 
+/** Lê o campo `resume` do `join`: `null` se ausente, `false` se fora do formato. */
+function parseResume(value: unknown): Resume | null | false {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value) || typeof value.id !== "string" || typeof value.token !== "string") return false;
+  if (!PEER_ID_PATTERN.test(value.id) || !RESUME_TOKEN_PATTERN.test(value.token)) return false;
+  return { id: value.id, token: value.token };
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -189,7 +208,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (discord === false) return null;
       const session = data.session === undefined || data.session === null ? null : data.session;
       if (session !== null && (typeof session !== "string" || session.length > 512)) return null;
-      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session };
+      // Retomada: opcional (apps até o 0.10 não mandam).
+      const resume = parseResume(data.resume);
+      if (resume === false) return null;
+      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session, resume };
     }
     case "room": {
       const name = cleanName(data.name);
