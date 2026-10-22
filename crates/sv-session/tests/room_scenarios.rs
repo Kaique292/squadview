@@ -276,13 +276,64 @@ fn pedir_para_assistir_quem_nao_esta_ao_vivo_e_recusado() {
         (beto_id.clone(), "Não está transmitindo agora.".to_owned())
     );
 
-    // Ao vivo, mas o encoder ainda não começou (sem formato do vídeo): também recusa.
+    // Ao vivo, mas o encoder nunca mandou o primeiro quadro: espera um pouco e recusa dizendo que
+    // a transmissão ainda está começando (não que ela não existe).
     beto.room.stream_started(KeyframeHandle::detached());
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.id == beto_id && x.live));
     ana.room.watch(&beto_id);
-    assert_eq!(refused(&ana).1, "Não está transmitindo agora.");
+    assert_eq!(
+        refused(&ana).1,
+        "A transmissão ainda está começando. Tente de novo em instantes."
+    );
     beto.room.stream_stopped();
     ana.members("o Beto fora do ar", |m| m.iter().any(|x| x.id == beto_id && !x.live));
+}
+
+/// Regressão: o DK aparecia "AO VIVO" e quem clicava para assistir logo depois recebia "Não está
+/// transmitindo agora.", porque o encoder ainda não tinha mandado o primeiro quadro (uma janela
+/// parada demora a mandar um). Agora o pedido espera esse quadro e entra quando ele sai.
+#[test]
+fn pedido_antes_do_primeiro_quadro_espera_e_entra_quando_ele_sai() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let mut beto = friend(&rt, &url, &code, "Beto");
+    let beto_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let ana_id = ana.members("o Beto", |m| m.iter().any(|x| x.name == "Beto"))[0]
+        .id
+        .clone();
+
+    ana.room.stream_started(KeyframeHandle::detached());
+    beto.client.signal(
+        &ana_id,
+        &Signal::WatchRequest {
+            candidates: beto_peer.candidates().to_vec(),
+            fingerprint: beto_peer.fingerprint().to_owned(),
+        },
+    );
+    // Sem o primeiro quadro, a Ana não responde nada (nem recusa).
+    rt.block_on(async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while let Ok(Some(event)) = tokio::time::timeout_at(deadline, beto.events.recv()).await {
+            if let RoomEvent::Signal { from, signal } = event
+                && from == ana_id
+            {
+                panic!("a Ana respondeu antes do primeiro quadro: {signal:?}");
+            }
+        }
+    });
+
+    ana.room.tap().started(&StreamInfo {
+        size: Size::new(1280, 720),
+        fps: 30,
+        encoder: "teste".into(),
+    });
+    let Signal::WatchAccept { stream, .. } = beto.signal_from(&rt, &ana_id) else {
+        panic!("a Ana devia aceitar quando o primeiro quadro saísse")
+    };
+    assert_eq!((stream.width, stream.height), (1280, 720));
+    ana.room.stream_stopped();
 }
 
 #[test]
