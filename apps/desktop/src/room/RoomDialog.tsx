@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { Modal, ModalClose } from "../ui/Modal";
 import { displayName, useAccountStore } from "../account/account-store";
+import { codeFromInput, isRoomCode } from "./invite";
 import { savedName, useRoomStore } from "./room-store";
 
 type Mode = "create" | "join";
@@ -28,7 +29,7 @@ export function RoomDialog(props: {
   };
   const [mode, setMode] = useState<Mode>(props.initialMode ?? "create");
   const [name, setName] = useState(savedName);
-  const [code, setCode] = useState(props.initialCode ?? "");
+  const [code, setCode] = useState(codeFromInput(props.initialCode ?? ""));
   const [roomName, setRoomName] = useState("");
   const profile = useAccountStore((s) => s.profile);
 
@@ -36,7 +37,7 @@ export function RoomDialog(props: {
     setOpen(next);
     if (next) {
       setMode(props.initialMode ?? "create");
-      setCode(props.initialCode ?? "");
+      setCode(codeFromInput(props.initialCode ?? ""));
       setRoomName("");
       clearError();
       // Com o Discord vinculado, entra com o nome do perfil (dá para trocar o apelido na sala).
@@ -54,7 +55,9 @@ export function RoomDialog(props: {
     if (ok) setOpen(false);
   }
 
-  const canSubmit = name.trim().length > 0 && (mode === "create" || code.replace(/[\s-]/g, "").length === 6);
+  const canSubmit = name.trim().length > 0 && (mode === "create" || isRoomCode(code));
+  // Explica por que o botão não libera, em vez de só deixá-lo apagado.
+  const codeHint = mode === "join" && code.length > 0 && !isRoomCode(code);
 
   return (
     <Modal
@@ -122,14 +125,20 @@ export function RoomDialog(props: {
             <span className="text-xs font-semibold tracking-wide text-text-muted uppercase">Código da sala</span>
             <input
               value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              maxLength={8}
+              onChange={(e) => setCode(codeFromInput(e.target.value))}
+              aria-invalid={codeHint}
+              aria-describedby={codeHint ? "codigo-sala-dica" : undefined}
               placeholder="B8RJ2Q"
               autoFocus
               spellCheck={false}
               className="rounded-md bg-surface-0 px-3 py-2 font-mono text-lg tracking-[0.3em] text-text uppercase placeholder:tracking-[0.3em] placeholder:text-text-faint focus:ring-2 focus:ring-brand focus:outline-none"
             />
           </label>
+        )}
+        {codeHint && (
+          <p id="codigo-sala-dica" className="-mt-2 text-xs text-warning">
+            O código tem 6 letras ou números (sem 0, O, 1, I ou L). Também dá para colar o link do convite.
+          </p>
         )}
         {error && (
           <p role="alert" className="rounded-md bg-live/15 px-3 py-2 text-sm">
