@@ -27,7 +27,7 @@ pub use audio::{AudioPacket, AudioReceiver, AudioSender, ReceiverEvent};
 pub use log::{SessionLog, recent_logs};
 pub use preview::{KeyframeHandle, LocalPreview, StreamTap};
 pub use remote::{RelaySource, RemoteView};
-pub use room::{JoinAs, Room, RoomUpdate, WatchPath};
+pub use room::{ArcadeSeatInfo, JoinAs, MAX_ARCADE_SLOTS, Room, RoomUpdate, WatchPath};
 pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};
 pub use sv_net::{DiscordUser, JoinRequester, Member, SpeakingEffect};

@@ -60,6 +60,27 @@ pub enum Signal {
     /// Quem pediu manda à outra ponta a chave do par (`key`, hex) e quem vai repassar (`via`). Vai
     /// direto para ela pela sinalização: quem repassa não vê a chave.
     VoiceRelayKey { via: String, key: String },
+    /// Fliperama (ADR 0023): quem quer jogar pede uma vaga a quem hospeda, com seus endereços e
+    /// fingerprint (como no `WatchRequest`).
+    ArcadeJoin {
+        candidates: Vec<SocketAddr>,
+        fingerprint: String,
+    },
+    /// Quem hospeda deu a vaga (`slot`: 2 a 4, o P do jogador) e manda os endereços dele: quem
+    /// pediu abre a conexão do fliperama.
+    ArcadeSeat {
+        slot: u8,
+        candidates: Vec<SocketAddr>,
+        fingerprint: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<SocketAddr>,
+    },
+    /// Quem hospeda recusou (fliperama fechado, vagas cheias, sem o driver de controle).
+    ArcadeDeny { reason: String },
+    /// Saiu do fliperama: de quem joga, ao sair; de quem hospeda, ao tirar o jogador ou fechar.
+    ArcadeLeave,
+    /// Quem hospeda ligou ou desligou o "controle total" de teclado e mouse deste jogador (ADR 0024).
+    ArcadeKbm { granted: bool },
 }
 
 /// O que quem assiste precisa saber para preparar o decoder.
@@ -307,6 +328,35 @@ mod tests {
         assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), s);
         let r = serde_json::from_str::<Signal>(r#"{"kind":"voice-relay-request","to":"ab"}"#).unwrap();
         assert_eq!(r, Signal::VoiceRelayRequest { to: "ab".into() });
+    }
+
+    #[test]
+    fn sinais_do_fliperama_viram_json() {
+        let seat = Signal::ArcadeSeat {
+            slot: 3,
+            candidates: vec!["127.0.0.1:5000".parse().unwrap()],
+            fingerprint: "ab".into(),
+            relay: None,
+        };
+        let json = serde_json::to_string(&seat).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"arcade-seat","slot":3,"candidates":["127.0.0.1:5000"],"fingerprint":"ab"}"#
+        );
+        assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), seat);
+        for (json, signal) in [
+            (r#"{"kind":"arcade-leave"}"#, Signal::ArcadeLeave),
+            (
+                r#"{"kind":"arcade-kbm","granted":true}"#,
+                Signal::ArcadeKbm { granted: true },
+            ),
+            (
+                r#"{"kind":"arcade-deny","reason":"cheio"}"#,
+                Signal::ArcadeDeny { reason: "cheio".into() },
+            ),
+        ] {
+            assert_eq!(serde_json::from_str::<Signal>(json).unwrap(), signal);
+        }
     }
 
     #[test]

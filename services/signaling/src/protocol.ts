@@ -53,6 +53,20 @@ export interface Member {
   watchingAll?: PeerId[];
   /** Efeito de fala escolhido, ou `null` (o anel padrão). Ausente até o primeiro `status` dele. */
   effect?: SpeakingEffect | null;
+  /** Fliperama aberto por este membro (ADR 0023), ou `null`. Ausente até o primeiro `status` dele. */
+  arcade?: Arcade | null;
+}
+
+/** Quantos jogadores um fliperama aceita além de quem hospeda (P2 a P4). */
+export const MAX_ARCADE_SLOTS = 3;
+/** Maior nome de jogo mostrado. */
+export const MAX_GAME_NAME = 64;
+
+/** Fliperama aberto (ADR 0023): o jogo, quantas vagas e quem já está jogando. */
+export interface Arcade {
+  game: string | null;
+  slots: number;
+  players: PeerId[];
 }
 
 /** Quantas lives um membro pode anunciar que assiste ao mesmo tempo. */
@@ -97,6 +111,8 @@ export type ClientMessage =
       /** Todas as lives que estamos assistindo (ADR 0019); sem ele, só o `watching`. */
       watchingAll: PeerId[];
       effect: SpeakingEffect | null;
+      /** Fliperama aberto (ADR 0023); `null` fechado ou fora do formato. */
+      arcade: Arcade | null;
     }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
@@ -174,6 +190,27 @@ function parseEffect(value: unknown): SpeakingEffect | null {
   const kind = SPEAKING_EFFECTS.find((k) => k === value.kind);
   const color = value.color.toLowerCase();
   return kind && COLOR_PATTERN.test(color) ? { kind, color } : null;
+}
+
+/**
+ * Lê o campo `arcade` do `status`. Fora do formato vira `null` (fliperama fechado para os outros):
+ * como o efeito de fala, um campo estranho nunca derruba a conexão.
+ */
+function parseArcade(value: unknown): Arcade | null {
+  if (!isPlainObject(value)) return null;
+  const { slots, players } = value;
+  if (typeof slots !== "number" || !Number.isInteger(slots) || slots < 1 || slots > MAX_ARCADE_SLOTS) return null;
+  if (
+    !Array.isArray(players) ||
+    players.length > MAX_ARCADE_SLOTS ||
+    !players.every((p) => typeof p === "string" && PEER_ID_PATTERN.test(p))
+  )
+    return null;
+  const game =
+    typeof value.game === "string" && !/[\u0000-\u001f\u007f-\u009f]/.test(value.game)
+      ? [...value.game.trim()].slice(0, MAX_GAME_NAME).join("") || null
+      : null;
+  return { game, slots, players: [...new Set(players as string[])] };
 }
 
 /**
@@ -278,7 +315,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const watching = first ?? watchingAll[0] ?? null;
       // effect também é opcional (apps até o 0.5.0 não mandam).
       const effect = parseEffect(data.effect);
-      return { type: "status", live: data.live, muted, deafened, watching, watchingAll, effect };
+      // arcade também é opcional (apps até a 0.10 não mandam).
+      const arcade = parseArcade(data.arcade);
+      return { type: "status", live: data.live, muted, deafened, watching, watchingAll, effect, arcade };
     }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;

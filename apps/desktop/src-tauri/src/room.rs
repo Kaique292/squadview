@@ -528,6 +528,10 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
                 .write("room-connection", &json!({ "state": "connected", "resumed": resumed }));
             let _ = app.emit(ROOM_CONNECTION_EVENT, "connected");
         }
+        update @ (RoomUpdate::ArcadePlayers(_)
+        | RoomUpdate::ArcadeSeat { .. }
+        | RoomUpdate::ArcadeLeft { .. }
+        | RoomUpdate::ArcadeKbm { .. }) => crate::arcade::emit(app, update),
         RoomUpdate::Disconnected => {
             app.state::<Diagnostics>()
                 .write("room-connection", &json!({ "state": "lost" }));

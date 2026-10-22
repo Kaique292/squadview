@@ -170,6 +170,7 @@ export class RoomState {
           watching: msg.watching,
           watchingAll: msg.watchingAll,
           effect: msg.effect,
+          arcade: msg.arcade,
         };
         conn.setAttachment({ ...attachment, member });
         this.broadcast({ type: "member-updated", member }, conn);

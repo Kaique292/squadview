@@ -324,6 +324,7 @@ describe("status ao vivo", () => {
         watching: null,
         watchingAll: [],
         effect: null,
+        arcade: null,
       },
     });
 
@@ -351,6 +352,7 @@ describe("estado de voz", () => {
         watching: null,
         watchingAll: [],
         effect: null,
+        arcade: null,
       },
     });
     send(beto, { type: "status", live: true, muted: true, deafened: true });
@@ -840,5 +842,18 @@ describe("entrar por um código que não existe", () => {
 
   it("app antigo, que não manda create, continua criando a sala ao entrar", () => {
     expect(joinOld("Ana").last()).toMatchObject({ type: "welcome", members: [] });
+  });
+});
+
+describe("fliperama (ADR 0023)", () => {
+  it("o fliperama aberto chega aos outros e a quem entra depois, e fechar avisa", () => {
+    const ana = join("Ana");
+    const beto = join("Beto");
+    const arcade = { game: "Bomberman", slots: 3, players: [idOf(beto)] };
+    send(ana, { type: "status", live: true, arcade });
+    expect(beto.last()).toMatchObject({ type: "member-updated", member: { id: idOf(ana), arcade } });
+    expect(join("Caio").last()).toMatchObject({ members: [{ name: "Ana", arcade }, { name: "Beto" }] });
+    send(ana, { type: "status", live: true });
+    expect(beto.last()).toMatchObject({ member: { arcade: null } });
   });
 });

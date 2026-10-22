@@ -79,4 +79,10 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 
 ### Fliperama (ADR 0023)
 
-Fora da árvore de vídeo: o jogador abre uma conexão QUIC direta com o host (ALPN `squadview-arcade/1`), aceita só com vaga dada pelo host. Cada datagrama leva o estado completo do controle (`[tipo][seq][host_us][PadState]`), mandado quando muda e a cada 100 ms parado. A vaga é combinada pela sinalização (`arcade-join`, `arcade-seat`, `arcade-deny`, `arcade-leave`). Detalhes em [fliperama.md](fliperama.md).
+A conexão do fliperama fica fora da árvore de vídeo. O jogador abre uma conexão QUIC direta com o host (ALPN `squadview-arcade/1`), aceita só com vaga dada pelo host.
+
+- **Datagramas de controle:** cada um leva o estado completo do controle (`[1][seq u32][PadState 12 bytes]`, 17 bytes). Vai quando o estado muda e, parado, a cada 100 ms. Sem nada por 1 s, o host solta o controle do jogador.
+- **Controle total (ADR 0024):** o teclado e o mouse vão num stream unidirecional confiável, em eventos de 8 bytes. Só o jogador com o controle total ligado tem os eventos aplicados.
+- **Sinais:** a vaga é combinada pela sinalização (`arcade-join`, `arcade-seat`, `arcade-deny`, `arcade-leave`, `arcade-kbm`).
+
+Detalhes em [fliperama.md](fliperama.md).

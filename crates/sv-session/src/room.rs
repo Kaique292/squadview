@@ -21,9 +21,15 @@ use tokio::runtime::Runtime;
 
 use crate::surface::lock;
 use crate::voice_mesh::VoiceMesh;
+
+mod arcade;
 use crate::{AudioPacket, KeyframeHandle, RelaySource, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
+pub use arcade::{ArcadeSeatInfo, MAX_SLOTS as MAX_ARCADE_SLOTS};
 
 /// O que a interface precisa saber da sala.
+// Os avisos são poucos (um por mudança na sala), e o maior é o `WatchReady`, uma vez por live:
+// não vale pôr o membro numa caixa só para os outros ficarem menores.
+#[allow(clippy::large_enum_variant)]
 pub enum RoomUpdate {
     /// Lista completa de membros (nós primeiro).
     Members(Vec<Member>),
@@ -61,6 +67,14 @@ pub enum RoomUpdate {
     Reconnected { resumed: bool },
     /// Perdemos a conexão com a sinalização e não deu para voltar.
     Disconnected,
+    /// O fliperama que abrimos (ADR 0023): quem joga em cada vaga.
+    ArcadePlayers(Vec<ArcadeSeatInfo>),
+    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu.
+    ArcadeSeat { host: String, slot: u8 },
+    /// Saímos do fliperama de `host`: recusado, tirado, fechado ou caiu (`reason` vazio: saímos nós).
+    ArcadeLeft { host: String, reason: String },
+    /// Quem hospeda ligou ou desligou o nosso controle total de teclado e mouse (ADR 0024).
+    ArcadeKbm { host: String, granted: bool },
 }
 
 /// Por onde chega o stream que assistimos (ADR 0014).
@@ -148,6 +162,22 @@ impl std::fmt::Debug for RoomUpdate {
             Self::Reconnecting { reason } => f.debug_struct("Reconnecting").field("reason", reason).finish(),
             Self::Reconnected { resumed } => f.debug_struct("Reconnected").field("resumed", resumed).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
+            Self::ArcadePlayers(seats) => f.debug_tuple("ArcadePlayers").field(seats).finish(),
+            Self::ArcadeSeat { host, slot } => f
+                .debug_struct("ArcadeSeat")
+                .field("host", host)
+                .field("slot", slot)
+                .finish(),
+            Self::ArcadeLeft { host, reason } => f
+                .debug_struct("ArcadeLeft")
+                .field("host", host)
+                .field("reason", reason)
+                .finish(),
+            Self::ArcadeKbm { host, granted } => f
+                .debug_struct("ArcadeKbm")
+                .field("host", host)
+                .field("granted", granted)
+                .finish(),
         }
     }
 }
@@ -196,6 +226,8 @@ struct Inner {
     /// Pedidos para assistir que chegaram com o "AO VIVO" já anunciado, mas antes do primeiro
     /// quadro do encoder: são respondidos quando ele sai (ou recusados depois de `FIRST_FRAME_WAIT`).
     first_frame_waiters: Mutex<Vec<WatchWaiter>>,
+    /// O fliperama que abrimos ou em que jogamos (ADR 0023).
+    arcade: arcade::ArcadeState,
     voice: Arc<VoiceMesh>,
     runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
@@ -311,6 +343,7 @@ impl Room {
                     watching: None,
                     watching_all: Vec::new(),
                     effect: None,
+                    arcade: None,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -323,6 +356,7 @@ impl Room {
                 relay_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
                 first_frame_waiters: Mutex::default(),
+                arcade: arcade::ArcadeState::default(),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
@@ -415,6 +449,8 @@ impl Room {
 
     /// Paramos de transmitir: desconecta quem assistia (e recusa quem esperava o primeiro quadro).
     pub fn stream_stopped(&self) {
+        // Sem a live não há jogo para ver: o fliperama fecha junto.
+        self.inner.arcade_close();
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
         self.inner.flush_waiters();
@@ -422,6 +458,72 @@ impl Room {
         lock(&self.inner.me).live = false;
         self.inner.send_status();
         self.inner.publish_members();
+    }
+
+    /// Abre o fliperama sobre a nossa live (ADR 0023): até `slots` membros jogam como P2 a P4.
+    /// `window` é a janela do jogo que estamos capturando (sem ela, o controle total não liga).
+    pub fn arcade_open(&self, game: Option<String>, slots: u8, window: Option<isize>) -> Result<(), String> {
+        self.inner.arcade_open(game, slots, window)
+    }
+
+    /// O nosso fliperama está aberto.
+    pub fn arcade_is_open(&self) -> bool {
+        lock(&self.inner.me).arcade.is_some()
+    }
+
+    /// Fecha o nosso fliperama (os jogadores saem e os controles virtuais somem).
+    pub fn arcade_close(&self) {
+        self.inner.arcade_close();
+    }
+
+    /// Tira `member_id` do nosso fliperama.
+    pub fn arcade_kick(&self, member_id: &str) {
+        self.inner.arcade_kick(member_id);
+    }
+
+    /// Dá o controle total de teclado e mouse a `member_id` (ou corta, com `None`), ADR 0024.
+    pub fn arcade_grant_kbm(&self, member_id: Option<&str>) -> Result<(), String> {
+        self.inner.arcade_grant_kbm(member_id)
+    }
+
+    /// Pede uma vaga no fliperama de `host_id`. A resposta chega como [`RoomUpdate::ArcadeSeat`] ou
+    /// [`RoomUpdate::ArcadeLeft`]. O vídeo vem da live dele: assista com [`Room::watch`].
+    pub fn arcade_join(&self, host_id: &str, keymap: sv_input::KeyMap) {
+        self.inner.arcade_join(host_id, keymap);
+    }
+
+    /// Sai do fliperama em que estamos jogando.
+    pub fn arcade_leave(&self) {
+        self.inner.arcade_leave();
+    }
+
+    /// Tecla do jogador (`KeyboardEvent.code`): vira controle, ou vai crua com o controle total.
+    pub fn arcade_key(&self, code: &str, down: bool) {
+        self.inner.arcade_key(code, down);
+    }
+
+    /// Movimento do mouse do jogador (ponteiro preso): analógico direito, ou cru com o controle total.
+    pub fn arcade_mouse_move(&self, dx: f32, dy: f32) {
+        self.inner.arcade_mouse_move(dx, dy);
+    }
+
+    pub fn arcade_mouse_button(&self, button: sv_input::MouseButton, down: bool) {
+        self.inner.arcade_mouse_button(button, down);
+    }
+
+    /// Rolagem do mouse (só com o controle total).
+    pub fn arcade_wheel(&self, delta: i16) {
+        self.inner.arcade_wheel(delta);
+    }
+
+    /// A janela do fliperama perdeu o foco: solta tudo.
+    pub fn arcade_release(&self) {
+        self.inner.arcade_release();
+    }
+
+    /// O jogador trocou o mapeamento do teclado.
+    pub fn arcade_set_keymap(&self, keymap: sv_input::KeyMap) {
+        self.inner.arcade_set_keymap(keymap);
     }
 
     /// Pede para assistir `member_id`. A resposta chega como [`RoomUpdate::WatchReady`] ou
@@ -530,6 +632,8 @@ impl Drop for Room {
     fn drop(&mut self) {
         // Antes de o runtime parar: sem o `leave`, a sala guardaria a nossa vaga por 60 s, como se
         // a gente tivesse caído (ADR 0022).
+        self.inner.arcade_close();
+        self.inner.arcade_leave();
         lock(&self.inner.client).leave(LEAVE_FLUSH);
         self.inner.broadcaster.close();
         self.inner.voice.close();
@@ -614,7 +718,14 @@ impl Inner {
     /// Manda para a sala o nosso estado (ao vivo, mudo, surdo, quem assistimos e o efeito de fala).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
-        lock(&self.client).set_status(me.live, me.muted, me.deafened, &me.watching_all, me.effect.as_ref());
+        lock(&self.client).set_status(
+            me.live,
+            me.muted,
+            me.deafened,
+            &me.watching_all,
+            me.effect.as_ref(),
+            me.arcade.as_ref(),
+        );
     }
 
     /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
@@ -666,6 +777,7 @@ impl Inner {
             watching: None,
             watching_all: Vec::new(),
             effect: None,
+            arcade: None,
         })
     }
 
@@ -819,6 +931,10 @@ impl Inner {
     }
 
     fn on_signal(self: &Arc<Self>, from: String, signal: Signal) {
+        let signal = match self.arcade_signal(&from, signal) {
+            Ok(()) => return,
+            Err(other) => other,
+        };
         match signal {
             Signal::WatchRequest {
                 candidates,
@@ -1014,6 +1130,12 @@ impl Inner {
                     self.publish_voice_peers();
                 }
             }
+            // Tratados antes, em `arcade_signal`.
+            Signal::ArcadeJoin { .. }
+            | Signal::ArcadeSeat { .. }
+            | Signal::ArcadeDeny { .. }
+            | Signal::ArcadeLeave
+            | Signal::ArcadeKbm { .. } => {}
             Signal::WatchDeny { reason } => {
                 if lock(&self.pending_watch).remove(&from) {
                     (self.on_update)(RoomUpdate::WatchFailed {
@@ -1079,6 +1201,7 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 lock(&inner.members).remove(&id);
                 lock(&inner.pending_voice_relay).remove(&id);
                 inner.voice.unregister(&id);
+                inner.arcade_member_left(&id);
                 inner.publish_members();
                 inner.publish_voice_peers();
             }
@@ -1204,6 +1327,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
                 }
                 None => accepted.conn.close(quinn::VarInt::from_u32(2), b"desconhecido"),
             }
+            continue;
+        }
+        if accepted.purpose == sv_net::Purpose::Arcade {
+            // Fliperama (ADR 0023): só de quem recebeu vaga (a fingerprint diz quem é).
+            inner.arcade_accept(accepted.conn, accepted.fingerprint);
             continue;
         }
         if accepted.purpose == sv_net::Purpose::VoiceRelay {
@@ -1354,6 +1482,7 @@ mod tests {
             watching: None,
             watching_all: Vec::new(),
             effect: None,
+            arcade: None,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![
             (RoomUpdate::Members(vec![member.clone()]), "Members(["),

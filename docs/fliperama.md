@@ -33,49 +33,50 @@ janela do fliperama ◀──────── live normal (Stream) ─── c
 
 ## Etapa 1: crate `sv-input` (lógica pura + plataforma)
 
-- [ ] `PadState`: botões (u16 no layout do XInput), gatilhos (u8), analógicos (i16) e `seq` (u32). Também `encode`/`decode` de tamanho fixo (~16 bytes) com teste de ida e volta. O estado (sem `seq`) e a conversão para o controle virtual já existem desde a Etapa 0.
-- [ ] `PadReader`: thread que lê o XInput a 250 Hz e entrega só quando o estado muda (com zona morta). Sem alocação no laço.
-- [ ] `KeyMap`: teclado → `PadState`, com o mapeamento padrão (WASD/setas, J K L I, Enter, Esc) editável e salvo em `arcade.json`.
-- [ ] `VirtualPads` (só host): cria e remove os controles X360, aplica o estado, devolve o `user index`, e fecha tudo no `Drop`.
-- [ ] Testes: o formato e o mapeamento rodam na CI. O driver fica em testes `#[ignore]`, que precisam do ViGEmBus.
+- [x] `PadState` em 12 bytes (`to_bytes`/`from_bytes`), `merge` (controle físico + teclado) e zona morta. O datagrama (`wire.rs`) leva o tipo, o `seq` e o estado: 17 bytes.
+- [x] `PadReader`: thread que lê o XInput a 250 Hz e entrega só quando o estado muda (com zona morta), sem alocação no laço. Sem controle ligado, procura de novo a cada 500 ms.
+- [x] `KeyMap` e `KeyboardPad`: teclado (pelo `KeyboardEvent.code`) → controle, com o mapeamento padrão (WASD e setas, J/Espaço, K, L, I, U/O, Q/E, Enter, Backspace, teclado numérico) editável e salvo em `arcade.json`. O mouse vira o analógico direito (ADR 0024).
+- [x] `VirtualPads` (só host): cria e remove os controles X360, aplica o estado e devolve a vaga do XInput. O controle sai do PC no `Drop`.
+- [x] Controle total (`kbm.rs`, ADR 0024): `vk_from_code`, `KbmGuard` (bloqueia as teclas do sistema e solta tudo), `Injector` (`SendInput` só com a janela do jogo em primeiro plano) e `PanicHotkey` (Ctrl+Alt+F12).
+- [x] Testes: 31 no `sv-input`. O formato, o mapeamento, as regras do controle total e o teclado viram controle rodam na CI; o driver fica no `#[ignore]`.
 
 ## Etapa 2: rede (`sv-net`) e protocolo
 
-- [ ] `Purpose::Arcade` com a ALPN `squadview-arcade/1` em `crates/sv-net/src/endpoint.rs` e `lib.rs`.
-- [ ] Datagrama de entrada: `[tipo u8 = 1][seq u32][host_us u64][PadState]`. O `host_us` é o horário do clique no relógio do host (pelo `ClockEstimator` que o jogador já tem da live), para medir a latência de entrada no host.
-- [ ] Mandar quando muda e, parado, a cada 100 ms. O host descarta `seq` antigo e solta todos os botões da vaga se ficar 1 s sem nada (o jogador caiu).
-- [ ] Sinais novos em `Signal` (`protocol.rs`): `ArcadeJoin { candidates, fingerprint }`, `ArcadeSeat { slot }`, `ArcadeDeny { reason }`, `ArcadeLeave`. Apps antigos ignoram sinais desconhecidos.
-- [ ] Worker: campo opcional `arcade: { game, slots, players } | null` no `status` (`services/signaling/src/protocol.ts` e `room-state.ts`), com testes. Atualizar o `PROTOCOL.md` e o `docs/protocolo-malha.md`.
-- [ ] Testes de integração contra o Worker local: pedir vaga, receber `ArcadeSeat`, vaga cheia → `ArcadeDeny`, sair libera a vaga.
+- [x] `Purpose::Arcade` com a ALPN `squadview-arcade/1` em `crates/sv-net/src/endpoint.rs` e `lib.rs`.
+- [x] Datagrama de entrada: `[tipo u8 = 1][seq u32][PadState]`, 17 bytes. O `host_us` ficou de fora: o jogador só tem o relógio do host enquanto assiste a live, e a latência de entrada fica para a Etapa 5 (RTT/2 da conexão do fliperama, ou o relógio da live).
+- [x] Mandar quando muda e, parado, a cada 100 ms. O host descarta `seq` antigo e solta todos os botões da vaga se ficar 1 s sem nada (o jogador caiu).
+- [x] Sinais novos em `Signal` (`protocol.rs`): `ArcadeJoin { candidates, fingerprint }`, `ArcadeSeat { slot, candidates, fingerprint, relay }`, `ArcadeDeny { reason }`, `ArcadeLeave` e `ArcadeKbm { granted }`. Apps antigos ignoram sinais desconhecidos.
+- [x] Worker: campo opcional `arcade: { game, slots, players } | null` no `status` (`services/signaling/src/protocol.ts` e `room-state.ts`), com testes. `PROTOCOL.md` e `docs/protocolo-malha.md` atualizados.
+- [x] Testes de integração contra o Worker local: fliperama fechado → `ArcadeDeny`; abrir pede live e driver; e, com o ViGEmBus (`#[ignore]`), o fluxo inteiro no mesmo PC: o jogador ganha a vaga, aperta J e o controle virtual do host aperta A; tirar o jogador tira o controle do PC.
 - **Publicar o Worker antes do app.**
 
 ## Etapa 3: sessão (`sv-session`)
 
-- [ ] `arcade.rs` (host):
+- [x] `room/arcade.rs` (host):
   - abre e fecha o fliperama sobre a live atual;
-  - fixa a captura na janela escolhida (sem "seguir o jogo");
+  - usa a janela capturada para o controle total. **Pendente:** com o "seguir o jogo" trocando de janela, o controle total para de passar (a regra do primeiro plano compara com a janela da abertura). Falta atualizar a janela ou fixar a captura;
   - administra as vagas (dar, tirar, trocar a ordem);
   - aceita a conexão `Arcade` só de quem tem vaga (fingerprint conferida, como na voz).
-- [ ] Jogador: pede a vaga, abre a live do host e a conexão `Arcade`, liga o `PadReader` e o teclado, e para tudo ao sair.
-- [ ] `RoomUpdate`s novos: vaga recebida ou recusada, jogadores do fliperama, fliperama fechado.
-- [ ] Estatística nova: latência de entrada (média e p95) no host, no registro de desempenho.
+- [x] Jogador: pede a vaga, abre a conexão `Arcade`, liga o `PadReader` e o teclado e o mouse, e para tudo ao sair. A interface assiste a live do host pelo caminho normal.
+- [x] `RoomUpdate`s novos: `ArcadePlayers`, `ArcadeSeat`, `ArcadeLeft` (recusado, tirado, fechado ou caiu, com o motivo) e `ArcadeKbm`.
+- [ ] Estatística nova: latência de entrada (média e p95) no host, no registro de desempenho. Fica para a Etapa 5.
 
 ## Etapa 4: app e interface
 
 - [ ] **Host:**
-  - no `StreamDialog`, a opção "Abrir fliperama" (janela do jogo e número de vagas);
-  - se o driver faltar, um aviso com o link do instalador oficial;
-  - um painel do fliperama com os jogadores, P2 a P4, tirar e trocar a ordem.
+  - [x] "Fliperama" no menu da nossa live abre o painel: driver, vagas (1 a 3), abrir e fechar;
+  - [x] se o driver faltar, um aviso com o botão do instalador oficial;
+  - [x] um painel com os jogadores (P, conectado ou não), tirar e o controle total por jogador, com o aviso do Ctrl+Alt+F12. Trocar a ordem ficou de fora: o P é a vaga que o Windows dá ao controle virtual.
 - [ ] **Jogador:**
-  - "Entrar no fliperama" no menu do membro e no palco;
-  - janela própria (Tauri, como o picture in picture) com o vídeo por baixo, o selo "Você é o P3", a latência e o atalho para sair;
-  - a página manda o teclado ao Rust enquanto tem foco.
-- [ ] **Configurações > Fliperama:**
+  - [x] "Entrar no fliperama (N vagas)", "Fliperama cheio" e "Sair do fliperama" no menu do membro (entrar também assiste a live);
+  - [x] em vez de uma janela própria, o próprio quadro da live do host ganha o selo "Você é o P3" e a captura: clicar prende o ponteiro, as teclas e o mouse vão para o jogo, Esc solta, perder o foco solta tudo. Assim funciona igual em grade, em foco e em tela cheia, sem outra janela para o vídeo. A latência no selo fica para a Etapa 5;
+  - [x] a página manda o teclado e o mouse ao Rust enquanto o quadro tem foco (o mouse uma vez por quadro da página).
+- [x] **Configurações > Fliperama:**
   - mostra se o driver está instalado;
   - mapeamento do teclado;
   - botão **"Remover o driver de controle"**: chama o desinstalador registrado (aviso de administrador), confere se saiu e volta a "não instalado". Com o fliperama aberto, pede para fechar antes.
-- [ ] Testes de interface: abrir, vaga cheia, sair, remover o driver.
-- [ ] Interface conforme `docs/design/ui.md`. Atualizar o README com prints.
+- [x] Testes de interface (14): painel com e sem driver, abrir, jogadores, controle total, tirar, entrar, cheio, sair, avisos, captura do teclado, Esc e foco, remover o driver e trocar uma tecla.
+- [ ] Interface conforme `docs/design/ui.md`. Atualizar o README com prints (depois do teste real da Etapa 5).
 
 ## Etapa 5: medição e testes reais
 

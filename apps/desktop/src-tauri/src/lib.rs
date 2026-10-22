@@ -1,5 +1,6 @@
 //! Ponto de entrada do app desktop: liga a interface (React) ao núcleo em Rust.
 
+mod arcade;
 mod crash;
 mod diagnostics;
 mod discord;
@@ -183,6 +184,23 @@ pub fn run() {
             preview::set_preview_listening,
             preview::set_video_bounds,
             preview::set_fullscreen,
+            arcade::arcade_driver,
+            arcade::arcade_install_driver,
+            arcade::arcade_uninstall_driver,
+            arcade::arcade_open,
+            arcade::arcade_close,
+            arcade::arcade_kick,
+            arcade::arcade_grant_kbm,
+            arcade::arcade_join,
+            arcade::arcade_leave,
+            arcade::arcade_key,
+            arcade::arcade_mouse,
+            arcade::arcade_mouse_button,
+            arcade::arcade_wheel,
+            arcade::arcade_release,
+            arcade::arcade_keymap,
+            arcade::arcade_set_keymap,
+            arcade::arcade_reset_keymap,
             room::room_join,
             room::room_leave,
             room::room_rename,

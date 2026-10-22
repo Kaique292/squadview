@@ -22,7 +22,7 @@ pub mod turn;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
-pub use signaling::{DiscordUser, JoinRequester, Member, Resume, RoomClient, RoomEvent, SpeakingEffect};
+pub use signaling::{Arcade, DiscordUser, JoinRequester, Member, Resume, RoomClient, RoomEvent, SpeakingEffect};
 pub use turn::{TurnError, TurnServer};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.
@@ -37,6 +37,9 @@ pub const DM_ALPN: &[u8] = b"squadview-dm/1";
 /// ALPN da conexão de repasse de voz (ADR 0020): quem ajuda copia por ela a voz de quem a gente
 /// não alcança, cada pacote com a origem.
 pub const VOICE_RELAY_ALPN: &[u8] = b"squadview-voice-relay/1";
+/// ALPN da conexão do fliperama (ADR 0023 e 0024): o controle (e, com o controle total, o teclado e
+/// o mouse) de um jogador para quem hospeda.
+pub const ARCADE_ALPN: &[u8] = b"squadview-arcade/1";
 
 #[cfg(test)]
 mod tests {

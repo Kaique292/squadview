@@ -26,6 +26,7 @@ import { ScrollArea } from "../ui/ScrollArea";
 import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
 import { DEFAULT_GLASS, useAppearanceStore } from "./appearance-store";
+import { ArcadeSection } from "./ArcadeSection";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { MessagesSection } from "./MessagesSection";
 import { usePresenceSettings } from "./presence-store";
@@ -34,7 +35,16 @@ import { VoiceSection } from "./VoiceSection";
 import { WindowsSection } from "./WindowsSection";
 
 type Page =
-  "conta" | "voz" | "sons" | "mensagens" | "discord" | "aparencia" | "windows" | "desempenho" | "armazenamento";
+  | "conta"
+  | "voz"
+  | "sons"
+  | "mensagens"
+  | "fliperama"
+  | "discord"
+  | "aparencia"
+  | "windows"
+  | "desempenho"
+  | "armazenamento";
 
 interface Item {
   id: Page;
@@ -79,6 +89,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         icon: <MessageCircle size={18} />,
         keywords: "conversa anexo arquivo cópia privada",
       },
+      {
+        id: "fliperama",
+        label: "Fliperama",
+        icon: <Gamepad2 size={18} />,
+        keywords: "controle teclado mouse driver vigembus jogo local lan house jogador",
+      },
       { id: "aparencia", label: "Aparência", icon: <Palette size={18} />, keywords: "vidro transparência tema" },
       {
         id: "windows",
@@ -113,6 +129,7 @@ const TITLES: Record<Page, string> = {
   voz: "Voz e vídeo",
   sons: "Sons",
   mensagens: "Mensagens",
+  fliperama: "Fliperama",
   discord: "Status no Discord",
   aparencia: "Aparência",
   windows: "Configurações do Windows",
@@ -177,6 +194,7 @@ export function SettingsDialog(props: { trigger: ReactNode }) {
                 {page === "windows" && <WindowsSection />}
                 {page === "desempenho" && <DiagnosticsSection />}
                 {page === "armazenamento" && <StorageSection />}
+                {page === "fliperama" && <ArcadeSection />}
               </div>
             </ScrollArea>
           </div>

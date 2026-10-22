@@ -69,6 +69,8 @@ struct Running {
     /// "Ouvir a prévia" ligado (vale também para a prévia nova depois de uma troca de janela).
     listening: bool,
     layout: Layout,
+    /// O que está sendo capturado agora, com o nome (o fliperama usa a janela do jogo).
+    capture: Option<(CaptureSource, String)>,
 }
 
 /// Aviso mostrado na prévia.
@@ -185,6 +187,7 @@ fn start_preview_blocking<R: Runtime>(
         running.generation += 1;
         running.listening = false;
         running.preview = Some(preview);
+        running.capture = Some((source, info.as_ref().map(|s| s.name.clone()).unwrap_or_default()));
         running.generation
     };
     let _ = app.emit(NOTICE_EVENT, None::<Notice>);
@@ -272,6 +275,13 @@ pub fn restart_for_room<R: Runtime>(app: &AppHandle<R>) {
         }
         crate::room::stream_changed(app, Some(preview.keyframe_handle()));
     }
+}
+
+/// O que a transmissão em andamento captura (fonte e nome), ou `None` sem transmissão.
+pub fn current_capture<R: Runtime>(app: &AppHandle<R>) -> Option<(CaptureSource, String)> {
+    let state = app.state::<PreviewState>();
+    let running = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    running.preview.as_ref().and(running.capture.clone())
 }
 
 /// Posição atual pedida pela interface.
@@ -538,6 +548,7 @@ fn switch<R: Runtime>(
             p.set_listening(running.listening);
             running.layout.apply(&p);
             running.preview = Some(p);
+            running.capture = Some((to.id, to.name.clone()));
             Some(())
         }
         Err(e) => {

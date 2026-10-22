@@ -27,6 +27,15 @@ export interface Member {
   watchingAll?: string[];
   /** Efeito de fala escolhido (ADR 0015). Ausente em apps até o 0.5.0; use `useMemberEffect`. */
   effect?: unknown;
+  /** Fliperama aberto por este membro (ADR 0023): o jogo, as vagas e quem joga. */
+  arcade?: ArcadeInfo | null;
+}
+
+/** Espelha `sv_net::Arcade`. */
+export interface ArcadeInfo {
+  game: string | null;
+  slots: number;
+  players: string[];
 }
 
 /** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */
