@@ -6,6 +6,7 @@ mod discord;
 mod dm;
 mod friends;
 mod invite;
+mod pip;
 mod presence;
 mod preview;
 mod room;

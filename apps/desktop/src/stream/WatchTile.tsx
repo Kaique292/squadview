@@ -51,7 +51,11 @@ export function WatchTile(props: {
 }) {
   const watch = useRoomStore((s) => s.watching[props.memberId]);
   const { fullscreen, fullscreenOf, videoHover, pip, setFullscreen, setPip } = useStreamStore();
-  const slot = useVideoSlot(props.memberId, props.hidden);
+  const inPip = pip === props.memberId;
+  // Com imagem chegando (e o vídeo aqui, não no picture in picture), o quadro fica transparente e
+  // o vídeo, desenhado por baixo da página, aparece.
+  const showing = !inPip && (watch?.stats?.fps ?? 0) > 0;
+  const slot = useVideoSlot(props.memberId, props.hidden, showing);
   const arriving = useImageArriving(watch?.stats?.fps);
   const [pointerIn, setPointerIn] = useState(false);
   // O mouse indo da página para o vídeo nativo não avisa a página: ao entrar num vídeo, o "em
@@ -65,7 +69,6 @@ export function WatchTile(props: {
   const { member, stats, listening } = watch;
   const name = member.name;
   const strip = props.variant === "strip";
-  const inPip = pip === props.memberId;
   const showMore = !strip && (videoHover === props.memberId || pointerIn || menuOpen);
   const shape =
     props.variant === "focus" || props.variant === "fullscreen"
@@ -101,13 +104,13 @@ export function WatchTile(props: {
           onMouseLeave={() => setPointerIn(false)}
           className={`group relative ${shape} cursor-pointer overflow-hidden ${
             props.variant === "fullscreen" ? "" : "rounded-lg"
-          } bg-black outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          } ${showing ? "" : "bg-black"} outline-none focus-visible:ring-2 focus-visible:ring-brand`}
         >
-          {/* O vídeo nativo é desenhado exatamente sobre esta área; o aviso fica por baixo dele e só
-              aparece enquanto não há imagem (ou com o vídeo solto no picture in picture). */}
+          {/* O vídeo é desenhado exatamente nesta área, por baixo da página; o aviso só aparece
+              enquanto não há imagem (ou com o vídeo solto no picture in picture). */}
           <div ref={slot} data-testid={`video-de-${props.memberId}`} className="absolute inset-0">
             <div role="status" className="absolute inset-0 grid place-items-center p-4 text-center">
-              {inPip ? (
+              {showing ? null : inPip ? (
                 <div className="flex max-w-sm flex-col items-center gap-2">
                   <PictureInPicture2 size={strip ? 20 : 32} className="text-text-faint" />
                   {!strip && (

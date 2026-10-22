@@ -393,6 +393,13 @@ html {
 html.glass {
   background: transparent;
 }
+/*
+ * Com a interface na tela, quem pinta o fundo são os `Backdrop` dela, transparentes onde há live
+ * passando: o vídeo é desenhado por baixo da página (ADR 0021) e o fundo do `html` o cobriria.
+ */
+html:has(#root > *) {
+  background: transparent;
+}
 
 body {
   margin: 0;

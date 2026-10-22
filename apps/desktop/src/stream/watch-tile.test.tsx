@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { type Member, useRoomStore, type Watch } from "../room/room-store";
 import { useDissolveStore } from "../ui/dissolve-effect";
 import { watchVideoHoles } from "../ui/overlay";
+import { seeThroughAreas } from "../ui/see-through";
 import { listenToStreamEvents, onVideoEnter, type StreamStats, useStreamStore } from "./stream-store";
 import {
   cancelVideoClick,
@@ -60,7 +61,14 @@ describe("picture in picture", () => {
     render(tile());
     fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Picture in picture/ }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: ANA.id, pip: true }));
+    // A janelinha abre com quem transmite e o som da live (os controles dela começam iguais aos do menu).
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_set_pip", {
+        memberId: ANA.id,
+        pip: true,
+        info: { name: "Ana", listening: true, volume: 100, width: 0, height: 0 },
+      }),
+    );
     // Onde o vídeo ficava, o app explica e oferece trazer de volta.
     expect(screen.getByRole("status")).toHaveTextContent("Assistindo Ana em picture in picture");
     fireEvent.contextMenu(screen.getByRole("button", { name: /live de Ana/ }));
@@ -84,7 +92,11 @@ describe("picture in picture", () => {
     useStreamStore.setState({ fullscreen: true, fullscreenOf: ANA.id });
     await act(() => useStreamStore.getState().setPip(ANA.id));
     expect(invoke).toHaveBeenNthCalledWith(1, "set_fullscreen", { fullscreen: false });
-    expect(invoke).toHaveBeenNthCalledWith(2, "room_set_pip", { memberId: ANA.id, pip: true });
+    expect(invoke).toHaveBeenNthCalledWith(2, "room_set_pip", {
+      memberId: ANA.id,
+      pip: true,
+      info: expect.any(Object),
+    });
     expect(useStreamStore.getState()).toMatchObject({ fullscreen: false, fullscreenOf: null, pip: ANA.id });
   });
 
@@ -92,7 +104,7 @@ describe("picture in picture", () => {
     useStreamStore.setState({ pip: ANA.id });
     await useStreamStore.getState().setPip(BETO.id);
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: BETO.id, pip: true });
+    expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: BETO.id, pip: true, info: expect.any(Object) });
     // Pedir a mesma de novo não faz nada; sem nenhuma solta, trazer de volta também não.
     await useStreamStore.getState().setPip(BETO.id);
     useStreamStore.setState({ pip: null });
@@ -273,10 +285,11 @@ describe("avisos da imagem", () => {
     render(tile());
     act(() => vi.advanceTimersByTime(NO_IMAGE_AFTER_MS));
     set(60);
-    expect(screen.getByRole("status")).toHaveTextContent("Esperando a imagem de Ana…");
+    // A imagem chegando aparece no lugar do aviso (o vídeo fica por baixo da página).
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
     expect(screen.getByText("720p 60fps")).toHaveAttribute("data-video-hole");
     set(0);
-    expect(screen.getByRole("status")).not.toHaveTextContent("não está mandando imagem");
+    expect(screen.getByRole("status")).toHaveTextContent("Esperando a imagem de Ana…");
     act(() => vi.advanceTimersByTime(NO_IMAGE_AFTER_MS));
     expect(screen.getByRole("status")).toHaveTextContent("Ana não está mandando imagem agora");
   });
@@ -319,14 +332,62 @@ describe("cada vídeo no seu lugar", () => {
       y: 80,
       width: 640,
       height: 360,
+      radius: 0,
     });
     expect(observed).not.toBeNull();
     view.rerender(tile({ hidden: true }));
-    expect(invoke).toHaveBeenLastCalledWith("set_watch_bounds", { memberId: ANA.id, x: 0, y: 0, width: 0, height: 0 });
+    expect(invoke).toHaveBeenLastCalledWith("set_watch_bounds", {
+      memberId: ANA.id,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      radius: 0,
+    });
     invoke.mockClear();
     view.unmount();
-    expect(invoke).toHaveBeenCalledWith("set_watch_bounds", { memberId: ANA.id, x: 0, y: 0, width: 0, height: 0 });
+    expect(invoke).toHaveBeenCalledWith("set_watch_bounds", {
+      memberId: ANA.id,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      radius: 0,
+    });
     expect(invoke).not.toHaveBeenCalledWith("set_video_bounds", expect.anything());
+  });
+
+  it("com imagem chegando, o quadro fica transparente para o vídeo por baixo, com os cantos dele", () => {
+    const view = render(tile());
+    const quadro = screen.getByRole("button", { name: /live de Ana/ });
+    // O `rounded-lg` do quadro (o CSS do Tailwind não carrega nos testes).
+    quadro.style.borderTopLeftRadius = "8px";
+    act(() => observed!());
+    // Sem imagem: o quadro preto, o aviso e nenhum buraco no fundo.
+    expect(quadro).toHaveClass("bg-black");
+    expect(screen.getByRole("status")).toHaveTextContent("Esperando a imagem de Ana");
+    expect(seeThroughAreas()).toEqual([]);
+    expect(invoke).toHaveBeenCalledWith("set_watch_bounds", expect.objectContaining({ radius: 16 }));
+
+    invoke.mockClear();
+    act(() =>
+      useRoomStore.setState((s) => ({ watching: { ...s.watching, [ANA.id]: watchOf(ANA, { stats: stats(60) }) } })),
+    );
+    expect(quadro).not.toHaveClass("bg-black");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(seeThroughAreas()).toEqual([{ x: 100, y: 40, width: 320, height: 180, radius: 8 }]);
+    // Só a transparência muda: o vídeo continua onde estava.
+    expect(invoke).not.toHaveBeenCalledWith("set_watch_bounds", expect.anything());
+
+    // No picture in picture o vídeo sai daqui: o quadro volta a ser preto, com o aviso.
+    act(() => useStreamStore.setState({ pip: ANA.id }));
+    expect(quadro).toHaveClass("bg-black");
+    expect(seeThroughAreas()).toEqual([]);
+
+    act(() => useStreamStore.setState({ pip: null }));
+    expect(seeThroughAreas()).toHaveLength(1);
+    view.unmount();
+    expect(seeThroughAreas()).toEqual([]);
   });
 
   it("a foto da saída de uma live aparece onde ela estava", async () => {
