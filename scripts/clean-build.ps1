@@ -11,7 +11,9 @@
   cargo clean: apaga a target/ do projeto inteira (o próximo build compila tudo de novo).
 
 .PARAMETER Coverage
-  cargo llvm-cov clean --workspace: apaga só o que o llvm-cov gerou (target/llvm-cov-target).
+  Apaga a target/llvm-cov-target inteira, só o que o llvm-cov gerou (o resto da target/ fica).
+  O `cargo llvm-cov clean --workspace` não serve: ele deixa as dependências instrumentadas, que
+  são quase tudo.
 
 .PARAMETER Worktrees
   Apaga a target/ de cada worktree em .claude/worktrees (o resto do worktree fica).
@@ -76,8 +78,10 @@ try {
     "target/ passou de $IfOverGB GB: limpando."
     $Clean = $true
   }
-  if ($Coverage -and -not $Clean) {
-    cargo llvm-cov clean --workspace
+  $coverageTarget = Join-Path $target "llvm-cov-target"
+  if ($Coverage -and -not $Clean -and (Test-Path $coverageTarget)) {
+    "Apagando $coverageTarget"
+    Remove-Item $coverageTarget -Recurse -Force
   }
   if ($Clean) {
     cargo clean

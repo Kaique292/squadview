@@ -49,6 +49,10 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
 
+      - name: Script de limpeza da target/
+        shell: pwsh
+        run: ./scripts/clean-build.test.ps1
+
   dependencias:
     name: Licenças e vulnerabilidades (cargo-deny)
     runs-on: ubuntu-latest
