@@ -74,6 +74,12 @@ export type ClientMessage =
        * vaga: um app antigo volta com outro id, e a vaga guardada viraria um "clone" dele.
        */
       resumable: boolean;
+      /**
+       * `false`: entrando por um código (digitado ou de convite), a sala precisa já existir; se não
+       * existir, o servidor responde `room-not-found`. `true`: criando a sala (ou numa sala fixa de
+       * servidor). `null`: app antigo, que não manda; a sala é criada como antes.
+       */
+      create: boolean | null;
     }
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
@@ -102,7 +108,14 @@ export type ClientMessage =
 /** `room-full` não é mais mandado: a sala não tem limite de pessoas (ADR 0012). Fica no contrato
  * porque os apps ainda entendem o código de um Worker antigo. */
 export type ErrorCode =
-  "room-full" | "invalid-message" | "version-mismatch" | "not-joined" | "unknown-peer" | "rate-limited";
+  | "room-full"
+  | "invalid-message"
+  | "version-mismatch"
+  | "not-joined"
+  | "unknown-peer"
+  | "rate-limited"
+  /** Entrando por um código (`create: false`) numa sala que não existe. */
+  | "room-not-found";
 
 /** Volta para a mesma vaga depois de uma queda (ADR 0022). */
 export interface Resume {
@@ -218,6 +231,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (resume === false) return null;
       if (data.resumable !== undefined && typeof data.resumable !== "boolean") return null;
       const resumable = data.resumable === true || resume !== null;
+      // Criar ou só entrar: opcional (apps até a 0.10 não mandam).
+      if (data.create !== undefined && data.create !== null && typeof data.create !== "boolean") return null;
+      const create = typeof data.create === "boolean" ? data.create : null;
       return {
         type: "join",
         name,
@@ -227,6 +243,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         session,
         resume,
         resumable,
+        create,
       };
     }
     case "room": {

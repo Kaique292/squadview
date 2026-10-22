@@ -61,6 +61,15 @@ describe("mensagens do cliente", () => {
     }
   });
 
+  it("create: criar, só entrar ou ausente (app antigo); outro tipo é recusado", () => {
+    const parse = (extra: object) =>
+      parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, ...extra }));
+    expect(parse({})).toMatchObject({ create: null });
+    expect(parse({ create: true })).toMatchObject({ create: true });
+    expect(parse({ create: false })).toMatchObject({ create: false });
+    expect(parse({ create: "não" })).toBeNull();
+  });
+
   it("resumable: só o app novo manda; quem manda resume também sabe voltar", () => {
     const parse = (extra: object) =>
       parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, ...extra }));
@@ -90,6 +99,7 @@ describe("mensagens do cliente", () => {
       session: null,
       resume: null,
       resumable: false,
+      create: null,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
@@ -100,6 +110,7 @@ describe("mensagens do cliente", () => {
       session: null,
       resume: null,
       resumable: false,
+      create: null,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });

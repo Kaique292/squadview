@@ -93,7 +93,7 @@ struct Friend {
 
 fn friend(rt: &Runtime, url: &str, code: &str, name: &str) -> Friend {
     rt.block_on(async {
-        let (client, mut events) = RoomClient::join(url, code, name, None, None, None, None)
+        let (client, mut events) = RoomClient::join(url, code, name, None, None, None, None, true)
             .await
             .unwrap_or_else(|e| panic!("{name} não entrou: {e}"));
         match tokio::time::timeout(WAIT, events.recv()).await {
@@ -1194,4 +1194,24 @@ fn a_ana_repassa_a_voz_entre_o_hugo_e_o_beto_sem_mexer_na_assinatura() {
         }
     });
     assert_eq!(ended, hugo_b);
+}
+
+/// Regressão: um código digitado que não é de sala nenhuma criava uma sala vazia (e o app entrava
+/// nela). Agora a entrada falha com "Código inválido", e o código continua livre para quem criar.
+#[test]
+fn entrar_por_um_codigo_que_nao_existe_e_codigo_invalido() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let only_join = JoinAs {
+        create: false,
+        ..JoinAs::named("Ana")
+    };
+    let err = Room::join(&url, &code, only_join.clone(), None, None, |_| {}).unwrap_err();
+    assert_eq!(err, "Código inválido: essa sala não existe.");
+
+    // Quem cria a sala entra; depois, quem entra pelo código encontra a sala.
+    let beto = join(&url, &code, "Beto", None);
+    let ana = Room::join(&url, &code, only_join, None, None, |_| {}).expect("a sala agora existe");
+    beto.members("a Ana", |m| m.iter().any(|x| x.name == "Ana"));
+    drop(ana);
 }

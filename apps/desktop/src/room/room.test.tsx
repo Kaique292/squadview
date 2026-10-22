@@ -128,6 +128,51 @@ describe("criar e entrar em sala", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  // Regressão: o amigo mandou "SE7C27Z" (uma letra a mais) e o botão só ficava apagado, sem dizer
+  // por quê.
+  it("código com caractere a mais ou inválido explica por que não libera", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Beto" } });
+    const code = screen.getByPlaceholderText("B8RJ2Q");
+    expect(screen.queryByText(/O código tem 6 letras/)).not.toBeInTheDocument();
+    for (const wrong of ["SE7C27Z", "SE7C2O"]) {
+      fireEvent.change(code, { target: { value: wrong } });
+      expect(screen.getByRole("button", { name: "Entrar" })).toBeDisabled();
+      expect(screen.getByText(/O código tem 6 letras ou números/)).toBeInTheDocument();
+      expect(code).toHaveAttribute("aria-invalid", "true");
+    }
+    fireEvent.change(code, { target: { value: "SE7C27" } });
+    expect(screen.getByRole("button", { name: "Entrar" })).toBeEnabled();
+    expect(screen.queryByText(/O código tem 6 letras/)).not.toBeInTheDocument();
+  });
+
+  it("colar o link do convite preenche só o código", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    const code = screen.getByPlaceholderText("B8RJ2Q");
+    fireEvent.change(code, { target: { value: "https://kaique292.github.io/squadview/convite/?sala=se7c27" } });
+    expect(code).toHaveValue("SE7C27");
+  });
+
+  // Regressão: um código que não é de sala nenhuma criava uma sala vazia; agora vem o erro do app.
+  it("código de sala que não existe mostra código inválido e não entra", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "room_join" ? Promise.reject("Código inválido: essa sala não existe.") : Promise.resolve(undefined),
+    );
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Beto" } });
+    fireEvent.change(screen.getByPlaceholderText("B8RJ2Q"), { target: { value: "ZZZZZZ" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(await screen.findByText("Código inválido: essa sala não existe.")).toBeInTheDocument();
+    expect(useRoomStore.getState().code).toBeNull();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("troca entre criar e entrar no próprio modal", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
