@@ -6,9 +6,11 @@ import {
   HeadphoneOff,
   Info,
   Loader2,
+  Maximize2,
   MicOff,
   MonitorUp,
   PhoneOff,
+  PictureInPicture2,
   TriangleAlert,
   UserPlus,
   Volume2,
@@ -17,6 +19,7 @@ import { type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref, useE
 import { useAccountStore } from "../account/account-store";
 import { inviteUrl } from "../room/invite";
 import { MemberMenu } from "../room/MemberMenu";
+import { Viewers } from "../room/Viewers";
 import { type Member, memberPhoto, roomTitle, useRoomStore } from "../room/room-store";
 import { StreamDetailsDialog } from "../stream/StreamDetailsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
@@ -84,6 +87,12 @@ export function VoiceRoom() {
   const focusIndex = focusId ? ids.indexOf(focusId) : -1;
   // Quem estava em foco saiu da sala (ou a live parou): volta para a grade.
   if (focusId && focusIndex < 0) setFocusId(null);
+  // A live em foco (a nossa ou a de quem assistimos): o topo mostra de quem é e quem assiste, e o
+  // canto da barra põe ela em tela cheia ou na janelinha.
+  const focusedWatch = focusId?.startsWith(WATCH_PREFIX) ? watching[focusId.slice(WATCH_PREFIX.length)] : undefined;
+  const focusedLive = focusedWatch?.member ?? (focusId === STREAM_TILE ? members[0] : undefined);
+  const setPip = useStreamStore((s) => s.setPip);
+  const setFullscreen = useStreamStore((s) => s.setFullscreen);
   // Começou a assistir alguém: a live dele vem para o foco, como no Discord.
   useEffect(
     () =>
@@ -218,18 +227,37 @@ export function VoiceRoom() {
       }}
       className="relative flex h-full w-full flex-col overflow-hidden bg-black"
     >
-      {/* Topo: nome da sala sobre uma sombra que some para baixo. */}
+      {/* Topo: o nome da sala e, com uma live em foco, de quem ela é e quem está assistindo (como no
+          Discord), sobre uma sombra que some para baixo. */}
       <header
         className={`absolute inset-x-0 top-0 z-10 flex h-16 items-start gap-2 bg-gradient-to-b from-black/80 to-transparent px-4 pt-3 text-left font-semibold ${chromeClass} ${
           chrome ? "" : "-translate-y-2"
         }`}
       >
-        <Volume2 size={20} className="text-text-muted" />
+        <Volume2 size={20} className="shrink-0 text-text-muted" />
         <span className="truncate">{roomTitle(code, roomName)}</span>
+        {focusedLive && (
+          <>
+            <span aria-hidden className="text-text-faint">
+              •
+            </span>
+            <span className="flex min-w-0 items-center gap-2">
+              <Avatar
+                name={focusedLive.name}
+                size={22}
+                src={memberPhoto(focusedLive, focusedLive.id === members[0]?.id, profile, 64)}
+              />
+              <span className="truncate">Tela de {focusedLive.name}</span>
+            </span>
+            <span className="ml-1 pt-px">
+              <Viewers streamerId={focusedLive.id} />
+            </span>
+          </>
+        )}
       </header>
 
       {focusIndex < 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 py-14">
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pt-14 pb-2">
           <ul
             aria-label="Quem está na voz"
             className="flex w-full animate-focus-in flex-wrap content-center justify-center gap-3"
@@ -247,7 +275,7 @@ export function VoiceRoom() {
           </ul>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col px-4 pt-14 pb-14">
+        <div className="flex min-h-0 flex-1 flex-col px-4 pt-14 pb-2">
           {/* Quem está em foco, grande no centro (a chave refaz a animação ao trocar de pessoa). */}
           <div key={focusId} role="group" aria-label="Em foco" className="min-h-0 flex-1 animate-focus-in">
             {tile(focusIndex, "focus")}
@@ -279,7 +307,7 @@ export function VoiceRoom() {
                   <ul
                     aria-label="Outros na voz"
                     inert={!stripOpen}
-                    className="mx-auto flex w-max max-w-full gap-2 overflow-x-auto pb-1"
+                    className="scrollbar-none mx-auto flex w-max max-w-full gap-2 overflow-x-auto"
                   >
                     {others.map((i) => (
                       <li key={ids[i]} className="h-28 shrink-0 animate-focus-in">
@@ -312,12 +340,12 @@ export function VoiceRoom() {
       )}
       {dialogs}
 
-      {/* Embaixo: os controles sobre uma sombra que sobe. A sombra não pega o mouse (cobria a
-          setinha da faixa de participantes): só os botões, e só quando aparecem. */}
+      {/* Embaixo, abaixo dos quadros (não por cima deles), os controles como a barra da chamada do
+          Discord: cada botão na sua caixa, todos do mesmo tamanho, e a tela cheia no canto. */}
       <nav
         aria-label="Controles da voz"
-        className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-24 items-end justify-center gap-3 bg-gradient-to-t from-black/80 to-transparent pb-4 ${chromeClass} ${
-          chrome ? "[&>*]:pointer-events-auto" : "translate-y-2"
+        className={`relative flex h-20 shrink-0 items-center justify-center gap-2 px-4 ${chromeClass} ${
+          chrome ? "" : "translate-y-2"
         }`}
       >
         {/* Grupos como a barra de chamada do Discord: áudio, depois tela e convite, e o desligar. */}
@@ -346,11 +374,27 @@ export function VoiceRoom() {
             type="button"
             aria-label="Sair da sala"
             onClick={() => void leave()}
-            className="grid h-12 w-16 place-items-center rounded-lg bg-live text-white transition-colors hover:bg-live/85"
+            className="grid h-12 w-[72px] place-items-center rounded-lg bg-live text-white transition-colors hover:bg-live/85"
           >
-            <PhoneOff size={22} />
+            <PhoneOff size={20} />
           </button>
         </Tooltip>
+        {/* No canto: a live em foco em tela cheia ou na janelinha por cima de tudo. */}
+        {focusedLive && (
+          <div className="absolute right-4 flex items-center gap-1">
+            {focusedWatch && (
+              <CornerButton label="Picture in picture" onClick={() => void setPip(focusedLive.id)}>
+                <PictureInPicture2 size={20} />
+              </CornerButton>
+            )}
+            <CornerButton
+              label="Tela cheia"
+              onClick={() => void setFullscreen(true, focusedWatch ? focusedLive.id : STREAM_TILE)}
+            >
+              <Maximize2 size={20} />
+            </CornerButton>
+          </div>
+        )}
       </nav>
     </section>
   );
@@ -469,8 +513,10 @@ function Tile({
 const STREAM_TILE = OWN_VIDEO;
 
 /** O quadro da live de quem assistimos (o da pessoa continua com o id dela). */
+const WATCH_PREFIX = "assistindo:";
+
 function watchTileId(memberId: string) {
-  return `assistindo:${memberId}`;
+  return `${WATCH_PREFIX}${memberId}`;
 }
 
 /** Transmitindo, o botão de tela da barra fica verde (como no Discord) e abre o menu da live. */
@@ -482,7 +528,7 @@ function StreamControl(props: { onChange: () => void; onDetails: () => void }) {
           <button
             type="button"
             aria-label="Opções da transmissão"
-            className="grid size-10 place-items-center rounded-md bg-online/15 text-online transition-colors hover:bg-online/25 data-[state=open]:bg-online/25"
+            className="grid size-12 place-items-center rounded-lg bg-online/15 text-online transition-colors hover:bg-online/25 data-[state=open]:bg-online/25"
           >
             <MonitorUp size={20} />
           </button>
@@ -497,16 +543,28 @@ function StreamControl(props: { onChange: () => void; onDetails: () => void }) {
   );
 }
 
-/** Uma caixa escura com bordas suaves que junta botões da barra da chamada. */
+/** Botões da barra da chamada que andam juntos (cada um continua na sua caixa). */
 function ControlGroup(props: { label: string; children: ReactNode }) {
   return (
-    <div
-      role="group"
-      aria-label={props.label}
-      className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-surface-0 p-1 shadow-lg shadow-black/30"
-    >
+    <div role="group" aria-label={props.label} className="flex items-center gap-2">
       {props.children}
     </div>
+  );
+}
+
+/** Botão do canto da barra: só o ícone, sem caixa (como o de tela cheia do Discord). */
+function CornerButton(props: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <Tooltip label={props.label} side="top">
+      <button
+        type="button"
+        aria-label={props.label}
+        onClick={props.onClick}
+        className="grid size-10 place-items-center rounded-lg text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -517,7 +575,7 @@ function ControlButton(props: { label: string; onClick?: () => void; children: R
         type="button"
         aria-label={props.label}
         onClick={props.onClick}
-        className="grid size-10 place-items-center rounded-md text-text transition-colors hover:bg-surface-hover"
+        className="grid size-12 place-items-center rounded-lg bg-surface-1 text-text transition-colors hover:bg-surface-hover"
       >
         {props.children}
       </button>
