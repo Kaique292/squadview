@@ -93,7 +93,7 @@ struct Friend {
 
 fn friend(rt: &Runtime, url: &str, code: &str, name: &str) -> Friend {
     rt.block_on(async {
-        let (client, mut events) = RoomClient::join(url, code, name, None, None, None)
+        let (client, mut events) = RoomClient::join(url, code, name, None, None, None, None)
             .await
             .unwrap_or_else(|e| panic!("{name} não entrou: {e}"));
         match tokio::time::timeout(WAIT, events.recv()).await {
@@ -721,7 +721,7 @@ fn sinalizacao_cai_e_a_sala_volta_sozinha() {
     });
     assert_eq!(error, error_message("rate-limited"));
     ana.wait("tentando voltar", |u| {
-        matches!(u, RoomUpdate::Reconnecting).then_some(())
+        matches!(u, RoomUpdate::Reconnecting { .. }).then_some(())
     });
     let mut seen: Option<Vec<Member>> = None;
     let mut renamed = false;
@@ -734,7 +734,11 @@ fn sinalizacao_cai_e_a_sala_volta_sozinha() {
             renamed = true;
             None
         }
-        RoomUpdate::Reconnected => Some(()),
+        // Quem é derrubado por erro perde a vaga: volta como membro novo (ADR 0022).
+        RoomUpdate::Reconnected { resumed } => {
+            assert!(!resumed, "derrubado por erro não guarda a vaga");
+            Some(())
+        }
         RoomUpdate::Disconnected => panic!("desistiu de voltar"),
         _ => None,
     });

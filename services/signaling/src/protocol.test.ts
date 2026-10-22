@@ -61,6 +61,16 @@ describe("mensagens do cliente", () => {
     }
   });
 
+  it("lê o resume do join e recusa um fora do formato", () => {
+    const resume = { id: "0123456789abcdef", token: "0123456789abcdef0123456789abcdef" };
+    expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, resume }))).toMatchObject({
+      resume,
+    });
+    for (const bad of [{ id: resume.id }, { ...resume, token: "curto" }, { ...resume, id: "x" }, "texto"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, resume: bad }))).toBeNull();
+    }
+  });
+
   it("lê join, status, signal e leave válidos", () => {
     expect(parseClientMessage('{"type":"join","name":" Ana ","protocol":1}')).toEqual({
       type: "join",
@@ -69,6 +79,7 @@ describe("mensagens do cliente", () => {
       room: null,
       discord: null,
       session: null,
+      resume: null,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
@@ -77,6 +88,7 @@ describe("mensagens do cliente", () => {
       room: "Galera do LoL",
       discord: null,
       session: null,
+      resume: null,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });

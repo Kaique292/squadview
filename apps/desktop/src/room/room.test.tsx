@@ -3,7 +3,15 @@ import { act } from "react";
 import { App } from "../App";
 import { DEFAULT_QUALITY, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
-import { listenToRoomEvents, MAX_WATCHING, type Member, savedName, useRoomStore, type Watch } from "./room-store";
+import {
+  listenToRoomEvents,
+  MAX_WATCHING,
+  type Member,
+  RECONNECT_NOTICE_MS,
+  savedName,
+  useRoomStore,
+  type Watch,
+} from "./room-store";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -451,15 +459,32 @@ describe("nome da sala e apelido", () => {
 describe("queda da conexão com a sala", () => {
   beforeEach(() => useRoomStore.setState({ code: "B8RJ2Q", joinedAt: Date.now() }));
 
-  it("avisa que está reconectando e quando volta", async () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("avisa que está reconectando e quando volta, se a volta demora", async () => {
+    vi.useFakeTimers();
     render(<App />);
     emit("room-members", [ME, ANA]);
     emit("room-connection", "reconnecting");
-    expect(await screen.findByText("Reconectando…")).toBeInTheDocument();
+    expect(screen.getByText("Reconectando…")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(RECONNECT_NOTICE_MS));
     expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "warning", title: "Reconectando" });
     emit("room-connection", "connected");
     expect(screen.queryByText("Reconectando…")).not.toBeInTheDocument();
     expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: "De volta à sala." });
+  });
+
+  // Regressão: cada queda de ~1 s da sinalização virava um aviso de "caiu" e outro de "voltou".
+  it("queda que volta logo não mostra aviso nenhum", () => {
+    vi.useFakeTimers();
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const before = useToastStore.getState().toasts.length;
+    emit("room-connection", "reconnecting");
+    act(() => vi.advanceTimersByTime(1_400));
+    emit("room-connection", "connected");
+    act(() => vi.advanceTimersByTime(RECONNECT_NOTICE_MS));
+    expect(useToastStore.getState().toasts).toHaveLength(before);
   });
 
   it("se não der para voltar, sai da sala e explica", () => {

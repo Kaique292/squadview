@@ -510,14 +510,14 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         RoomUpdate::Error(message) => {
             let _ = app.emit(ROOM_ERROR_EVENT, message);
         }
-        RoomUpdate::Reconnecting => {
+        RoomUpdate::Reconnecting { reason } => {
             app.state::<Diagnostics>()
-                .write("room-connection", &json!({ "state": "reconnecting" }));
+                .write("room-connection", &json!({ "state": "reconnecting", "reason": reason }));
             let _ = app.emit(ROOM_CONNECTION_EVENT, "reconnecting");
         }
-        RoomUpdate::Reconnected => {
+        RoomUpdate::Reconnected { resumed } => {
             app.state::<Diagnostics>()
-                .write("room-connection", &json!({ "state": "connected" }));
+                .write("room-connection", &json!({ "state": "connected", "resumed": resumed }));
             let _ = app.emit(ROOM_CONNECTION_EVENT, "connected");
         }
         RoomUpdate::Disconnected => {
