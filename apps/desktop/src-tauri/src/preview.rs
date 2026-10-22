@@ -319,13 +319,14 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) -> Layout {
         .clone()
 }
 
-/// O vídeo abre dentro da janela principal do app, como no Discord.
+/// O vídeo abre dentro da janela principal do app, como no Discord: por baixo da interface, pelo
+/// DirectComposition (ADR 0021), com selos, menus e animações por cima dele.
 pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, String> {
     let window = app
         .get_webview_window("main")
         .ok_or("janela principal não encontrada")?;
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-    Ok(WindowTarget::Embedded {
+    Ok(WindowTarget::Composed {
         parent: hwnd.0 as isize,
     })
 }
@@ -334,6 +335,8 @@ pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, Stri
 #[derive(Debug, Default, Clone)]
 pub struct Layout {
     pub bounds: Bounds,
+    /// Raio dos cantos do quadro da nossa live (pixels físicos).
+    pub radius: u32,
     pub hidden: bool,
     /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali. Vale
     /// para todos os vídeos (cada um ignora os que não caem sobre ele).
@@ -344,6 +347,7 @@ impl Layout {
     /// Na nossa prévia. A posição de cada live assistida vai à parte (`room::set_watch_bounds`):
     /// a nossa live e as dos amigos ficam lado a lado na sala (ADR 0019).
     fn apply(&self, preview: &LocalPreview) {
+        preview.set_video_radius(self.radius);
         preview.set_video_bounds(self.bounds);
         preview.set_video_hidden(self.hidden);
         preview.set_video_holes(self.holes.clone());
@@ -359,9 +363,11 @@ pub fn set_video_bounds<R: Runtime>(
     y: i32,
     width: u32,
     height: u32,
+    radius: Option<u32>,
 ) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.bounds = Bounds { x, y, width, height };
+    running.layout.radius = radius.unwrap_or(0);
     let layout = running.layout.clone();
     if let Some(p) = running.preview.as_ref() {
         layout.apply(p);
@@ -801,9 +807,10 @@ mod tests {
     fn layout_do_video_sem_previa_rodando() {
         let t = test_app();
         let state = || t.app.state::<PreviewState>();
-        set_video_bounds(t.handle().clone(), state(), 10, 20, 640, 360);
+        set_video_bounds(t.handle().clone(), state(), 10, 20, 640, 360, Some(8));
         set_video_hidden(t.handle().clone(), state(), true);
         let l = layout(t.handle());
+        assert_eq!(l.radius, 8);
         assert_eq!(
             (l.bounds.x, l.bounds.y, l.bounds.width, l.bounds.height),
             (10, 20, 640, 360)
@@ -840,7 +847,7 @@ mod tests {
             Ok(()) => {
                 assert!(!idle(&t));
                 set_preview_listening(t.app.state::<PreviewState>(), true);
-                set_video_bounds(t.handle().clone(), t.app.state::<PreviewState>(), 0, 0, 320, 180);
+                set_video_bounds(t.handle().clone(), t.app.state::<PreviewState>(), 0, 0, 320, 180, None);
                 set_video_hidden(t.handle().clone(), t.app.state::<PreviewState>(), false);
                 // Trocar a prévia por outra para a anterior antes.
                 tauri::async_runtime::block_on(start_preview(

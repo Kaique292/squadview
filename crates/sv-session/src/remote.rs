@@ -199,6 +199,21 @@ impl RemoteView {
         s.apply();
     }
 
+    /// Raio dos cantos do quadro (pixels físicos): o vídeo por baixo da interface acompanha a borda.
+    pub fn set_video_radius(&self, radius: u32) {
+        let mut s = lock(&self.state.surface);
+        s.radius = radius;
+        s.apply();
+    }
+
+    /// Por baixo da interface (ADR 0021): leva o vídeo para a janela do picture in picture `hwnd`,
+    /// ocupando `area` dela, ou de volta para a do app (`None`), no último lugar pedido lá.
+    pub fn set_video_host(&self, host: Option<(isize, Bounds)>) {
+        let mut s = lock(&self.state.surface);
+        s.host = host;
+        s.apply();
+    }
+
     /// Solta o vídeo numa janela pequena, sempre no topo (picture in picture), ou devolve ao app.
     pub fn set_video_pip(&self, pip: bool) {
         let mut s = lock(&self.state.surface);

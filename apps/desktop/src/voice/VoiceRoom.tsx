@@ -29,6 +29,7 @@ import { WatchDetailsDialog } from "../stream/WatchDetailsDialog";
 import { WatchTile } from "../stream/WatchTile";
 import { onVideoEnter, useStreamStore } from "../stream/stream-store";
 import { OWN_VIDEO } from "../stream/video-pointer";
+import { Backdrop } from "../ui/Backdrop";
 import { useOverlayMenu } from "../ui/overlay";
 import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
@@ -136,7 +137,8 @@ export function VoiceRoom() {
   // Tela cheia numa live que assistimos: só ela, ocupando tudo.
   if (fullscreen && fullscreenOf && watching[fullscreenOf]) {
     return (
-      <section aria-label={`Live de ${watching[fullscreenOf].member.name}`} className="h-full w-full bg-black">
+      <section aria-label={`Live de ${watching[fullscreenOf].member.name}`} className="relative isolate h-full w-full">
+        <Backdrop className="bg-black" />
         {watchTile(fullscreenOf, "fullscreen")}
         {dialogs}
       </section>
@@ -145,7 +147,8 @@ export function VoiceRoom() {
   // Tela cheia (ou ao vivo fora de uma sala): só a nossa live, ocupando tudo.
   if (live && (fullscreen || !code)) {
     return (
-      <section aria-label="Sua transmissão" className={`h-full w-full bg-black ${fullscreen ? "" : "p-4"}`}>
+      <section aria-label="Sua transmissão" className={`relative isolate h-full w-full ${fullscreen ? "" : "p-4"}`}>
+        <Backdrop className="bg-black" />
         {streamTile(fullscreen ? "fullscreen" : "focus")}
         {dialogs}
       </section>
@@ -225,8 +228,10 @@ export function VoiceRoom() {
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
       }}
-      className="relative flex h-full w-full flex-col overflow-hidden bg-black"
+      className="relative isolate flex h-full w-full flex-col overflow-hidden"
     >
+      {/* O fundo preto da sala, transparente onde há live passando (o vídeo fica por baixo). */}
+      <Backdrop className="bg-black" />
       {/* Topo: o nome da sala e, com uma live em foco, de quem ela é e quem está assistindo (como no
           Discord), sobre uma sombra que some para baixo. */}
       <header

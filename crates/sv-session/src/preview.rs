@@ -200,6 +200,13 @@ impl LocalPreview {
         s.apply();
     }
 
+    /// Raio dos cantos do quadro (pixels físicos): o vídeo por baixo da interface acompanha a borda.
+    pub fn set_video_radius(&self, radius: u32) {
+        let mut s = lock(&self.state.surface);
+        s.radius = radius;
+        s.apply();
+    }
+
     /// Recebe os pedidos de tela cheia feitos dentro do vídeo (dois cliques, F11, Esc).
     pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
         lock(&self.state.surface).set_on_event(Arc::new(cb));

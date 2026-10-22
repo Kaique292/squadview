@@ -49,6 +49,8 @@ pub(crate) struct Running {
     pub(crate) room: Option<Room>,
     /// As lives que assistimos, por pessoa (várias ao mesmo tempo, ADR 0019).
     watching: HashMap<String, Watching>,
+    /// A live que está no picture in picture (uma por vez).
+    pip: Option<String>,
 }
 
 struct Watching {
@@ -149,6 +151,7 @@ pub async fn room_join<R: Runtime>(
 
     // Se já estávamos transmitindo, os amigos da sala nova passam a poder assistir.
     let state = app.state::<RoomState>();
+    close_pip(&app, None);
     let (old_watching, old_room) = {
         let mut running = lock(&state);
         (running.take_all(), running.room.replace(room))
@@ -243,6 +246,7 @@ pub fn room_answer_join(state: State<'_, RoomState>, id: String, accept: bool) -
 pub async fn room_leave<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     preview::off_main(move || {
         let state = app.state::<RoomState>();
+        close_pip(&app, None);
         let (watching, room) = {
             let mut running = lock(&state);
             (running.take_all(), running.room.take())
@@ -267,6 +271,7 @@ pub fn room_watch(state: State<'_, RoomState>, member_id: String) -> Result<(), 
 /// `video-exit`).
 #[tauri::command]
 pub async fn room_stop_watching<R: Runtime>(app: AppHandle<R>, member_id: String) -> Result<(), String> {
+    close_pip(&app, Some(&member_id));
     preview::off_main(move || {
         let state = app.state::<RoomState>();
         let Some(watching) = lock(&state).watching.remove(&member_id) else {
@@ -311,8 +316,18 @@ pub fn set_watch_volume(state: State<'_, RoomState>, member_id: String, volume: 
 
 /// Onde fica o vídeo de uma live que assistimos (o quadro dela na sala, em pixels físicos).
 #[tauri::command]
-pub fn set_watch_bounds(state: State<'_, RoomState>, member_id: String, x: i32, y: i32, width: u32, height: u32) {
+#[allow(clippy::too_many_arguments)]
+pub fn set_watch_bounds(
+    state: State<'_, RoomState>,
+    member_id: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    radius: Option<u32>,
+) {
     if let Some(w) = lock(&state).watching.get(&member_id) {
+        w.view.set_video_radius(radius.unwrap_or(0));
         w.view.set_video_bounds(Bounds { x, y, width, height });
     }
 }
@@ -334,26 +349,106 @@ pub fn stream_changed<R: Runtime>(app: &AppHandle<R>, keyframes: Option<sv_sessi
     }
 }
 
+/// O que a janela do picture in picture mostra além do vídeo (vem da interface).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PipInfo {
+    /// Quem transmite.
+    pub name: String,
+    /// O som da live está ligado.
+    pub listening: bool,
+    /// Volume, de 0 a 200 (%).
+    pub volume: u32,
+    /// Tamanho do vídeo (para a janelinha abrir na proporção dele); 0: 16:9.
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Solta o vídeo de uma live que assistimos numa janela pequena, sempre no topo (picture in
 /// picture), ou devolve ao app. Uma por vez: soltar outra traz a anterior de volta.
+///
+/// A janelinha é uma janela do app (ADR 0021): o vídeo fica por baixo da página dela, e a página
+/// mostra os controles (silenciar, volume, voltar). Assíncrono: criar janela num comando síncrono
+/// trava no Windows.
 #[tauri::command]
-pub fn room_set_pip(state: State<'_, RoomState>, member_id: String, pip: bool) -> Result<(), String> {
-    let running = lock(&state);
+pub async fn room_set_pip<R: Runtime>(
+    app: AppHandle<R>,
+    member_id: String,
+    pip: bool,
+    info: Option<PipInfo>,
+) -> Result<(), String> {
+    let state = app.state::<RoomState>();
+    if !lock(&state).watching.contains_key(&member_id) {
+        // Voltar sem estar assistindo não tem o que fazer (o vídeo já fechou).
+        return if pip {
+            Err("Assista a alguém primeiro.".to_owned())
+        } else {
+            Ok(())
+        };
+    }
+    if !pip {
+        close_pip(&app, Some(&member_id));
+        return Ok(());
+    }
+    // Outra estava solta: volta para o app antes de abrir esta.
+    close_pip(&app, None);
+    let window = crate::pip::open(&app, &member_id, &info.unwrap_or_default())?;
+    let (hwnd, area) = crate::pip::placement(&window)?;
+    let mut running = lock(&state);
     match running.watching.get(&member_id) {
         Some(w) => {
-            if pip {
-                for (id, other) in &running.watching {
-                    if *id != member_id {
-                        other.view.set_video_pip(false);
-                    }
-                }
-            }
-            w.view.set_video_pip(pip);
+            w.view.set_video_host(Some((hwnd, area)));
+            running.pip = Some(member_id);
             Ok(())
         }
-        // Voltar sem estar assistindo não tem o que fazer (o vídeo já fechou).
-        None if !pip => Ok(()),
-        None => Err("Assista a alguém primeiro.".to_owned()),
+        // A live acabou enquanto a janelinha abria.
+        None => {
+            drop(running);
+            let _ = window.destroy();
+            Ok(())
+        }
+    }
+}
+
+/// A janelinha mudou de tamanho: o vídeo ocupa a área nova dela.
+pub(crate) fn pip_resized<R: Runtime>(app: &AppHandle<R>, member_id: &str, hwnd: isize, area: Bounds) {
+    let state = app.state::<RoomState>();
+    let running = lock(&state);
+    if running.pip.as_deref() == Some(member_id)
+        && let Some(w) = running.watching.get(member_id)
+    {
+        w.view.set_video_host(Some((hwnd, area)));
+    }
+}
+
+/// A janelinha fechou (pelo botão de voltar, pelo Alt+F4 ou porque a live acabou): o vídeo volta
+/// para o app e a interface fica sabendo.
+pub(crate) fn pip_closed<R: Runtime>(app: &AppHandle<R>, member_id: &str) {
+    let state = app.state::<RoomState>();
+    let mut running = lock(&state);
+    if running.pip.as_deref() != Some(member_id) {
+        return;
+    }
+    running.pip = None;
+    if let Some(w) = running.watching.get(member_id) {
+        w.view.set_video_host(None);
+    }
+    drop(running);
+    let _ = app.emit(PIP_EVENT, json!({ "pip": false, "source": member_id }));
+}
+
+/// Fecha a janelinha (se ela mostra `member_id`, ou qualquer uma com `None`). O vídeo volta para o
+/// app pelo [`pip_closed`], quando a janela termina de fechar.
+pub(crate) fn close_pip<R: Runtime>(app: &AppHandle<R>, member_id: Option<&str>) {
+    let state = app.state::<RoomState>();
+    let current = lock(&state).pip.clone();
+    let Some(current) = current else { return };
+    if member_id.is_some_and(|m| m != current) {
+        return;
+    }
+    pip_closed(app, &current);
+    if let Some(window) = app.get_webview_window(crate::pip::LABEL) {
+        let _ = window.destroy();
     }
 }
 
@@ -445,6 +540,7 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
             let app = app.clone();
             std::thread::spawn(move || {
                 let state = app.state::<RoomState>();
+                close_pip(&app, None);
                 let (watching, room) = {
                     let mut running = lock(&state);
                     (running.take_all(), running.room.take())
@@ -497,6 +593,7 @@ fn start_watching<R: Runtime>(
             let id = closed_id.clone();
             std::thread::spawn(move || {
                 let state = app.state::<RoomState>();
+                close_pip(&app, Some(&id));
                 let ended = lock(&state).watching.remove(&id);
                 if let Some(w) = ended {
                     preview::hand_off_exit(&app, Some(&id), w.view.snapshot());
@@ -618,17 +715,19 @@ mod tests {
         assert_eq!(room_answer_join(state(), "aa".into(), true).unwrap_err(), entre);
         assert_eq!(room_watch(state(), "aa".into()).unwrap_err(), entre);
         // Picture in picture sem estar assistindo: pedir avisa; voltar não faz nada.
-        assert_eq!(
-            room_set_pip(state(), "aa".into(), true).unwrap_err(),
-            "Assista a alguém primeiro."
-        );
-        assert!(room_set_pip(state(), "aa".into(), false).is_ok());
+        let pip = |on| tauri::async_runtime::block_on(room_set_pip(t.handle().clone(), "aa".into(), on, None));
+        assert_eq!(pip(true).unwrap_err(), "Assista a alguém primeiro.");
+        assert!(pip(false).is_ok());
+        // Sem janelinha aberta: fechar e os avisos dela não fazem nada.
+        close_pip(t.handle(), None);
+        pip_resized(t.handle(), "aa", 0, Bounds::default());
+        pip_closed(t.handle(), "aa");
         // Sem sala e sem ninguém assistido, não acontece nada (nem cai).
         assert!(room_set_profile(state(), "Ana".into(), None).is_ok());
         assert!(room_set_effect(state(), None).is_ok());
         set_watch_listening(state(), "aa".into(), false);
         set_watch_volume(state(), "aa".into(), 1.5);
-        set_watch_bounds(state(), "aa".into(), 0, 0, 320, 180);
+        set_watch_bounds(state(), "aa".into(), 0, 0, 320, 180, Some(8));
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
         assert!(!apply_layout(t.handle(), &preview::Layout::default()));

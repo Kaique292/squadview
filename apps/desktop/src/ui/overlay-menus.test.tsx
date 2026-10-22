@@ -126,14 +126,13 @@ describe("menus por cima do vídeo", () => {
     }
   });
 
-  it("soltar duas vezes não conta em dobro, e erro do Rust não quebra nada", async () => {
-    invoke.mockRejectedValue(new Error("sem janela de vídeo"));
+  it("soltar duas vezes não conta em dobro, e o modal não esconde o vídeo (ele fica por baixo)", () => {
     const release = holdOverlay();
     expect(openOverlays()).toBe(1);
     release();
     release();
     expect(openOverlays()).toBe(0);
-    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("o menu do botão direito num membro abre por cima da live, sem escondê-la", async () => {

@@ -131,7 +131,9 @@ describe("quem está assistindo", () => {
     // A live que começou vem em foco: o topo diz de quem é.
     expect(screen.getByText("Tela de Ana")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Picture in picture" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: ANA.id, pip: true }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: ANA.id, pip: true, info: expect.any(Object) }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
     await waitFor(() => expect(useStreamStore.getState()).toMatchObject({ fullscreen: true, fullscreenOf: ANA.id }));
   });

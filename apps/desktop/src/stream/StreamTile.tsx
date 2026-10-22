@@ -13,12 +13,12 @@ import { useVideoSlot } from "./video-slot";
 export type StreamTileVariant = "grid" | "focus" | "strip" | "fullscreen";
 
 /**
- * A nossa live como um quadro da sala, como no Discord: o vídeo (desenhado pelo Rust por cima),
+ * A nossa live como um quadro da sala, como no Discord: o vídeo (desenhado pelo Rust por baixo),
  * a qualidade e o "AO VIVO" no canto de cima, o nome embaixo e os "..." com o mouse em cima.
  * Clicar põe em foco; dois cliques, tela cheia; botão direito, o menu da live.
  *
- * O vídeo nativo cobre o quadro: selos, nome e botões são buracos no vídeo (`data-video-hole`), e
- * o clique e o botão direito que caem no vídeo chegam aqui pelo `video-pointer`.
+ * O vídeo fica por baixo da página (ADR 0021): selos, nome e botões são desenhados por cima dele,
+ * e o mouse cai direto no quadro.
  */
 export function StreamTile(props: {
   variant: StreamTileVariant;
@@ -29,7 +29,9 @@ export function StreamTile(props: {
 }) {
   const { quality, stats, fullscreen, videoHover, setFullscreen } = useStreamStore();
   const myName = useRoomStore((s) => s.members[0]?.name) ?? "Você";
-  const slot = useVideoSlot();
+  // Com imagem chegando, o quadro fica transparente e o vídeo, desenhado por baixo, aparece.
+  const showing = (stats?.fps ?? 0) > 0;
+  const slot = useVideoSlot(undefined, false, showing);
   const [pointerIn, setPointerIn] = useState(false);
   // O mouse indo da página para o vídeo nativo não avisa a página: ao entrar no vídeo, o "em cima"
   // dela deixa de valer (senão os ... ficavam presos na tela depois de sair da janela).
@@ -68,11 +70,13 @@ export function StreamTile(props: {
           onMouseLeave={() => setPointerIn(false)}
           className={`group relative ${shape} cursor-pointer overflow-hidden ${
             props.variant === "fullscreen" ? "" : "rounded-lg"
-          } bg-black outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          } ${showing ? "" : "bg-black"} outline-none focus-visible:ring-2 focus-visible:ring-brand`}
         >
-          {/* O vídeo nativo é desenhado exatamente sobre esta área. */}
+          {/* O vídeo é desenhado exatamente nesta área, por baixo da página. */}
           <div ref={slot} data-testid="area-do-video" className="absolute inset-0">
-            <p className="absolute inset-0 grid place-items-center text-sm text-text-faint">Carregando o vídeo…</p>
+            {!showing && (
+              <p className="absolute inset-0 grid place-items-center text-sm text-text-faint">Carregando o vídeo…</p>
+            )}
           </div>
 
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>

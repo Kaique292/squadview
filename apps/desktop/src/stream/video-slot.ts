@@ -2,23 +2,38 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import { rememberVideoRect } from "../ui/dissolve-effect";
 import { watchVideoHoles } from "../ui/overlay";
+import { setSeeThrough } from "../ui/see-through";
 import { OWN_VIDEO, setVideoRect } from "./video-pointer";
 
+type PhysicalBounds = { x: number; y: number; width: number; height: number; radius: number };
+
 /** Manda ao Rust onde fica um vídeo: a nossa live (sem `memberId`) ou a de quem assistimos. */
-function sendBounds(memberId: string | undefined, b: { x: number; y: number; width: number; height: number }) {
+function sendBounds(memberId: string | undefined, b: PhysicalBounds) {
   const sent = memberId ? invoke("set_watch_bounds", { memberId, ...b }) : invoke("set_video_bounds", b);
   sent.catch(() => {});
+}
+
+/** O raio dos cantos do quadro em volta da área do vídeo (pixels da interface). */
+function tileRadius(el: HTMLElement) {
+  const tile = el.parentElement;
+  return tile ? parseFloat(getComputedStyle(tile).borderTopLeftRadius) || 0 : 0;
 }
 
 /**
  * Informa ao Rust onde está a área de um vídeo, em pixels físicos, sempre que ela muda de lugar ou
  * de tamanho (janela redimensionada, gaveta aberta, tela cheia). Ao sair, esconde o vídeo.
  *
+ * O vídeo é desenhado por baixo da interface (ADR 0021): com `showing` (a imagem está chegando),
+ * os fundos da página ficam transparentes na área do quadro e ele aparece; sem, o quadro continua
+ * preto, com o aviso dele por cima.
+ *
  * `memberId`: a live de quem assistimos (sem ele, a nossa). `hidden`: o quadro está escondido
- * (a faixa recolhida), e o vídeo nativo, que não respeita o CSS, some junto.
+ * (a faixa recolhida), e o vídeo some junto.
  */
-export function useVideoSlot(memberId?: string, hidden = false) {
+export function useVideoSlot(memberId?: string, hidden = false, showing = true) {
   const ref = useRef<HTMLDivElement>(null);
+  const showingRef = useRef(showing);
+  const reportRef = useRef<() => void>(() => {});
   useEffect(() => {
     const el = ref.current;
     if (!el || !("__TAURI_INTERNALS__" in window)) return;
@@ -30,20 +45,27 @@ export function useVideoSlot(memberId?: string, hidden = false) {
       rememberVideoRect({ x: r.left, y: r.top, width: r.width, height: r.height }, of);
       // E onde o mouse que o vídeo repassa cai na página.
       setVideoRect(r, of);
+      const radius = hidden ? 0 : tileRadius(el);
+      setSeeThrough(
+        of,
+        hidden || !showingRef.current ? null : { x: r.left, y: r.top, width: r.width, height: r.height, radius },
+      );
       const dpr = window.devicePixelRatio || 1;
       const b = hidden
-        ? { x: 0, y: 0, width: 0, height: 0 }
+        ? { x: 0, y: 0, width: 0, height: 0, radius: 0 }
         : {
             x: Math.round(r.left * dpr),
             y: Math.round(r.top * dpr),
             width: Math.round(r.width * dpr),
             height: Math.round(r.height * dpr),
+            radius: Math.round(radius * dpr),
           };
-      const key = `${b.x},${b.y},${b.width},${b.height}`;
+      const key = `${b.x},${b.y},${b.width},${b.height},${b.radius}`;
       if (key === last) return;
       last = key;
       sendBounds(memberId, b);
     };
+    reportRef.current = report;
     const observer = new ResizeObserver(report);
     observer.observe(el);
     window.addEventListener("resize", report);
@@ -51,12 +73,19 @@ export function useVideoSlot(memberId?: string, hidden = false) {
     // Menus e dicas por cima do vídeo: ele abre buracos para eles, em vez de cobri-los.
     const stopHoles = watchVideoHoles();
     return () => {
+      reportRef.current = () => {};
       stopHoles();
       observer.disconnect();
       window.removeEventListener("resize", report);
       setVideoRect(null, of);
-      sendBounds(memberId, { x: 0, y: 0, width: 0, height: 0 });
+      setSeeThrough(of, null);
+      sendBounds(memberId, { x: 0, y: 0, width: 0, height: 0, radius: 0 });
     };
   }, [memberId, hidden]);
+  // A imagem começou (ou parou) de chegar: só a transparência muda, o vídeo fica onde está.
+  useEffect(() => {
+    showingRef.current = showing;
+    reportRef.current();
+  }, [showing]);
   return ref;
 }

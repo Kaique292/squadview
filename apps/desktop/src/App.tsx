@@ -15,6 +15,7 @@ import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
 import { VoiceRoom } from "./voice/VoiceRoom";
+import { Backdrop } from "./ui/Backdrop";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
 
@@ -40,12 +41,15 @@ export function App() {
 
   return (
     <div
-      className={`grid h-full ${fullscreen ? "bg-surface-2" : "bg-glass-0"} ${
+      className={`relative isolate grid h-full ${
         fullscreen
           ? "grid-cols-1 grid-rows-1"
           : "grid-cols-[72px_240px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto]"
       }`}
     >
+      {/* Os fundos são camadas transparentes onde há live passando: o vídeo fica por baixo da
+          página (ADR 0021). */}
+      <Backdrop className={fullscreen ? "bg-surface-2" : "bg-glass-0"} />
       <InvitePrompt />
       <Dissolve />
       <FriendNotices />
@@ -71,18 +75,23 @@ export function App() {
         className={`z-[1] flex min-h-0 min-w-0 flex-col ${fullscreen ? "" : "col-3 row-[2/4] border-t border-white/[0.06]"}`}
       >
         <main
-          className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
-            fullscreen
-              ? "bg-surface-2 p-0"
-              : friendsOpen
-                ? "bg-glass-2 p-0"
-                : code || live
-                  ? // O canal de voz (com as lives como quadros) ocupa a área toda, com fundo
-                    // preto, como no Discord.
-                    "bg-black p-0"
-                  : "bg-glass-2 px-4 pt-4 pb-4"
+          className={`relative isolate flex min-h-0 flex-1 flex-col items-center justify-center gap-4 text-center ${
+            friendsOpen || fullscreen || code || live ? "p-0" : "px-4 pt-4 pb-4"
           }`}
         >
+          <Backdrop
+            className={
+              fullscreen
+                ? "bg-surface-2"
+                : friendsOpen
+                  ? "bg-glass-2"
+                  : code || live
+                    ? // O canal de voz (com as lives como quadros) ocupa a área toda, com fundo
+                      // preto, como no Discord.
+                      "bg-black"
+                    : "bg-glass-2"
+            }
+          />
           {friendsOpen ? (
             chat ? (
               <ChatView key={chat} friend={chat} />

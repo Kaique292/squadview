@@ -467,7 +467,7 @@ describe("posição do vídeo nativo", () => {
     const { unmount } = render(
       <StreamTile variant="focus" focused={false} onActivate={() => {}} onChange={() => {}} onDetails={() => {}} />,
     );
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675, radius: 0 });
 
     invoke.mockClear();
     act(() => observed!());
@@ -475,17 +475,17 @@ describe("posição do vídeo nativo", () => {
 
     rect.width = 1000;
     act(() => observed!());
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1500, height: 675 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1500, height: 675, radius: 0 });
 
     unmount();
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0, radius: 0 });
   });
 
-  it("pede para esconder o vídeo enquanto um modal está aberto", async () => {
+  it("não esconde o vídeo com um modal aberto: ele fica por baixo da interface e o modal, por cima", async () => {
     mockBackend();
     await openDialog();
-    expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: true });
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: false }));
+    await waitFor(() => expect(openOverlays()).toBe(0));
+    expect(invoke).not.toHaveBeenCalledWith("set_video_hidden", expect.anything());
   });
 });

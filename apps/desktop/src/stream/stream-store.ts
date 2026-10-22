@@ -5,6 +5,23 @@ import { playVideoExit } from "../ui/dissolve-effect";
 import { toast } from "../ui/toast-store";
 import { cancelVideoClick, handleVideoPointer, OWN_VIDEO, type VideoPointer, videoKey } from "./video-pointer";
 
+/**
+ * O que a janelinha do picture in picture mostra além do vídeo (espelha `room::PipInfo`): quem
+ * transmite, o som da live e o tamanho da imagem, para ela abrir na proporção certa. O store da
+ * sala vem sob demanda: ele importa este aqui.
+ */
+async function pipInfo(memberId: string) {
+  const { useRoomStore } = await import("../room/room-store");
+  const watch = useRoomStore.getState().watching[memberId];
+  return {
+    name: watch?.member.name ?? "",
+    listening: watch?.listening ?? true,
+    volume: watch?.volume ?? 100,
+    width: watch?.stats?.width ?? 0,
+    height: watch?.stats?.height ?? 0,
+  };
+}
+
 /** Espelha `sv_capture::CaptureSource` (serde: { kind, handle }). */
 export type CaptureSource = { kind: "monitor" | "window"; handle: number };
 
@@ -194,7 +211,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     set({ pip: memberId });
     try {
       // Soltar outra traz a anterior de volta sozinha (o Rust deixa uma por vez).
-      if (memberId) await invoke("room_set_pip", { memberId, pip: true });
+      if (memberId) await invoke("room_set_pip", { memberId, pip: true, info: await pipInfo(memberId) });
       else if (before) await invoke("room_set_pip", { memberId: before, pip: false });
     } catch {
       set({ pip: before });
