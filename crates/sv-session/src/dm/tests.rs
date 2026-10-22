@@ -328,6 +328,7 @@ fn sinal_no_formato_combinado() {
     let offer = DmSignal::DmOffer {
         candidates: vec!["203.0.113.7:51000".parse().unwrap()],
         fingerprint: "ab".into(),
+        features: Vec::new(),
     };
     assert_eq!(
         serde_json::to_value(&offer).unwrap(),
@@ -343,7 +344,105 @@ fn sinal_no_formato_combinado() {
         DmSignal::DmAnswer {
             candidates: vec![],
             fingerprint: "cd".into(),
-            relay: None
+            relay: None,
+            features: Vec::new(),
         }
     );
+}
+
+#[test]
+fn responder_e_reagir_chegam_ao_amigo() {
+    let (ana, beto, _) = pair("reagir");
+    let oi = ana.engine.send_text(BETO, "bora jogar?").unwrap();
+    beto.message("texto no Beto", |m| m.id == oi.id);
+
+    // O Beto responde a mensagem da Ana.
+    let bora = beto.engine.reply(ANA, "bora", Some(&oi.id)).unwrap();
+    assert_eq!(bora.reply_to.as_deref(), Some(oi.id.as_str()));
+    let got = ana.message("resposta na Ana", |m| m.id == bora.id);
+    assert_eq!(got.reply_to.as_deref(), Some(oi.id.as_str()));
+
+    // A Ana reage à resposta: o Beto vê a reação dela.
+    let mine = ana.engine.react(BETO, &bora.id, "🔥", true).unwrap();
+    assert!(mine.reactions_unsent, "até chegar, fica marcada");
+    beto.message("reação da Ana", |m| {
+        m.id == bora.id && m.reactions.iter().any(|r| r.emoji == "🔥" && r.theirs && !r.mine)
+    });
+    ana.wait("a reação saiu", |_| {
+        ana.engine
+            .messages(BETO)
+            .iter()
+            .any(|m| m.id == bora.id && !m.reactions_unsent)
+    });
+
+    // Troca o 🔥 por ❤️: o Beto vê só o ❤️. Ele também reage com ❤️, e a Ana vê os dois.
+    ana.engine.react(BETO, &bora.id, "❤️", true).unwrap();
+    ana.engine.react(BETO, &bora.id, "🔥", false).unwrap();
+    beto.message("só o coração", |m| {
+        m.id == bora.id && m.reactions.len() == 1 && m.reactions[0].emoji == "❤️" && m.reactions[0].theirs
+    });
+    beto.engine.react(ANA, &bora.id, "❤️", true).unwrap();
+    ana.message("o coração dos dois", |m| {
+        m.id == bora.id
+            && m.reactions
+                == vec![Reaction {
+                    emoji: "❤️".into(),
+                    mine: true,
+                    theirs: true,
+                }]
+    });
+
+    // Emoji inválido ou mensagem que não existe: nada muda.
+    assert!(ana.engine.react(BETO, &bora.id, "não é emoji", true).is_none());
+    assert!(ana.engine.react(BETO, "nao-existe", "🔥", true).is_none());
+}
+
+#[test]
+fn reacao_com_o_amigo_offline_vai_quando_ele_volta() {
+    let (ana, beto, online) = pair("reagir-offline");
+    online.store(false, Ordering::Relaxed);
+    let sent = ana.engine.send_text(BETO, "tá aí?").unwrap();
+    ana.engine.react(BETO, &sent.id, "👀", true).unwrap();
+    ana.wait(
+        "aviso de offline",
+        |e| matches!(e, DmEvent::Unreachable { friend } if friend == BETO),
+    );
+    online.store(true, Ordering::Relaxed);
+    assert!(ana.engine.retry(BETO));
+    beto.message("a mensagem e a reação", |m| {
+        m.id == sent.id && m.reactions.iter().any(|r| r.emoji == "👀" && r.theirs)
+    });
+}
+
+#[test]
+fn reacao_so_vai_para_app_que_entende() {
+    let (ana, beto, _) = pair("reagir-antigo");
+    let oi = ana.engine.send_text(BETO, "oi").unwrap();
+    beto.message("texto no Beto", |m| m.id == oi.id);
+    ana.message("entregue", |m| m.id == oi.id && m.status == Status::Delivered);
+    // O Beto anunciou um app sem reações (até a 0.9): mandar derrubaria a conexão dele.
+    ana.engine.inner.note_features(BETO, &[]);
+    ana.engine.react(BETO, &oi.id, "🔥", true).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let kept = ana.engine.messages(BETO).into_iter().find(|m| m.id == oi.id).unwrap();
+    assert!(kept.reactions_unsent, "fica esperando o app dele entender");
+    assert!(beto.engine.messages(ANA).iter().all(|m| m.reactions.is_empty()));
+}
+
+#[test]
+fn quadro_que_o_app_nao_conhece_e_ignorado_sem_derrubar_a_conversa() {
+    let (ana, beto, _) = pair("quadro-novo");
+    let oi = ana.engine.send_text(BETO, "oi").unwrap();
+    beto.message("texto no Beto", |m| m.id == oi.id);
+    // Um app mais novo manda um tipo que este não conhece; a conversa continua.
+    let control = lock(&ana.engine.inner.links).get(BETO).unwrap().control.clone();
+    ana.engine.runtime.as_ref().unwrap().block_on(async {
+        let mut stream = control.lock().await;
+        write_frame(&mut *stream, &serde_json::json!({"kind": "do-futuro", "x": 1}))
+            .await
+            .unwrap();
+    });
+    let depois = ana.engine.send_text(BETO, "ainda aqui").unwrap();
+    beto.message("texto depois do quadro novo", |m| m.id == depois.id);
+    assert!(beto.engine.online(ANA));
 }

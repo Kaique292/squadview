@@ -393,6 +393,13 @@ html {
 html.glass {
   background: transparent;
 }
+/*
+ * Com a interface na tela, quem pinta o fundo são os `Backdrop` dela, transparentes onde há live
+ * passando: o vídeo é desenhado por baixo da página (ADR 0021) e o fundo do `html` o cobriria.
+ */
+html:has(#root > *) {
+  background: transparent;
+}
 
 body {
   margin: 0;
@@ -427,4 +434,12 @@ body {
 .glass-slider:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 4px;
+}
+
+/* Rolagem sem barra (a faixa de quadros da sala rola com a roda do mouse, como no Discord). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }

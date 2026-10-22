@@ -23,11 +23,9 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { DiscordLoginButton } from "../account/DiscordLoginButton";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
-import { Viewers } from "./Viewers";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { StreamDialog } from "../stream/StreamDialog";
 import { useStreamStore } from "../stream/stream-store";
-import { useOverlayMenu } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { toast } from "../ui/toast-store";
 import { Avatar } from "../ui/Avatar";
@@ -109,7 +107,6 @@ function RoomHeader(props: { code: string }) {
   const renameRoom = useRoomStore((s) => s.renameRoom);
   const [renaming, setRenaming] = useState(false);
   const title = roomTitle(props.code, roomName);
-  const onMenuOpenChange = useOverlayMenu();
   return (
     <div className="flex h-12 shrink-0 items-center border-b border-white/[0.06]">
       <NameDialog
@@ -121,7 +118,7 @@ function RoomHeader(props: { code: string }) {
         initial={roomName ?? ""}
         onSave={(name) => void renameRoom(name)}
       />
-      <Menu.Root onOpenChange={onMenuOpenChange}>
+      <Menu.Root>
         <Menu.Trigger asChild>
           <button
             type="button"
@@ -358,7 +355,6 @@ function MemberRow(props: {
         )}
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && <LiveBadge size="sm" />}
-        {member.live && <Viewers streamerId={member.id} compact />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">
             <button

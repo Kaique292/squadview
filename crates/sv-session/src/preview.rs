@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use sv_capture::CaptureSource;
 use sv_core::StreamQuality;
 use sv_gpu::{Gpu, clock};
-use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
+use sv_media::{Bounds, WindowTarget};
 
 use sv_encode::EncodedFrame;
 
@@ -179,30 +179,18 @@ impl LocalPreview {
         })
     }
 
-    /// Onde desenhar o vídeo embutido (pixels físicos, relativos à janela do app).
+    /// Onde desenhar o vídeo, por baixo da interface (pixels físicos, relativos à janela do app).
     pub fn set_video_bounds(&self, bounds: Bounds) {
         let mut s = lock(&self.state.surface);
         s.bounds = bounds;
         s.apply();
     }
 
-    /// Esconde o vídeo embutido (ex.: um modal da interface abriu por cima) ou mostra de novo.
-    pub fn set_video_hidden(&self, hidden: bool) {
+    /// Raio dos cantos do quadro (pixels físicos): o vídeo por baixo da interface acompanha a borda.
+    pub fn set_video_radius(&self, radius: u32) {
         let mut s = lock(&self.state.surface);
-        s.hidden = hidden;
+        s.radius = radius;
         s.apply();
-    }
-
-    /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
-    pub fn set_video_holes(&self, holes: Vec<Hole>) {
-        let mut s = lock(&self.state.surface);
-        s.holes = holes;
-        s.apply();
-    }
-
-    /// Recebe os pedidos de tela cheia feitos dentro do vídeo (dois cliques, F11, Esc).
-    pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
-        lock(&self.state.surface).set_on_event(Arc::new(cb));
     }
 
     /// Liga ou desliga o som da prévia no PC (o áudio continua sendo capturado e medido).

@@ -1,9 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { useStreamStore } from "../stream/stream-store";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
 import { listenToRoomEvents, type Member, useRoomStore } from "./room-store";
-import { namesList, Viewers, viewersOf } from "./Viewers";
+import { STACKED, Viewers, viewersOf } from "./Viewers";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -58,38 +58,83 @@ describe("quem está assistindo", () => {
     expect(viewersOf(members, CAIO.id).map((m) => m.name)).toEqual(["Kaique", "Beto"]);
   });
 
-  it("a lista completa mostra as fotos de até 3 e o resto em número", () => {
+  it("mostra até 3 fotos empilhadas e o resto em número; sem ninguém, nada", () => {
     const EDU = { ...CAIO, id: "eeeeeeeeeeeeeeee", name: "Edu" };
     useRoomStore.setState({
       members: [ME, ANA, BETO, CAIO, EDU].map((m) => (m.id === ANA.id ? m : { ...m, watchingAll: [ANA.id] })),
     });
     const view = render(<Viewers streamerId={ANA.id} />);
     const grupo = screen.getByRole("group", { name: "4 pessoas assistindo" });
-    expect(grupo).toHaveTextContent(/^4.*\+1$/);
+    expect(grupo.children).toHaveLength(STACKED + 1);
+    expect(grupo).toHaveTextContent(/\+1$/);
+    // Com exatamente 3, não aparece o "+".
+    useRoomStore.setState({
+      members: [ME, ANA, BETO, CAIO].map((m) => (m.id === ANA.id ? m : { ...m, watchingAll: [ANA.id] })),
+    });
+    view.rerender(<Viewers streamerId={ANA.id} />);
+    expect(screen.getByRole("group", { name: "3 pessoas assistindo" })).not.toHaveTextContent("+");
     useRoomStore.setState({ members: [ME, ANA] });
     view.rerender(<Viewers streamerId={ANA.id} />);
-    expect(screen.getByRole("group", { name: "0 pessoas assistindo" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /assistindo/ })).toBeNull();
   });
 
-  it("junta os nomes como se fala", () => {
-    expect(namesList(["Ana"])).toBe("Ana");
-    expect(namesList(["Ana", "Beto"])).toBe("Ana e Beto");
-    expect(namesList(["Ana", "Beto", "Caio"])).toBe("Ana, Beto e Caio");
+  it("com o mouse (ou o teclado) em cima, abre a lista dos espectadores com foto e nome", async () => {
+    // A dica do Radix mede o tamanho do conteúdo.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    useRoomStore.setState({
+      members: [ME, ANA, BETO].map((m) => (m.id === ANA.id ? m : { ...m, watchingAll: [ANA.id] })),
+    });
+    render(<Viewers streamerId={ANA.id} />);
+    fireEvent.focus(screen.getByRole("group", { name: "2 pessoas assistindo" }));
+    const lista = await screen.findByRole("tooltip");
+    expect(lista).toHaveTextContent("Espectadores – 2");
+    const nomes = within(lista)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(nomes).toEqual(["KKaique (você)", "BBeto"]);
+    vi.unstubAllGlobals();
   });
 
-  it("na lista da sala, quem está ao vivo mostra quantos assistem", () => {
+  it("na lista da sala, quem está ao vivo não mostra mais o olho com o número", () => {
     render(<App />);
     emit("room-members", [ME, ANA, { ...BETO, watching: ANA.id }, { ...CAIO, watching: ANA.id }]);
-    expect(screen.getByRole("group", { name: "2 pessoas assistindo" })).toBeInTheDocument();
-    // Ninguém assistindo: não mostra o zero na lista.
-    emit("room-members", [ME, ANA, BETO, CAIO]);
-    expect(screen.queryByRole("group", { name: /pessoas? assistindo/ })).toBeNull();
+    const lista = screen.getByRole("list", { name: "Membros da sala" });
+    expect(within(lista).getByText("Ao vivo")).toBeInTheDocument();
+    expect(within(lista).queryByRole("group", { name: /assistindo/ })).toBeNull();
   });
 
-  it("transmitindo, a barra mostra quantos estão assistindo a gente", () => {
+  it("com a nossa live em foco, o topo mostra de quem é a tela e quem está assistindo", () => {
     useStreamStore.setState({ status: "live" });
     render(<App />);
     emit("room-members", [{ ...ME, live: true }, { ...ANA, live: false, watching: ME.id }, BETO]);
-    expect(screen.getAllByRole("group", { name: "1 pessoa assistindo" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Tela de/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pôr sua transmissão em foco" }));
+    const topo = screen.getByText("Tela de Kaique").closest("header")!;
+    expect(within(topo).getByRole("group", { name: "1 pessoa assistindo" })).toBeInTheDocument();
+    // No canto da barra, a tela cheia da live em foco (a nossa não vai para a janelinha).
+    expect(screen.getByRole("button", { name: "Tela cheia" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Picture in picture" })).toBeNull();
+  });
+
+  it("com a live de quem assistimos em foco, o canto da barra solta ou põe em tela cheia", async () => {
+    useStreamStore.setState({ status: "idle", fullscreen: false, fullscreenOf: null, pip: null });
+    render(<App />);
+    emit("room-members", [ME, ANA, { ...BETO, watchingAll: [ANA.id] }]);
+    emit("watch-started", ANA);
+    // A live que começou vem em foco: o topo diz de quem é.
+    expect(screen.getByText("Tela de Ana")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Picture in picture" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("room_set_pip", { memberId: ANA.id, pip: true, info: expect.any(Object) }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    await waitFor(() => expect(useStreamStore.getState()).toMatchObject({ fullscreen: true, fullscreenOf: ANA.id }));
   });
 });

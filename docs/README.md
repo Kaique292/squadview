@@ -37,3 +37,4 @@
 | [0018](adr/0018-presenca-nas-salas-do-servidor.md)        | Presença nas salas do servidor e entrada direta para membros                        |
 | [0019](adr/0019-varias-lives-ao-mesmo-tempo.md)           | Várias lives ao mesmo tempo, cada uma num quadro da sala                            |
 | [0020](adr/0020-voz-repassada-pela-sala.md)               | Voz repassada por um membro da sala quando dois membros não se alcançam             |
+| [0021](adr/0021-video-por-baixo-da-interface.md)          | Vídeo desenhado por baixo da interface (DirectComposition)                          |

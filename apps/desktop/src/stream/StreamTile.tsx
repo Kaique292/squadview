@@ -1,24 +1,24 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Monitor, MoreHorizontal } from "lucide-react";
-import { type KeyboardEvent, useEffect, useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { useRoomStore } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
-import { stopInsideMenu, useOverlayMenu } from "../ui/overlay";
+import { stopInsideMenu } from "../ui/overlay";
 import { MENU_CONTENT, StreamMenuItems, qualityLabel } from "./StreamMenu";
-import { onVideoEnter, useStreamStore } from "./stream-store";
+import { useStreamStore } from "./stream-store";
 import { useVideoSlot } from "./video-slot";
 
 /** Como o quadro aparece: na grade com todos, grande em foco, pequeno na faixa ou em tela cheia. */
 export type StreamTileVariant = "grid" | "focus" | "strip" | "fullscreen";
 
 /**
- * A nossa live como um quadro da sala, como no Discord: o vídeo (desenhado pelo Rust por cima),
+ * A nossa live como um quadro da sala, como no Discord: o vídeo (desenhado pelo Rust por baixo),
  * a qualidade e o "AO VIVO" no canto de cima, o nome embaixo e os "..." com o mouse em cima.
  * Clicar põe em foco; dois cliques, tela cheia; botão direito, o menu da live.
  *
- * O vídeo nativo cobre o quadro: selos, nome e botões são buracos no vídeo (`data-video-hole`), e
- * o clique e o botão direito que caem no vídeo chegam aqui pelo `video-pointer`.
+ * O vídeo fica por baixo da página (ADR 0021): selos, nome e botões são desenhados por cima dele,
+ * e o mouse cai direto no quadro.
  */
 export function StreamTile(props: {
   variant: StreamTileVariant;
@@ -27,17 +27,15 @@ export function StreamTile(props: {
   onChange: () => void;
   onDetails: () => void;
 }) {
-  const { quality, stats, fullscreen, videoHover, setFullscreen } = useStreamStore();
+  const { quality, stats, fullscreen, setFullscreen } = useStreamStore();
   const myName = useRoomStore((s) => s.members[0]?.name) ?? "Você";
-  const slot = useVideoSlot();
+  // Com imagem chegando, o quadro fica transparente e o vídeo, desenhado por baixo, aparece.
+  const showing = (stats?.fps ?? 0) > 0;
+  const slot = useVideoSlot(undefined, false, showing);
   const [pointerIn, setPointerIn] = useState(false);
-  // O mouse indo da página para o vídeo nativo não avisa a página: ao entrar no vídeo, o "em cima"
-  // dela deixa de valer (senão os ... ficavam presos na tela depois de sair da janela).
-  useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [menuOpen, setMenuOpen] = useState(false);
-  const onMenuOpenChange = useOverlayMenu(setMenuOpen);
   const strip = props.variant === "strip";
-  const showMore = !strip && (videoHover || pointerIn || menuOpen);
+  const showMore = !strip && (pointerIn || menuOpen);
   const shape =
     props.variant === "focus" || props.variant === "fullscreen"
       ? "h-full w-full"
@@ -53,7 +51,7 @@ export function StreamTile(props: {
   }
 
   return (
-    <ContextMenu.Root onOpenChange={useOverlayMenu()}>
+    <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
           role="button"
@@ -68,20 +66,21 @@ export function StreamTile(props: {
           onMouseLeave={() => setPointerIn(false)}
           className={`group relative ${shape} cursor-pointer overflow-hidden ${
             props.variant === "fullscreen" ? "" : "rounded-lg"
-          } bg-black outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          } ${showing ? "" : "bg-black"} outline-none focus-visible:ring-2 focus-visible:ring-brand`}
         >
-          {/* O vídeo nativo é desenhado exatamente sobre esta área. */}
+          {/* O vídeo é desenhado exatamente nesta área, por baixo da página. */}
           <div ref={slot} data-testid="area-do-video" className="absolute inset-0">
-            <p className="absolute inset-0 grid place-items-center text-sm text-text-faint">Carregando o vídeo…</p>
+            {!showing && (
+              <p className="absolute inset-0 grid place-items-center text-sm text-text-faint">Carregando o vídeo…</p>
+            )}
           </div>
 
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>
-            {!strip && <InfoBadge data-video-hole>{qualityLabel(quality, stats?.height)}</InfoBadge>}
-            <LiveBadge data-video-hole size={strip ? "sm" : "md"} />
+            {!strip && <InfoBadge>{qualityLabel(quality, stats?.height)}</InfoBadge>}
+            <LiveBadge size={strip ? "sm" : "md"} />
           </div>
 
           <span
-            data-video-hole
             className={`absolute flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-black/60 font-medium ${
               strip ? "bottom-1.5 left-1.5 px-1.5 py-0.5 text-xs" : "bottom-2.5 left-2.5 px-2 py-1 text-sm"
             }`}
@@ -91,12 +90,11 @@ export function StreamTile(props: {
           </span>
 
           {showMore && (
-            <DropdownMenu.Root open={menuOpen} onOpenChange={onMenuOpenChange}>
+            <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
               <DropdownMenu.Trigger asChild>
                 <button
                   type="button"
                   aria-label="Mais opções da transmissão"
-                  data-video-hole
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
                   className="absolute right-2.5 bottom-2.5 grid size-8 place-items-center rounded-md bg-black/60 text-white transition-colors hover:bg-black/80 data-[state=open]:bg-black/80"

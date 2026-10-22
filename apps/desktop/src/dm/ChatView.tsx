@@ -1,17 +1,30 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Check, Clock, Download, FileText, FolderOpen, Loader2, Paperclip, SendHorizontal, X } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import {
+  Check,
+  Clock,
+  CornerUpLeft,
+  Download,
+  FileText,
+  FolderOpen,
+  Loader2,
+  Paperclip,
+  Reply,
+  SendHorizontal,
+  SmilePlus,
+  X,
+} from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { avatarUrl, displayName, useAccountStore } from "../account/account-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { Avatar } from "../ui/Avatar";
-import { holdOverlay } from "../ui/overlay";
 import { ScrollArea } from "../ui/ScrollArea";
 import { inTauri } from "../ui/tauri-env";
 import { Tooltip } from "../ui/Tooltip";
 import { CopyDialog } from "./CopyDialog";
 import { usePerson } from "./DmSidebar";
-import { type DmMessage, fileSize, useDmStore } from "./dm-store";
+import { type DmMessage, fileSize, type Reaction, useDmStore } from "./dm-store";
 
 /** Mensagens seguidas da mesma pessoa em até 5 min ficam juntas, sem repetir foto e nome. */
 const GROUP_MS = 5 * 60 * 1000;
@@ -23,6 +36,69 @@ function time(at: number): string {
 function day(at: number): string {
   return new Date(at).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 }
+
+/**
+ * Quando a mensagem foi mandada, como no Discord: só a hora se foi hoje, "Ontem às 23:59" se foi
+ * ontem e "19/10/2026 14:45" se foi antes.
+ */
+export function stamp(at: number, now = Date.now()): string {
+  const date = new Date(at);
+  const today = new Date(now);
+  const yesterday = new Date(now);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return time(at);
+  if (date.toDateString() === yesterday.toDateString()) return `Ontem às ${time(at)}`;
+  const numeric = date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${numeric} ${time(at)}`;
+}
+
+/** As três reações de um clique, na barra que aparece com o mouse em cima da mensagem. */
+export const QUICK_REACTIONS = ["👍", "❤️", "😂"];
+/** O resto, no botão de mais reações. */
+export const MORE_REACTIONS = [
+  "😀",
+  "😁",
+  "😂",
+  "🤣",
+  "😊",
+  "😍",
+  "🥰",
+  "😎",
+  "🤩",
+  "🥲",
+  "😅",
+  "😬",
+  "🤔",
+  "🙃",
+  "😏",
+  "😮",
+  "😴",
+  "🤯",
+  "😢",
+  "😭",
+  "😡",
+  "💀",
+  "👀",
+  "🫡",
+  "👍",
+  "👎",
+  "👏",
+  "🙌",
+  "🙏",
+  "💪",
+  "🤝",
+  "✌️",
+  "🔥",
+  "❤️",
+  "💔",
+  "💯",
+  "✅",
+  "❌",
+  "🎉",
+  "🎮",
+  "🏆",
+  "⚡",
+];
 
 /**
  * Uma conversa privada, como a do Discord: mensagens agrupadas por pessoa, anexos com prévia e a
@@ -37,7 +113,17 @@ export function ChatView(props: { friend: string }) {
   const profile = useAccountStore((s) => s.profile);
   const myName = profile ? displayName(profile) : "Você";
   const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => holdOverlay(), []);
+  // A mensagem que acabou de ser levada à vista (clique numa resposta): pisca por um instante.
+  const [flash, setFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 1600);
+    return () => clearTimeout(t);
+  }, [flash]);
+  const goTo = (id: string) => {
+    document.getElementById(`mensagem-${id}`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    setFlash(id);
+  };
   // Mensagem nova (ou a prévia de uma foto que acabou de carregar e cresceu a conversa): rola até o fim.
   // Sem devolver nada: no Chromium novo o `scrollIntoView` devolve uma Promise, e o React a
   // chamaria como limpeza do efeito ao fechar a conversa.
@@ -85,7 +171,9 @@ export function ChatView(props: { friend: string }) {
               {messages.map((m, i) => {
                 const prev = messages[i - 1];
                 const newDay = !prev || day(prev.at) !== day(m.at);
-                const grouped = !newDay && prev.mine === m.mine && m.at - prev.at < GROUP_MS;
+                // Uma resposta sempre mostra quem mandou (como no Discord), mesmo logo depois de outra.
+                const grouped = !newDay && !m.replyTo && prev.mine === m.mine && m.at - prev.at < GROUP_MS;
+                const original = m.replyTo ? messages.find((o) => o.id === m.replyTo) : undefined;
                 return (
                   <li key={m.id}>
                     {newDay && (
@@ -112,6 +200,10 @@ export function ChatView(props: { friend: string }) {
                       friendName={person.name}
                       friendOnline={!!presence?.online}
                       onMediaLoad={toEnd}
+                      original={original}
+                      originalAuthor={original ? (original.mine ? myName : person.name) : undefined}
+                      onGoTo={goTo}
+                      flash={flash === m.id}
                     />
                   </li>
                 );
@@ -138,41 +230,208 @@ function MessageRow(props: {
   /** O amigo está online (a mensagem pendente está conectando, não esperando ele aparecer). */
   friendOnline: boolean;
   onMediaLoad: () => void;
+  /** A mensagem que esta responde (se ainda está na conversa) e quem a mandou. */
+  original?: DmMessage;
+  originalAuthor?: string;
+  /** Leva até uma mensagem (clique na resposta). */
+  onGoTo: (id: string) => void;
+  /** Acabou de ser levada à vista: pisca. */
+  flash: boolean;
 }) {
   const m = props.message;
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div
-      className={`group flex gap-3 rounded px-1 hover:bg-surface-hover/30 ${props.grouped ? "py-0.5" : "mt-3 py-0.5"}`}
+      id={`mensagem-${m.id}`}
+      className={`group relative rounded px-1 transition-colors hover:bg-surface-hover/30 ${
+        props.grouped ? "py-0.5" : "mt-3 py-0.5"
+      } ${props.flash ? "bg-brand/15" : ""} ${menuOpen ? "bg-surface-hover/30" : ""}`}
     >
-      <span className="w-10 shrink-0">
-        {!props.grouped && <Avatar name={props.author} size={40} src={props.photo} />}
-      </span>
-      <div className="min-w-0 flex-1">
-        {!props.grouped && (
-          <p className="flex items-baseline gap-2">
-            <span className="font-semibold">{props.author}</span>
-            <span className="text-xs text-text-faint">{time(m.at)}</span>
-          </p>
-        )}
-        {m.text && <p className="break-words whitespace-pre-wrap text-text">{m.text}</p>}
-        {m.file && <AttachmentView friend={props.friend} message={m} onMediaLoad={props.onMediaLoad} />}
-        {m.mine && (
-          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-text-faint">
-            {m.status === "pending" ? (
-              <>
-                <Clock size={11} />{" "}
-                {props.friendOnline
-                  ? `Conectando com ${props.friendName}…`
-                  : `Esperando ${props.friendName} ficar online`}
-              </>
-            ) : (
-              <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Check size={11} /> Entregue
-              </span>
-            )}
-          </p>
-        )}
+      {m.replyTo && <ReplyLine original={props.original} author={props.originalAuthor} onGoTo={props.onGoTo} />}
+      <div className="flex gap-3">
+        <span className="w-10 shrink-0">
+          {props.grouped ? (
+            // Agrupada: a hora aparece no lugar da foto, com o mouse em cima (como no Discord).
+            <span className="block pt-1 text-right text-[10px] text-text-faint opacity-0 group-hover:opacity-100">
+              {time(m.at)}
+            </span>
+          ) : (
+            <Avatar name={props.author} size={40} src={props.photo} />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          {!props.grouped && (
+            <p className="flex items-baseline gap-2">
+              <span className="font-semibold">{props.author}</span>
+              <span className="text-xs text-text-faint">{stamp(m.at)}</span>
+            </p>
+          )}
+          {m.text && <p className="break-words whitespace-pre-wrap text-text">{m.text}</p>}
+          {m.file && <AttachmentView friend={props.friend} message={m} onMediaLoad={props.onMediaLoad} />}
+          {!!m.reactions?.length && <Reactions friend={props.friend} message={m} friendName={props.friendName} />}
+          {m.mine && (
+            <p className="mt-0.5 flex items-center gap-1 text-[11px] text-text-faint">
+              {m.status === "pending" ? (
+                <>
+                  <Clock size={11} />{" "}
+                  {props.friendOnline
+                    ? `Conectando com ${props.friendName}…`
+                    : `Esperando ${props.friendName} ficar online`}
+                </>
+              ) : (
+                <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Check size={11} /> Entregue
+                </span>
+              )}
+            </p>
+          )}
+        </div>
       </div>
+      <MessageActions friend={props.friend} message={m} author={props.author} onMenuChange={setMenuOpen} />
+    </div>
+  );
+}
+
+/** A linha em cima de uma resposta: quem e o que foi respondido. Clique leva até a original. */
+function ReplyLine(props: { original?: DmMessage; author?: string; onGoTo: (id: string) => void }) {
+  const o = props.original;
+  if (!o) {
+    return (
+      <p className="mb-0.5 flex items-center gap-1.5 pl-[52px] text-xs text-text-faint italic">
+        <CornerUpLeft size={12} className="shrink-0" /> A mensagem original não está mais aqui
+      </p>
+    );
+  }
+  const preview = o.text ?? (o.file ? `📎 ${o.file.name}` : "");
+  return (
+    <button
+      type="button"
+      onClick={() => props.onGoTo(o.id)}
+      aria-label={`Ir para a mensagem de ${props.author}`}
+      className="mb-0.5 flex max-w-full items-center gap-1.5 pl-[52px] text-left text-xs text-text-muted hover:text-text"
+    >
+      <CornerUpLeft size={12} className="shrink-0" />
+      <span className="shrink-0 font-semibold">@{props.author}</span>
+      <span className="truncate">{preview}</span>
+    </button>
+  );
+}
+
+/** Quem reagiu, em palavras: "Você e Ana reagiram com 🔥", "Ana reagiu com 🔥". */
+function reactedBy(r: Reaction, friendName: string): string {
+  if (r.mine && r.theirs) return `Você e ${friendName} reagiram com ${r.emoji}`;
+  return `${r.mine ? "Você" : friendName} reagiu com ${r.emoji}`;
+}
+
+/** As reações embaixo da mensagem: clique na sua tira; na do amigo, reage junto. */
+function Reactions(props: { friend: string; message: DmMessage; friendName: string }) {
+  const react = useDmStore((s) => s.react);
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {props.message.reactions!.map((r) => {
+        const count = Number(r.mine) + Number(r.theirs);
+        return (
+          <Tooltip key={r.emoji} label={reactedBy(r, props.friendName)} side="top">
+            <button
+              type="button"
+              aria-pressed={r.mine}
+              aria-label={`${r.emoji} ${count}`}
+              onClick={() => void react(props.friend, props.message, r.emoji)}
+              className={`flex h-6 items-center gap-1 rounded-lg border px-1.5 text-sm transition-colors ${
+                r.mine
+                  ? "border-brand bg-brand/15 text-text"
+                  : "border-transparent bg-surface-1 text-text-muted hover:border-white/10"
+              }`}
+            >
+              <span>{r.emoji}</span>
+              <span className="text-xs font-semibold tabular-nums">{count}</span>
+            </button>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+const ACTION =
+  "grid size-8 place-items-center rounded text-lg text-text-muted transition-colors hover:bg-surface-hover hover:text-text";
+
+/**
+ * A barra que aparece com o mouse em cima da mensagem, como a do Discord: três reações de um
+ * clique, mais reações e responder.
+ */
+function MessageActions(props: {
+  friend: string;
+  message: DmMessage;
+  author: string;
+  onMenuChange: (open: boolean) => void;
+}) {
+  const react = useDmStore((s) => s.react);
+  const setReplying = useDmStore((s) => s.setReplying);
+  const [open, setOpen] = useState(false);
+  const change = (next: boolean) => {
+    setOpen(next);
+    props.onMenuChange(next);
+  };
+  return (
+    <div
+      role="toolbar"
+      aria-label={`Ações da mensagem de ${props.author}`}
+      className={`absolute -top-4 right-4 z-10 items-center gap-0.5 rounded-lg border border-white/[0.06] bg-surface-2 p-0.5 shadow-lg ${
+        open ? "flex" : "hidden group-focus-within:flex group-hover:flex"
+      }`}
+    >
+      {QUICK_REACTIONS.map((emoji) => (
+        <Tooltip key={emoji} label={`Reagir com ${emoji}`} side="top">
+          <button
+            type="button"
+            aria-label={`Reagir com ${emoji}`}
+            onClick={() => void react(props.friend, props.message, emoji)}
+            className={ACTION}
+          >
+            {emoji}
+          </button>
+        </Tooltip>
+      ))}
+      <DropdownMenu.Root open={open} onOpenChange={change}>
+        <Tooltip label="Adicionar reação" side="top">
+          <DropdownMenu.Trigger asChild>
+            <button type="button" aria-label="Adicionar reação" className={ACTION}>
+              <SmilePlus size={18} />
+            </button>
+          </DropdownMenu.Trigger>
+        </Tooltip>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            side="top"
+            align="end"
+            sideOffset={6}
+            aria-label="Reações"
+            className="z-50 grid w-[296px] grid-cols-8 gap-0.5 rounded-lg bg-surface-float p-2 shadow-2xl shadow-black/50 data-[state=closed]:animate-overlay-out data-[state=open]:animate-menu-in"
+          >
+            {MORE_REACTIONS.map((emoji) => (
+              <DropdownMenu.Item
+                key={emoji}
+                aria-label={`Reagir com ${emoji}`}
+                onSelect={() => void react(props.friend, props.message, emoji)}
+                className="grid size-8 cursor-pointer place-items-center rounded text-xl outline-none data-[highlighted]:bg-surface-hover"
+              >
+                {emoji}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <Tooltip label="Responder" side="top">
+        <button
+          type="button"
+          aria-label="Responder"
+          onClick={() => setReplying(props.friend, props.message.id)}
+          className={ACTION}
+        >
+          <Reply size={18} />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -309,6 +568,17 @@ function Composer(props: { friend: string; name: string }) {
   const [dragging, setDragging] = useState(false);
   const sendText = useDmStore((s) => s.sendText);
   const sendFiles = useDmStore((s) => s.sendFiles);
+  const replyingId = useDmStore((s) => s.replying[props.friend]);
+  const replying = useDmStore((s) =>
+    replyingId ? s.messages[props.friend]?.find((m) => m.id === replyingId) : undefined,
+  );
+  const setReplying = useDmStore((s) => s.setReplying);
+  const myName = useAccountStore((s) => (s.profile ? displayName(s.profile) : "Você"));
+  const input = useRef<HTMLTextAreaElement>(null);
+  // Clicou em Responder: a caixa de escrever já fica pronta.
+  useEffect(() => {
+    if (replyingId) input.current?.focus();
+  }, [replyingId]);
 
   // Arrastar arquivos do Windows para a janela manda para esta conversa.
   useEffect(() => {
@@ -330,10 +600,18 @@ function Composer(props: { friend: string; name: string }) {
 
   async function submit() {
     if (!text.trim()) return;
-    if (await sendText(props.friend, text)) setText("");
+    if (await sendText(props.friend, text, replying?.id)) {
+      setText("");
+      setReplying(props.friend, null);
+    }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Escape" && replying) {
+      e.preventDefault();
+      setReplying(props.friend, null);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void submit();
@@ -347,10 +625,27 @@ function Composer(props: { friend: string; name: string }) {
 
   return (
     <div className="shrink-0 px-4 pb-4">
+      {replying && (
+        <div className="flex items-center gap-2 rounded-t-lg bg-surface-3/60 px-3 py-1.5 text-sm text-text-muted">
+          <span className="min-w-0 flex-1 truncate">
+            Respondendo a <b className="text-text">{replying.mine ? myName : props.name}</b>
+          </span>
+          <Tooltip label="Cancelar resposta" side="top">
+            <button
+              type="button"
+              aria-label="Cancelar resposta"
+              onClick={() => setReplying(props.friend, null)}
+              className="rounded p-0.5 text-text-muted hover:text-text"
+            >
+              <X size={16} />
+            </button>
+          </Tooltip>
+        </div>
+      )}
       <div
-        className={`flex items-end gap-2 rounded-lg bg-surface-1 px-3 py-2 transition-shadow ${
-          dragging ? "ring-2 ring-brand" : ""
-        }`}
+        className={`flex items-end gap-2 bg-surface-1 px-3 py-2 transition-shadow ${
+          replying ? "rounded-b-lg" : "rounded-lg"
+        } ${dragging ? "ring-2 ring-brand" : ""}`}
       >
         <Tooltip label="Anexar arquivos" side="top">
           <button
@@ -363,6 +658,7 @@ function Composer(props: { friend: string; name: string }) {
           </button>
         </Tooltip>
         <textarea
+          ref={input}
           aria-label={`Mensagem para ${props.name}`}
           placeholder={dragging ? "Solte para mandar" : `Conversar com ${props.name}`}
           value={text}

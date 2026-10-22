@@ -5,7 +5,6 @@ import { type ReactNode, useState } from "react";
 import { useAccountStore } from "../account/account-store";
 import { NameDialog } from "../room/NameDialog";
 import { Modal, ModalClose } from "../ui/Modal";
-import { useOverlayMenu } from "../ui/overlay";
 import { ServerSettingsDialog } from "./ServerSettingsDialog";
 import { myRole, type Server, useServersStore } from "./servers-store";
 
@@ -96,7 +95,7 @@ export function ServerContextMenu(props: { server: Server; children: ReactNode }
   const dialogs = useServerDialogs(props.server);
   return (
     <>
-      <ContextMenu.Root onOpenChange={useOverlayMenu()}>
+      <ContextMenu.Root>
         <ContextMenu.Trigger asChild>{props.children}</ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content aria-label={`Opções de ${props.server.name}`} className={SERVER_MENU_CONTENT}>

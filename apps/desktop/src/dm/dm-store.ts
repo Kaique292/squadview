@@ -23,6 +23,13 @@ export interface Attachment {
   done: number;
 }
 
+/** Espelha `sv_session::dm::Reaction`: o emoji e quem reagiu com ele. */
+export interface Reaction {
+  emoji: string;
+  mine: boolean;
+  theirs: boolean;
+}
+
 /** Espelha `sv_session::dm::DmMessage`. */
 export interface DmMessage {
   id: string;
@@ -31,6 +38,9 @@ export interface DmMessage {
   text?: string;
   file?: Attachment;
   status: "pending" | "delivered" | "received";
+  /** A mensagem que esta responde. */
+  replyTo?: string;
+  reactions?: Reaction[];
 }
 
 export interface Conversation {
@@ -83,7 +93,13 @@ interface DmState {
   downloading: Record<string, boolean>;
   load: () => Promise<void>;
   openChat: (friend: string | null) => Promise<void>;
-  sendText: (friend: string, text: string) => Promise<boolean>;
+  /** Manda um texto; com `replyTo`, respondendo aquela mensagem. */
+  sendText: (friend: string, text: string, replyTo?: string) => Promise<boolean>;
+  /** Põe ou tira a nossa reação `emoji` na mensagem. */
+  react: (friend: string, message: DmMessage, emoji: string) => Promise<void>;
+  /** A mensagem que estamos respondendo em cada conversa. */
+  replying: Record<string, string>;
+  setReplying: (friend: string, id: string | null) => void;
   /** Manda arquivos; na primeira vez (escolha "perguntar"), abre o modal da cópia. */
   sendFiles: (friend: string, paths: string[]) => Promise<void>;
   /** Resposta do modal: guardar cópia ou não, e se lembra a escolha. */
@@ -104,6 +120,7 @@ export const useDmStore = create<DmState>((set, get) => ({
   pendingFiles: null,
   copyChoice: savedCopyChoice(),
   downloading: {},
+  replying: {},
 
   async load() {
     try {
@@ -134,14 +151,31 @@ export const useDmStore = create<DmState>((set, get) => ({
     }
   },
 
-  async sendText(friend, text) {
+  async sendText(friend, text, replyTo) {
     try {
-      await invoke("dm_send_text", { friend, text });
+      await invoke("dm_send_text", { friend, text, replyTo: replyTo ?? null });
       return true;
     } catch (e) {
       toast.warning(String(e), "Mensagens");
       return false;
     }
+  },
+
+  async react(friend, message, emoji) {
+    const on = !message.reactions?.some((r) => r.emoji === emoji && r.mine);
+    try {
+      const updated = await invoke<DmMessage | null>("dm_react", { friend, id: message.id, emoji, on });
+      if (updated) onMessage(friend, updated);
+    } catch (e) {
+      toast.warning(String(e), "Mensagens");
+    }
+  },
+
+  setReplying(friend, id) {
+    const replying = { ...get().replying };
+    if (id) replying[friend] = id;
+    else delete replying[friend];
+    set({ replying });
   },
 
   async sendFiles(friend, paths) {
@@ -216,10 +250,13 @@ function onMessage(friend: string, message: DmMessage) {
     : s.messages;
   // Nova de verdade só na primeira vez: depois são atualizações dela (entregue, progresso de um
   // anexo). Pela lista não dá para saber com a conversa fechada (ela só carrega ao abrir).
-  const isNew = !seen.has(message.id) && !list?.some((m) => m.id === message.id);
-  seen.add(message.id);
   const others = s.conversations.filter((c) => c.friend !== friend);
   const current = s.conversations.find((c) => c.friend === friend);
+  // Uma reação numa mensagem antiga (com a conversa fechada, ela nunca foi vista neste app aberto)
+  // não é mensagem nova: nem som, nem contador.
+  const reactionOnOld = !!message.reactions?.length && !!current?.last && message.at < current.last.at;
+  const isNew = !seen.has(message.id) && !list?.some((m) => m.id === message.id) && !reactionOnOld;
+  seen.add(message.id);
   const last = !current?.last || message.at >= current.last.at ? message : current.last;
   const pending = (messages[friend] ?? [message]).filter((m) => m.mine && m.status === "pending").length;
   const unread =

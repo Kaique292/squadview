@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { avatarUrl, type DiscordProfile, displayName, useAccountStore } from "../account/account-store";
+import { PIP_CONTROL_EVENT, PIP_STATE_EVENT, type PipControl, type PipState } from "../stream/pip";
 import { HISTORY_SIZE, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { toast } from "../ui/toast-store";
 import { useSpeakingEffectStore } from "../voice/speaking-effect";
@@ -248,6 +249,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     const watch = get().watching[memberId];
     if (!watch) return;
     set({ watching: { ...get().watching, [memberId]: { ...watch, volume: v } } });
+    syncPip(memberId);
     try {
       localStorage.setItem(VOLUME_KEY, String(v));
     } catch {
@@ -260,6 +262,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     const update = (on: boolean) => {
       const watch = get().watching[memberId];
       if (watch) set({ watching: { ...get().watching, [memberId]: { ...watch, listening: on } } });
+      syncPip(memberId);
     };
     update(listening);
     await invoke("set_watch_listening", { memberId, listening }).catch(() => update(!listening));
@@ -287,9 +290,26 @@ export function useMe() {
   return useRoomStore((s) => s.members[0] ?? null);
 }
 
+/** O som da live no picture in picture mudou: os controles da janelinha acompanham. */
+function syncPip(memberId: string) {
+  const watch = useRoomStore.getState().watching[memberId];
+  if (!watch || useStreamStore.getState().pip !== memberId) return;
+  const state: PipState = { memberId, listening: watch.listening, volume: watch.volume };
+  void Promise.resolve()
+    .then(() => emitTo("pip", PIP_STATE_EVENT, state))
+    .catch(() => {});
+}
+
 /** Liga os eventos da sala vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
 export async function listenToRoomEvents() {
   const offs = await Promise.all([
+    // Os controles da janelinha do picture in picture mexem no som da live por aqui.
+    listen<PipControl>(PIP_CONTROL_EVENT, (e) => {
+      const { memberId, listening, volume } = e.payload;
+      const room = useRoomStore.getState();
+      if (volume !== undefined) void room.setWatchVolume(memberId, volume);
+      if (listening !== undefined) void room.setWatchListening(memberId, listening);
+    }),
     listen<string | null>("room-name", (e) => useRoomStore.setState({ roomName: e.payload })),
     listen<"reconnecting" | "connected" | "lost">("room-connection", (e) => {
       if (e.payload === "reconnecting") {

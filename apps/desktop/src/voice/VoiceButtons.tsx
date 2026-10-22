@@ -1,7 +1,6 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, ChevronRight, Headphones, HeadphoneOff, Mic, MicOff } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useOverlayMenu } from "../ui/overlay";
 import { Tooltip } from "../ui/Tooltip";
 import { type AudioDevice, MAX_VOICE_VOLUME, useVoiceStore } from "./voice-store";
 import { CheckMark } from "../ui/Checkbox";
@@ -92,23 +91,29 @@ function SplitButton(props: {
   onOpenMenu: () => void;
   children: ReactNode;
 }) {
-  // O grande fica dentro de um grupo da barra da chamada: sem fundo próprio, só no hover.
+  // O grande é uma caixa da barra da chamada, do mesmo tamanho e cinza dos outros botões dela.
   const tone = props.off
     ? "text-live hover:bg-live/25"
     : props.large
       ? "text-text hover:bg-surface-hover"
       : "text-text-muted hover:bg-surface-hover hover:text-text";
-  const height = props.large ? "h-10" : "h-8";
-  const onOpenChange = useOverlayMenu((open) => open && props.onOpenMenu());
+  const height = props.large ? "h-12" : "h-8";
+  const onOpenChange = (open: boolean) => {
+    if (open) props.onOpenMenu();
+  };
   return (
-    <div className={`flex items-center rounded-md transition-colors ${props.off ? "bg-live/15" : ""}`}>
+    <div
+      className={`flex items-center transition-colors ${props.large ? "rounded-lg" : "rounded-md"} ${
+        props.off ? "bg-live/15" : props.large ? "bg-surface-1" : ""
+      }`}
+    >
       <Tooltip label={props.label} side="top">
         <button
           type="button"
           aria-label={props.label}
           aria-pressed={props.off}
           onClick={props.onClick}
-          className={`grid ${height} ${props.large ? "w-10" : "w-8"} place-items-center rounded-l-md transition-colors ${tone}`}
+          className={`grid ${height} ${props.large ? "w-12 rounded-l-lg" : "w-8 rounded-l-md"} place-items-center transition-colors ${tone}`}
         >
           {props.icon}
         </button>
@@ -118,12 +123,10 @@ function SplitButton(props: {
           <button
             type="button"
             aria-label={props.menuLabel}
-            className={`group grid ${height} ${props.large ? "w-6" : "w-5"} place-items-center rounded-r-md transition-colors ${
+            className={`group grid ${height} ${props.large ? "w-7 rounded-r-lg border-l border-black/30" : "w-5 rounded-r-md"} place-items-center transition-colors ${
               props.off
                 ? "text-live hover:bg-live/25 data-[state=open]:bg-live/25"
-                : props.large
-                  ? "bg-white/[0.03] text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
-                  : "text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
+                : "text-text-muted hover:bg-surface-hover hover:text-text data-[state=open]:bg-surface-hover"
             }`}
           >
             <ChevronDown size={14} className="transition-transform duration-200 group-data-[state=open]:rotate-180" />

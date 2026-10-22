@@ -4,7 +4,6 @@ import { App } from "../App";
 import { StreamDetailsDialog, sparklinePoints } from "./StreamDetailsDialog";
 import { StreamDialog } from "./StreamDialog";
 import { StreamTile } from "./StreamTile";
-import { openOverlays } from "../ui/overlay";
 import {
   DEFAULT_QUALITY,
   estimatedMbps,
@@ -65,7 +64,6 @@ beforeEach(() => {
     history: [],
     system: null,
     current: null,
-    videoHover: null,
     fullscreenOf: null,
     notice: null,
     listening: false,
@@ -396,16 +394,13 @@ describe("vídeo dentro do app", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false }));
   });
 
-  it("obedece aos dois cliques/F11 e ao Esc feitos dentro do vídeo nativo", async () => {
+  it("o Esc sai da tela cheia", async () => {
     invoke.mockResolvedValue(undefined);
     const unlisten = await listenToStreamEvents();
-    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "toggle", source: null } }));
-    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
-    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "exit", source: null } }));
-    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));
-
-    act(() => handlers.get("video-fullscreen")!({ payload: { kind: "toggle", source: null } }));
-    await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(true));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(invoke).not.toHaveBeenCalledWith("set_fullscreen", expect.anything());
+    await useStreamStore.getState().setFullscreen(true);
+    expect(useStreamStore.getState().fullscreen).toBe(true);
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(useStreamStore.getState().fullscreen).toBe(false));
     unlisten();
@@ -423,15 +418,6 @@ describe("vídeo dentro do app", () => {
     await useStreamStore.getState().stop();
     expect(invoke).toHaveBeenCalledWith("set_fullscreen", { fullscreen: false });
     expect(useStreamStore.getState().fullscreen).toBe(false);
-  });
-
-  it("esconde o vídeo nativo enquanto um modal está aberto", async () => {
-    mockBackend();
-    expect(openOverlays()).toBe(0);
-    await openDialog();
-    expect(openOverlays()).toBe(1);
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() => expect(openOverlays()).toBe(0));
   });
 });
 
@@ -467,7 +453,7 @@ describe("posição do vídeo nativo", () => {
     const { unmount } = render(
       <StreamTile variant="focus" focused={false} onActivate={() => {}} onChange={() => {}} onDetails={() => {}} />,
     );
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1200, height: 675, radius: 0 });
 
     invoke.mockClear();
     act(() => observed!());
@@ -475,17 +461,17 @@ describe("posição do vídeo nativo", () => {
 
     rect.width = 1000;
     act(() => observed!());
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1500, height: 675 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 150, y: 60, width: 1500, height: 675, radius: 0 });
 
     unmount();
-    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0 });
+    expect(invoke).toHaveBeenCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0, radius: 0 });
   });
 
-  it("pede para esconder o vídeo enquanto um modal está aberto", async () => {
+  it("não esconde o vídeo com um modal aberto: ele fica por baixo da interface e o modal, por cima", async () => {
     mockBackend();
     await openDialog();
-    expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: true });
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_video_hidden", { hidden: false }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(invoke).not.toHaveBeenCalledWith("set_video_hidden", expect.anything());
   });
 });

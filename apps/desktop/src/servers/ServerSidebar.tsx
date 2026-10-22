@@ -7,7 +7,6 @@ import { Avatar } from "../ui/Avatar";
 import { LiveBadge } from "../ui/LiveBadge";
 import { ScrollArea } from "../ui/ScrollArea";
 import { Tooltip } from "../ui/Tooltip";
-import { useOverlayMenu } from "../ui/overlay";
 import { SERVER_MENU_CONTENT, ServerMenuItems, useServerDialogs } from "./ServerMenu";
 import { myRole, type Server, useServersStore } from "./servers-store";
 
@@ -25,12 +24,11 @@ export function ServerSidebar(props: { server: Server }) {
   const joinedAt = useRoomStore((s) => s.joinedAt);
   const members = useRoomStore((s) => s.members.length);
   const dialogs = useServerDialogs(server);
-  const onMenuOpenChange = useOverlayMenu();
 
   return (
     <>
       <div className="flex h-12 shrink-0 items-center border-b border-white/[0.06]">
-        <Menu.Root onOpenChange={onMenuOpenChange}>
+        <Menu.Root>
           <Menu.Trigger asChild>
             <button
               type="button"

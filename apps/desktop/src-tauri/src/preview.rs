@@ -9,7 +9,7 @@ use serde_json::json;
 use sv_capture::{CaptureSource, FollowStatus, FollowStep, GameFollower, Observer, Source, SwitchReason};
 use sv_core::StreamQuality;
 use sv_encode::EncodedFrame;
-use sv_session::{AudioPacket, Bounds, LocalPreview, StreamInfo, StreamTap, WindowEvent, WindowTarget};
+use sv_session::{AudioPacket, Bounds, LocalPreview, StreamInfo, StreamTap, WindowTarget};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::diagnostics::Diagnostics;
@@ -20,27 +20,6 @@ pub const STATS_EVENT: &str = "stream-stats";
 pub const ENDED_EVENT: &str = "stream-ended";
 /// Evento com um aviso sobre a fonte (`null` quando o aviso deixa de valer).
 pub const NOTICE_EVENT: &str = "stream-notice";
-/// Pedido de tela cheia feito dentro do vídeo: `"toggle"` (dois cliques, F11) ou `"exit"` (Esc).
-pub const FULLSCREEN_EVENT: &str = "video-fullscreen";
-/// Clique, botão direito, entrada e saída do mouse no vídeo embutido: ele fica por cima da
-/// interface e recebe o mouse no lugar dela (`{ kind, x, y }`, pixels físicos a partir do vídeo).
-pub const POINTER_EVENT: &str = "video-pointer";
-
-/// Repassa o mouse do vídeo para a interface. `false`: o evento não é de mouse.
-///
-/// `source`: de qual vídeo veio (`None`: a nossa prévia; o id: a live de quem assistimos).
-pub fn emit_pointer<R: Runtime>(app: &AppHandle<R>, source: Option<&str>, event: WindowEvent) -> bool {
-    let payload = match event {
-        WindowEvent::Click { x, y } => json!({ "kind": "click", "x": x, "y": y, "source": source }),
-        WindowEvent::ContextMenu { x, y } => json!({ "kind": "menu", "x": x, "y": y, "source": source }),
-        WindowEvent::PointerEnter => json!({ "kind": "enter", "source": source }),
-        WindowEvent::PointerLeave => json!({ "kind": "leave", "source": source }),
-        WindowEvent::ToggleFullscreen | WindowEvent::ExitFullscreen | WindowEvent::ExitPip => return false,
-    };
-    let _ = app.emit(POINTER_EVENT, payload);
-    true
-}
-
 /// Por quanto tempo o aviso "Agora transmitindo…" fica na tela depois de trocar a captura.
 const CHANGED_NOTICE_FOR: Duration = Duration::from_secs(6);
 
@@ -274,20 +253,6 @@ fn launch<R: Runtime>(
     )
     .map_err(|e| e.to_string())?;
 
-    // Dois cliques, F11 ou Esc dentro do vídeo: quem muda o layout é a interface.
-    let event_app = app.clone();
-    preview.on_video_event(move |event| {
-        if emit_pointer(&event_app, None, event) {
-            return;
-        }
-        let kind = match event {
-            WindowEvent::ToggleFullscreen => "toggle",
-            WindowEvent::ExitFullscreen => "exit",
-            // A prévia nunca entra em picture in picture (só o stream de um amigo).
-            _ => return,
-        };
-        let _ = event_app.emit(FULLSCREEN_EVENT, json!({ "kind": kind, "source": null }));
-    });
     layout(app).apply(&preview);
     // Na sala, os amigos passam a ver "AO VIVO" e podem pedir para assistir.
     crate::room::stream_changed(app, Some(preview.keyframe_handle()));
@@ -319,104 +284,44 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) -> Layout {
         .clone()
 }
 
-/// O vídeo abre dentro da janela principal do app, como no Discord.
+/// O vídeo abre dentro da janela principal do app, como no Discord: por baixo da interface, pelo
+/// DirectComposition (ADR 0021), com selos, menus e animações por cima dele.
 pub fn video_target<R: Runtime>(app: &AppHandle<R>) -> Result<WindowTarget, String> {
     let window = app
         .get_webview_window("main")
         .ok_or("janela principal não encontrada")?;
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-    Ok(WindowTarget::Embedded {
+    Ok(WindowTarget::Composed {
         parent: hwnd.0 as isize,
     })
 }
 
-/// Onde a interface quer o vídeo (pixels físicos) e se ele está escondido por um modal.
+/// Onde a interface quer o vídeo da nossa live (pixels físicos) e o raio dos cantos do quadro.
 #[derive(Debug, Default, Clone)]
 pub struct Layout {
     pub bounds: Bounds,
-    pub hidden: bool,
-    /// Onde a interface está por cima do vídeo (menus, dicas): o vídeo abre um buraco ali. Vale
-    /// para todos os vídeos (cada um ignora os que não caem sobre ele).
-    pub holes: Vec<sv_session::Hole>,
+    /// Raio dos cantos do quadro da nossa live (pixels físicos).
+    pub radius: u32,
 }
 
 impl Layout {
     /// Na nossa prévia. A posição de cada live assistida vai à parte (`room::set_watch_bounds`):
     /// a nossa live e as dos amigos ficam lado a lado na sala (ADR 0019).
     fn apply(&self, preview: &LocalPreview) {
+        preview.set_video_radius(self.radius);
         preview.set_video_bounds(self.bounds);
-        preview.set_video_hidden(self.hidden);
-        preview.set_video_holes(self.holes.clone());
     }
 }
 
 /// A área do stream na interface mudou de lugar ou de tamanho (pixels físicos, relativos à janela).
 #[tauri::command]
-pub fn set_video_bounds<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, PreviewState>,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) {
+pub fn set_video_bounds(state: State<'_, PreviewState>, x: i32, y: i32, width: u32, height: u32, radius: Option<u32>) {
     let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
     running.layout.bounds = Bounds { x, y, width, height };
-    let layout = running.layout.clone();
+    running.layout.radius = radius.unwrap_or(0);
     if let Some(p) = running.preview.as_ref() {
-        layout.apply(p);
+        running.layout.apply(p);
     }
-    drop(running);
-    crate::room::apply_layout(&app, &layout);
-}
-
-/// Um modal da interface abriu (o vídeo nativo ficaria por cima dele) ou fechou.
-#[tauri::command]
-pub fn set_video_hidden<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewState>, hidden: bool) {
-    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    running.layout.hidden = hidden;
-    let layout = running.layout.clone();
-    if let Some(p) = running.preview.as_ref() {
-        layout.apply(p);
-    }
-    drop(running);
-    crate::room::apply_layout(&app, &layout);
-}
-
-/// Um retângulo da interface (pixels físicos, relativos à janela), com o raio dos cantos.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-pub struct Hole {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    #[serde(default)]
-    radius: u32,
-}
-
-/// Menus, dicas e avisos abertos por cima da área do vídeo: o vídeo abre um buraco em cada um, em
-/// vez de sumir inteiro (a live continua aparecendo em volta).
-#[tauri::command]
-pub fn set_video_holes<R: Runtime>(app: AppHandle<R>, state: State<'_, PreviewState>, holes: Vec<Hole>) {
-    let mut running = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    running.layout.holes = holes
-        .into_iter()
-        .map(|h| sv_session::Hole {
-            bounds: Bounds {
-                x: h.x,
-                y: h.y,
-                width: h.width,
-                height: h.height,
-            },
-            radius: h.radius,
-        })
-        .collect();
-    let layout = running.layout.clone();
-    if let Some(p) = running.preview.as_ref() {
-        layout.apply(p);
-    }
-    drop(running);
-    crate::room::apply_layout(&app, &layout);
 }
 
 /// Liga ou desliga a tela cheia da janela do app (o stream ocupa tudo).
@@ -801,14 +706,13 @@ mod tests {
     fn layout_do_video_sem_previa_rodando() {
         let t = test_app();
         let state = || t.app.state::<PreviewState>();
-        set_video_bounds(t.handle().clone(), state(), 10, 20, 640, 360);
-        set_video_hidden(t.handle().clone(), state(), true);
+        set_video_bounds(state(), 10, 20, 640, 360, Some(8));
         let l = layout(t.handle());
+        assert_eq!(l.radius, 8);
         assert_eq!(
             (l.bounds.x, l.bounds.y, l.bounds.width, l.bounds.height),
             (10, 20, 640, 360)
         );
-        assert!(l.hidden);
         set_preview_listening(state(), true);
         assert!(state().0.lock().unwrap().listening);
         // Sem sala e sem prévia, recomeçar para a sala só limpa o destino.
@@ -840,8 +744,7 @@ mod tests {
             Ok(()) => {
                 assert!(!idle(&t));
                 set_preview_listening(t.app.state::<PreviewState>(), true);
-                set_video_bounds(t.handle().clone(), t.app.state::<PreviewState>(), 0, 0, 320, 180);
-                set_video_hidden(t.handle().clone(), t.app.state::<PreviewState>(), false);
+                set_video_bounds(t.app.state::<PreviewState>(), 0, 0, 320, 180, None);
                 // Trocar a prévia por outra para a anterior antes.
                 tauri::async_runtime::block_on(start_preview(
                     t.handle().clone(),

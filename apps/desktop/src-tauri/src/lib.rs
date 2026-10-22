@@ -6,6 +6,7 @@ mod discord;
 mod dm;
 mod friends;
 mod invite;
+mod pip;
 mod presence;
 mod preview;
 mod room;
@@ -161,6 +162,7 @@ pub fn run() {
             dm::dm_messages,
             dm::dm_online,
             dm::dm_cancel_download,
+            dm::dm_react,
             dm::dm_retry,
             dm::dm_send_text,
             dm::dm_send_file,
@@ -180,8 +182,6 @@ pub fn run() {
             preview::start_preview,
             preview::set_preview_listening,
             preview::set_video_bounds,
-            preview::set_video_hidden,
-            preview::set_video_holes,
             preview::set_fullscreen,
             room::room_join,
             room::room_leave,
