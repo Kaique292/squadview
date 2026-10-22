@@ -44,6 +44,14 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 `peerId` são 16 caracteres hexadecimais aleatórios, gerados pelo servidor a cada `join` (menos na retomada, abaixo).
 
+### Criar ou só entrar
+
+- O `join` aceita `"create":true|false`.
+  - `true`: criando a sala, ou entrando numa sala fixa de servidor, que pode estar vazia.
+  - `false`: entrando por um código digitado ou de convite.
+- Com `false`, se a sala não tem ninguém (nem quem caiu e ainda pode voltar), o servidor responde `room-not-found` e fecha com 4404. O app mostra "Código inválido: essa sala não existe." Antes, qualquer código criava uma sala vazia.
+- Sem o campo (apps até a 0.10), a sala é criada como antes.
+
 ### Retomada depois de uma queda (ADR 0022)
 
 - O app que sabe voltar manda `"resumable":true` no `join` (quem manda `resume` também conta). **Só esses ganham vaga guardada**: um app que não manda (até a 0.10) sai da sala na hora quando cai, como antes, porque voltaria com outro id e a vaga guardada viraria um "clone" dele na lista.
@@ -166,6 +174,7 @@ Também precisam do Worker publicado antes do app.
 | `rate-limited`     | Mais de 100 mensagens em 10 s                                                     | Sim (4429)       |
 | `not-joined`       | Mensagem antes do `join`                                                          | Não              |
 | `unknown-peer`     | `signal` para alguém que não está na sala (ou para si mesmo)                      | Não              |
+| `room-not-found`   | `join` com `create: false` numa sala sem ninguém (o código não é de sala nenhuma) | Sim (4404)       |
 
 Quem é desconectado por erro sai da sala para os outros (`member-left`) na hora, sem prazo para voltar.
 

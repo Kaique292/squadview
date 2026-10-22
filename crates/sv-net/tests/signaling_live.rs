@@ -29,7 +29,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     let Some(url) = worker() else { return };
     let code = new_room_code();
 
-    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, Some("Galera"), None)
+    let (ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, Some("Galera"), None, true)
         .await
         .unwrap();
     let RoomEvent::Joined {
@@ -40,7 +40,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     };
     assert!(members.is_empty());
 
-    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None)
+    let (beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None, true)
         .await
         .unwrap();
     let RoomEvent::Joined {
@@ -84,7 +84,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
 async fn fica_na_sala_parado_sem_cair() {
     let url = std::env::var("SQUADVIEW_SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".into());
     let code = new_room_code();
-    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, None, None)
+    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, None, None, true)
         .await
         .unwrap();
     assert!(matches!(next(&mut ana_rx).await, RoomEvent::Joined { .. }));
@@ -123,14 +123,14 @@ async fn quem_cai_volta_com_o_mesmo_id_sem_os_outros_verem() {
         token: welcome["resume"].as_str().expect("welcome com token").to_owned(),
     };
 
-    let (_beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None)
+    let (_beto, mut beto_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None, true)
         .await
         .unwrap();
     assert!(matches!(next(&mut beto_rx).await, RoomEvent::Joined { .. }));
 
     drop(ws);
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, None, Some(&back))
+    let (_ana, mut ana_rx) = RoomClient::join(&url, &code, "Ana", None, None, None, Some(&back), true)
         .await
         .unwrap();
     let RoomEvent::Joined { you, members, .. } = next(&mut ana_rx).await else {

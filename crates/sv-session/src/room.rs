@@ -222,13 +222,17 @@ pub struct JoinAs {
     pub discord: Option<DiscordUser>,
     /// Sessão do SquadView (ADR 0011): a sala confere e passa a saber quem somos de verdade.
     pub session: Option<String>,
+    /// Pode criar a sala (criando uma, ou numa sala fixa de servidor). `false` (entrando por um
+    /// código ou convite): se a sala não existe, a entrada falha com "Código inválido".
+    pub create: bool,
 }
 
 impl JoinAs {
-    /// Só o nome (sem Discord), como nos testes.
+    /// Só o nome (sem Discord), como nos testes: cria a sala se ela ainda não existe.
     pub fn named(name: &str) -> Self {
         Self {
             name: name.to_owned(),
+            create: true,
             ..Self::default()
         }
     }
@@ -244,7 +248,12 @@ impl Room {
         voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
-        let JoinAs { name, discord, session } = me;
+        let JoinAs {
+            name,
+            discord,
+            session,
+            create,
+        } = me;
         let name = name.as_str();
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -269,6 +278,7 @@ impl Room {
                 session.as_deref(),
                 room_name,
                 None,
+                create,
             )
             .await?;
             // A primeira resposta diz se entramos.
@@ -1141,6 +1151,8 @@ async fn reconnect(inner: &Arc<Inner>, reason: String) -> Option<tokio::sync::mp
             session.as_deref(),
             room_name.as_deref(),
             resume.as_ref(),
+            // Já estávamos na sala: se ela esvaziou (reinício), voltamos e ela continua existindo.
+            true,
         )
         .await
         else {

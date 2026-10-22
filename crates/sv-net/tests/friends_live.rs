@@ -114,17 +114,26 @@ async fn amigos_de_ponta_a_ponta() {
         id: ana_id.clone(),
         avatar: None,
     };
-    let (ana_room, mut ana_room_rx) =
-        RoomClient::join(&url, &code, "Ana", Some(&ana_discord), Some(&ana_session), None, None)
-            .await
-            .unwrap();
+    let (ana_room, mut ana_room_rx) = RoomClient::join(
+        &url,
+        &code,
+        "Ana",
+        Some(&ana_discord),
+        Some(&ana_session),
+        None,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
     room_event(&mut ana_room_rx, "welcome da Ana", |e| {
         matches!(e, RoomEvent::Joined { .. })
     })
     .await;
-    let (_beto_room, mut beto_room_rx) = RoomClient::join(&url, &code, "Beto", None, Some(&beto_session), None, None)
-        .await
-        .unwrap();
+    let (_beto_room, mut beto_room_rx) =
+        RoomClient::join(&url, &code, "Beto", None, Some(&beto_session), None, None, true)
+            .await
+            .unwrap();
     let RoomEvent::Joined { members, .. } = room_event(&mut beto_room_rx, "welcome do Beto", |e| {
         matches!(e, RoomEvent::Joined { .. })
     })
@@ -266,13 +275,31 @@ async fn pedidos_cancelados_e_recusados() {
 
     // Na mesma sala, conferidos.
     let code = new_room_code();
-    let (_a, mut a_rx) = RoomClient::join(&url, &code, "Ana", None, Some(&session(&secret, &ana_id)), None, None)
-        .await
-        .unwrap();
+    let (_a, mut a_rx) = RoomClient::join(
+        &url,
+        &code,
+        "Ana",
+        None,
+        Some(&session(&secret, &ana_id)),
+        None,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
     room_event(&mut a_rx, "welcome", |e| matches!(e, RoomEvent::Joined { .. })).await;
-    let (_b, _b_rx) = RoomClient::join(&url, &code, "Beto", None, Some(&session(&secret, &beto_id)), None, None)
-        .await
-        .unwrap();
+    let (_b, _b_rx) = RoomClient::join(
+        &url,
+        &code,
+        "Beto",
+        None,
+        Some(&session(&secret, &beto_id)),
+        None,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
     wait(&mut ana_rx, "recentes", |v| {
         v["type"] == "state" && v["recents"].as_array().is_some_and(|r| !r.is_empty())
     })
@@ -313,12 +340,12 @@ async fn quem_entra_com_o_discord_ja_na_sala_vira_conferido() {
     let (ana_session, beto_session) = (session(&secret, &ana_id), session(&secret, &beto_id));
     let (_ana, mut ana_rx) = FriendsClient::connect(&url, &ana_session).await.unwrap();
     let code = new_room_code();
-    let (_ana_room, mut ana_room_rx) = RoomClient::join(&url, &code, "Ana", None, Some(&ana_session), None, None)
+    let (_ana_room, mut ana_room_rx) = RoomClient::join(&url, &code, "Ana", None, Some(&ana_session), None, None, true)
         .await
         .unwrap();
     room_event(&mut ana_room_rx, "welcome", |e| matches!(e, RoomEvent::Joined { .. })).await;
     // Beto entra sem sessão: não conferido.
-    let (beto_room, _beto_room_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None)
+    let (beto_room, _beto_room_rx) = RoomClient::join(&url, &code, "Beto", None, None, None, None, true)
         .await
         .unwrap();
     let RoomEvent::MemberJoined(beto) = room_event(&mut ana_room_rx, "Beto entrou", |e| {

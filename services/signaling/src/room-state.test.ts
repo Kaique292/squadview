@@ -807,3 +807,38 @@ describe("sem clone de quem sai e volta", () => {
     expect(ana.last()).toEqual({ type: "member-left", id: idOf(beto) });
   });
 });
+
+// Regressão: digitar um código qualquer em "Entrar com código" criava uma sala vazia (que aparecia
+// como um servidor novo na barra lateral) em vez de dizer que o código é inválido.
+describe("entrar por um código que não existe", () => {
+  function byCode(name: string, create: boolean | undefined) {
+    const c = connect();
+    send(c, { type: "join", name, protocol: 1, resumable: true, ...(create === undefined ? {} : { create }) });
+    return c;
+  }
+
+  it("sala vazia recusa quem só quer entrar, sem criar nada", () => {
+    const ana = byCode("Ana", false);
+    expect(ana.sent).toEqual([{ type: "error", code: "room-not-found" }]);
+    expect(ana.closedWith?.code).toBe(CLOSE.notFound);
+    expect(seats).toEqual({});
+    // Quem cria depois encontra a sala vazia, como se ninguém tivesse tentado.
+    expect(byCode("Beto", true).last()).toMatchObject({ type: "welcome", members: [] });
+  });
+
+  it("sala que existe aceita quem entra pelo código", () => {
+    byCode("Ana", true);
+    expect(byCode("Beto", false).last()).toMatchObject({ type: "welcome", members: [{ name: "Ana" }] });
+  });
+
+  it("sala só com quem caiu e ainda pode voltar também existe", () => {
+    const ana = byCode("Ana", true);
+    room.closed(wrap(ana));
+    ana.close(1006, "caiu");
+    expect(byCode("Beto", false).last()).toMatchObject({ type: "welcome", members: [{ name: "Ana" }] });
+  });
+
+  it("app antigo, que não manda create, continua criando a sala ao entrar", () => {
+    expect(joinOld("Ana").last()).toMatchObject({ type: "welcome", members: [] });
+  });
+});

@@ -111,6 +111,8 @@ export const CLOSE = {
   normal: 1000,
   invalid: 4400,
   versionMismatch: 4426,
+  /** Entrou por um código de sala que não existe (`room-not-found`). */
+  notFound: 4404,
   rateLimited: 4429,
   /** O mesmo membro voltou por outra conexão (a antiga ficou pendurada). */
   replaced: 4410,
@@ -345,6 +347,12 @@ export class RoomState {
     // Sem limite de pessoas (ADR 0012): a sala aceita quem chegar.
     const others = this.joined().filter(([c]) => c.key !== conn.key);
     const ghosts = this.ghosts().filter((s) => s.member.id !== back?.member.id);
+
+    // Entrando por um código, a sala precisa existir: sem ninguém nela (nem quem caiu e ainda pode
+    // voltar), o código não é de sala nenhuma. Antes, qualquer código criava uma sala vazia.
+    if (msg.create === false && !back && others.length === 0 && ghosts.length === 0) {
+      return this.fail(conn, "room-not-found", CLOSE.notFound);
+    }
 
     let id = back?.member.id;
     if (!id) {

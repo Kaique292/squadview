@@ -131,6 +131,9 @@ enum Outgoing<'a> {
         resume: Option<&'a Resume>,
         /// Sabemos voltar para a vaga: só assim a sala a guarda quando a conexão cai (ADR 0022).
         resumable: bool,
+        /// `false`: só entrar; se a sala não existe, o Worker responde `room-not-found` em vez de
+        /// criar uma vazia.
+        create: bool,
     },
     Status {
         live: bool,
@@ -313,6 +316,7 @@ pub fn error_message(code: &str) -> &'static str {
         "version-mismatch" => "Alguém na sala está com outra versão do SquadView. Atualizem o app.",
         "rate-limited" => "Muitas mensagens em pouco tempo. Tente entrar de novo.",
         "unknown-peer" => "Esse membro já saiu da sala.",
+        "room-not-found" => "Código inválido: essa sala não existe.",
         _ => "A sala recusou a conexão.",
     }
 }
@@ -328,7 +332,10 @@ pub struct RoomClient {
 impl RoomClient {
     /// Entra na sala `code` em `base_url` (ex.: `wss://squadview-signaling.exemplo.workers.dev`).
     /// `room` dá nome à sala, se formos os primeiros a entrar; `resume` pede a vaga de antes de uma
-    /// queda (ADR 0022). Os eventos chegam por `events`. Precisa rodar dentro de um runtime tokio.
+    /// queda (ADR 0022); sem `create`, a sala precisa já existir (senão vem o erro `room-not-found`).
+    /// Os eventos chegam por `events`. Precisa rodar dentro de um runtime tokio.
+    // Cada argumento é um campo do `join` do contrato (PROTOCOL.md), na mesma ordem.
+    #[allow(clippy::too_many_arguments)]
     pub async fn join(
         base_url: &str,
         code: &str,
@@ -337,6 +344,7 @@ impl RoomClient {
         session: Option<&str>,
         room: Option<&str>,
         resume: Option<&Resume>,
+        create: bool,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
             return Err("Código de sala inválido.".into());
@@ -358,6 +366,7 @@ impl RoomClient {
             session,
             resume,
             resumable: true,
+            create,
         })
         .expect("json");
         write
@@ -559,10 +568,14 @@ mod tests {
             session: None,
             resume: None,
             resumable: true,
+            create: true,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
-        assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1,"resumable":true}"#);
+        assert_eq!(
+            join,
+            r#"{"type":"join","name":"Ana","protocol":1,"resumable":true,"create":true}"#
+        );
         let creating = serde_json::to_string(&Outgoing::Join {
             name: "Ana",
             protocol: 1,
@@ -571,11 +584,12 @@ mod tests {
             session: None,
             resume: None,
             resumable: true,
+            create: true,
         })
         .unwrap();
         assert_eq!(
             creating,
-            r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera","resumable":true}"#
+            r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera","resumable":true,"create":true}"#
         );
         let back = Resume {
             id: "aa".into(),
@@ -589,11 +603,12 @@ mod tests {
             session: None,
             resume: Some(&back),
             resumable: true,
+            create: true,
         })
         .unwrap();
         assert_eq!(
             resuming,
-            r#"{"type":"join","name":"Ana","protocol":1,"resume":{"id":"aa","token":"ff"},"resumable":true}"#
+            r#"{"type":"join","name":"Ana","protocol":1,"resume":{"id":"aa","token":"ff"},"resumable":true,"create":true}"#
         );
         assert!(!format!("{back:?}").contains("ff"), "o token não vai para o registro");
         assert_eq!(
@@ -813,6 +828,10 @@ mod tests {
     #[test]
     fn erros_tem_mensagem_para_o_usuario() {
         assert!(error_message("room-full").contains("cheia"));
+        assert_eq!(
+            error_message("room-not-found"),
+            "Código inválido: essa sala não existe."
+        );
         assert!(error_message("qualquer").contains("recusou"));
     }
 }
