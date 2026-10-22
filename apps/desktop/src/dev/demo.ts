@@ -113,29 +113,51 @@ const SERVERS = [
 /** Conversa privada com o Minato: texto, uma foto e um arquivo esperando "Baixar". */
 const minute = 60 * 1000;
 const now = Date.now();
+const day = 24 * 60 * minute;
+/** Ontem às 21h (a conversa mostra "Ontem às 21:18"), seja qual for a hora de agora. */
+const yesterday = (() => {
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
+  d.setHours(21, 0, 0, 0);
+  return d.getTime();
+})();
 const CHAT: DmMessage[] = [
-  { id: "1", mine: false, at: now - 42 * minute, text: "viu o clutch que eu fiz ontem?", status: "received" },
-  { id: "2", mine: true, at: now - 41 * minute, text: "não! manda aí", status: "delivered" },
+  // De dias atrás (data e hora), de ontem ("Ontem às") e de hoje (só a hora), como no Discord.
+  { id: "0", mine: true, at: now - 3 * day, text: "gg ontem, amanhã tem mais", status: "delivered" },
+  { id: "1", mine: false, at: yesterday + 18 * minute, text: "viu o clutch que eu fiz ontem?", status: "received" },
+  { id: "2", mine: true, at: yesterday + 19 * minute, text: "não! manda aí", status: "delivered" },
   {
     id: "3",
     mine: false,
-    at: now - 40 * minute,
+    at: yesterday + 20 * minute,
     file: { name: "clutch.png", size: 412_000, mime: "image/png", path: "clutch.png", done: 412_000 },
     status: "received",
+    reactions: [
+      { emoji: "🔥", mine: true, theirs: false },
+      { emoji: "😂", mine: true, theirs: true },
+    ],
   },
   {
     id: "4",
     mine: false,
-    at: now - 39 * minute,
+    at: yesterday + 21 * minute,
     file: { name: "replay-ranked.rofl", size: 18_400_000, mime: "application/octet-stream", path: null, done: 0 },
     status: "received",
   },
   { id: "5", mine: true, at: now - 2 * minute, text: "que isso 😂 bora de novo hoje às 21h?", status: "delivered" },
-  { id: "6", mine: false, at: now - minute, text: "bora, chama o Lobo", status: "received" },
+  {
+    id: "6",
+    mine: false,
+    at: now - minute,
+    text: "bora, chama o Lobo",
+    status: "received",
+    replyTo: "5",
+    reactions: [{ emoji: "👍", mine: true, theirs: false }],
+  },
 ];
 
 const CONVERSATIONS = [
-  { friend: "100000000000000001", last: CHAT[5], pending: 0 },
+  { friend: "100000000000000001", last: CHAT[CHAT.length - 1], pending: 0 },
   {
     friend: "100000000000000003",
     last: { id: "s", mine: true, at: now - 3 * 3600 * 1000, text: "valeu pela call!", status: "delivered" as const },

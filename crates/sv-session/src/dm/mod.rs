@@ -26,10 +26,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 
 pub use frame::{Frame, MAX_TEXT_CHARS};
-pub use history::{Attachment, Conversation, DmMessage, History, MAX_MESSAGES, Status};
+pub use history::{Attachment, Conversation, DmMessage, History, MAX_MESSAGES, Reaction, Status};
 
 use crate::surface::lock;
-use frame::{FileHeader, read_frame, write_frame};
+use frame::{FEATURE_REACTIONS, FileHeader, MAX_REACTIONS, parse_frame, read_frame, valid_emoji, write_frame};
 
 /// Uma oferta sem resposta por esse tempo pode ser repetida (o amigo pode ter caído no meio).
 const OFFER_RETRY: Duration = Duration::from_secs(10);
@@ -44,6 +44,9 @@ pub enum DmSignal {
     DmOffer {
         candidates: Vec<SocketAddr>,
         fingerprint: String,
+        /// O que este app entende além do básico (ex.: reações). Apps antigos não mandam nem leem.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     DmAnswer {
         candidates: Vec<SocketAddr>,
@@ -51,10 +54,20 @@ pub enum DmSignal {
         /// Nosso endereço no repassador TURN, para quem não conecta direto (ADR 0014).
         #[serde(default)]
         relay: Option<SocketAddr>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
 }
 
+/// O que este app anuncia nos sinais da conversa.
+fn our_features() -> Vec<String> {
+    vec![FEATURE_REACTIONS.to_owned()]
+}
+
 /// O que a interface fica sabendo.
+// A mensagem é o evento quase sempre, e os eventos são poucos (um por mensagem ou mudança): não vale
+// pôr numa caixa só para os avisos de online ficarem menores.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum DmEvent {
@@ -112,6 +125,8 @@ struct Inner {
     /// Impressão digital de quem pode conectar em nós → o amigo.
     expected: Mutex<HashMap<String, String>>,
     downloads: Mutex<HashMap<String, Download>>,
+    /// Amigos cujo app entende reações (avisaram no último `dm-offer` ou `dm-answer`).
+    reactions_ok: Mutex<std::collections::HashSet<String>>,
     signal_out: SignalOut,
     on_event: OnEvent,
     counter: AtomicU64,
@@ -189,6 +204,7 @@ impl DmEngine {
                 offering: Mutex::new(HashMap::new()),
                 expected: Mutex::new(HashMap::new()),
                 downloads: Mutex::new(HashMap::new()),
+                reactions_ok: Mutex::default(),
                 signal_out,
                 on_event,
                 counter: AtomicU64::new(0),
@@ -220,7 +236,9 @@ impl DmEngine {
     /// ficar online, ou a tentativa anterior não teve resposta). Sem pendentes, ou já conectado,
     /// não faz nada; entre tentativas espera `OFFER_RETRY`. Devolve se tentou.
     pub fn retry(&self, friend: &str) -> bool {
-        if self.inner.has_link(friend) || self.inner.history.pending(friend).is_empty() {
+        let nothing =
+            self.inner.history.pending(friend).is_empty() && self.inner.history.unsent_reactions(friend).is_empty();
+        if self.inner.has_link(friend) || nothing {
             return false;
         }
         let inner = self.inner.clone();
@@ -236,6 +254,11 @@ impl DmEngine {
 
     /// Manda um texto. Sem conexão, fica pendente e vai quando os dois estiverem online.
     pub fn send_text(&self, friend: &str, body: &str) -> Result<DmMessage, SendError> {
+        self.reply(friend, body, None)
+    }
+
+    /// Manda um texto respondendo a mensagem `reply_to` (ou um texto normal, com `None`).
+    pub fn reply(&self, friend: &str, body: &str, reply_to: Option<&str>) -> Result<DmMessage, SendError> {
         let body = body.trim();
         if body.is_empty() {
             return Err(SendError::Empty);
@@ -250,9 +273,48 @@ impl DmEngine {
             text: Some(body.to_owned()),
             file: None,
             status: Status::Pending,
+            reply_to: reply_to.map(str::to_owned),
+            reactions: Vec::new(),
+            reactions_unsent: false,
         };
         self.queue(friend, message.clone());
         Ok(message)
+    }
+
+    /// Põe (`on`) ou tira a nossa reação `emoji` da mensagem `id`. O amigo fica sabendo agora ou,
+    /// sem conexão (ou com o app dele sem reações), quando der. Devolve a mensagem como ficou.
+    pub fn react(&self, friend: &str, id: &str, emoji: &str, on: bool) -> Option<DmMessage> {
+        if !valid_emoji(emoji) {
+            return None;
+        }
+        let message = self.inner.history.update(friend, id, |m| {
+            match m.reactions.iter().position(|r| r.emoji == emoji) {
+                Some(i) => m.reactions[i].mine = on,
+                None if on && m.reactions.len() < MAX_REACTIONS => m.reactions.push(Reaction {
+                    emoji: emoji.to_owned(),
+                    mine: true,
+                    theirs: false,
+                }),
+                None => {}
+            }
+            m.reactions.retain(|r| r.mine || r.theirs);
+            m.reactions_unsent = true;
+        })?;
+        self.inner.emit(DmEvent::Message {
+            friend: friend.to_owned(),
+            message: message.clone(),
+        });
+        let inner = self.inner.clone();
+        let friend = friend.to_owned();
+        let id = id.to_owned();
+        self.spawn(async move {
+            if inner.has_link(&friend) {
+                inner.send_reactions(&friend, &id).await;
+            } else {
+                inner.ensure_link(&friend).await;
+            }
+        });
+        Some(message)
     }
 
     /// Manda um arquivo. Com `keep_copy`, o app guarda uma cópia nessa pasta (e a conversa aponta
@@ -290,6 +352,9 @@ impl DmEngine {
                 gone: false,
             }),
             status: Status::Pending,
+            reply_to: None,
+            reactions: Vec::new(),
+            reactions_unsent: false,
         };
         self.queue(friend, message.clone());
         Ok(message)
@@ -412,6 +477,7 @@ fn frame_of(message: &DmMessage) -> Frame {
             id: message.id.clone(),
             at: message.at,
             body: message.text.clone().unwrap_or_default(),
+            reply_to: message.reply_to.clone(),
         },
     }
 }
@@ -461,6 +527,7 @@ impl Inner {
         let offer = DmSignal::DmOffer {
             candidates: peer.candidates().to_vec(),
             fingerprint: peer.fingerprint().to_owned(),
+            features: our_features(),
         };
         if let Ok(json) = serde_json::to_value(&offer) {
             (self.signal_out)(friend, json);
@@ -472,7 +539,9 @@ impl Inner {
             DmSignal::DmOffer {
                 candidates,
                 fingerprint,
+                features,
             } => {
+                self.note_features(&from, &features);
                 // Os dois ofereceram: fica a oferta de quem tem o id menor (o outro só responde).
                 let mine_pending = lock(&self.offering).contains_key(&from);
                 if mine_pending && self.me < from {
@@ -488,6 +557,7 @@ impl Inner {
                     candidates: peer.candidates().to_vec(),
                     fingerprint: peer.fingerprint().to_owned(),
                     relay: peer.relay_addr(),
+                    features: our_features(),
                 };
                 if let Ok(json) = serde_json::to_value(&answer) {
                     (self.signal_out)(&from, json);
@@ -497,10 +567,12 @@ impl Inner {
                 candidates,
                 fingerprint,
                 relay,
+                features,
             } => {
                 if lock(&self.offering).remove(&from).is_none() {
                     return;
                 }
+                self.note_features(&from, &features);
                 let Some(peer) = self.peer().await else { return };
                 match peer.connect_for(&candidates, relay, &fingerprint, Purpose::Dm).await {
                     Ok(conn) => match conn.open_bi().await {
@@ -540,6 +612,9 @@ impl Inner {
         for message in self.history.pending(&friend) {
             self.send(&friend, &frame_of(&message)).await;
         }
+        for message in self.history.unsent_reactions(&friend) {
+            self.send_reactions(&friend, &message.id).await;
+        }
         let resume: Vec<String> = lock(&self.downloads)
             .iter()
             .filter(|(_, d)| d.friend == friend)
@@ -547,6 +622,40 @@ impl Inner {
             .collect();
         for id in resume {
             self.request_file(&friend, &id).await;
+        }
+    }
+
+    /// Guarda o que o app do amigo entende (do sinal que ele mandou).
+    fn note_features(&self, friend: &str, features: &[String]) {
+        let mut ok = lock(&self.reactions_ok);
+        if features.iter().any(|f| f == FEATURE_REACTIONS) {
+            ok.insert(friend.to_owned());
+        } else {
+            ok.remove(friend);
+        }
+    }
+
+    /// Manda as nossas reações atuais na mensagem `id`, se o app do amigo entende; chegando, a
+    /// mensagem deixa de estar pendente.
+    async fn send_reactions(&self, friend: &str, id: &str) {
+        if !lock(&self.reactions_ok).contains(friend) {
+            return;
+        }
+        let Some(message) = self.history.messages(friend).into_iter().find(|m| m.id == id) else {
+            return;
+        };
+        let emojis = message
+            .reactions
+            .iter()
+            .filter(|r| r.mine)
+            .map(|r| r.emoji.clone())
+            .collect();
+        let frame = Frame::Reactions {
+            id: id.to_owned(),
+            emojis,
+        };
+        if self.send(friend, &frame).await {
+            self.history.update(friend, id, |m| m.reactions_unsent = false);
         }
     }
 
@@ -575,7 +684,7 @@ impl Inner {
     async fn on_frame(self: &Arc<Self>, friend: &str, frame: Frame) {
         match frame {
             Frame::Hello => {}
-            Frame::Text { id, at, body } => {
+            Frame::Text { id, at, body, reply_to } => {
                 if body.chars().count() <= MAX_TEXT_CHARS {
                     let message = DmMessage {
                         id: id.clone(),
@@ -584,6 +693,9 @@ impl Inner {
                         text: Some(body),
                         file: None,
                         status: Status::Received,
+                        reply_to,
+                        reactions: Vec::new(),
+                        reactions_unsent: false,
                     };
                     self.receive(friend, message);
                 }
@@ -610,9 +722,39 @@ impl Inner {
                         gone: false,
                     }),
                     status: Status::Received,
+                    reply_to: None,
+                    reactions: Vec::new(),
+                    reactions_unsent: false,
                 };
                 self.receive(friend, message);
                 self.send(friend, &Frame::Ack { id }).await;
+            }
+            Frame::Reactions { id, emojis } => {
+                let theirs: Vec<String> = emojis
+                    .into_iter()
+                    .filter(|e| valid_emoji(e))
+                    .take(MAX_REACTIONS)
+                    .collect();
+                if let Some(message) = self.history.update(friend, &id, |m| {
+                    for r in &mut m.reactions {
+                        r.theirs = theirs.contains(&r.emoji);
+                    }
+                    for emoji in &theirs {
+                        if m.reactions.len() < MAX_REACTIONS && !m.reactions.iter().any(|r| &r.emoji == emoji) {
+                            m.reactions.push(Reaction {
+                                emoji: emoji.clone(),
+                                mine: false,
+                                theirs: true,
+                            });
+                        }
+                    }
+                    m.reactions.retain(|r| r.mine || r.theirs);
+                }) {
+                    self.emit(DmEvent::Message {
+                        friend: friend.to_owned(),
+                        message,
+                    });
+                }
             }
             Frame::Ack { id } => {
                 if let Some(message) = self.history.update(friend, &id, |m| {
@@ -715,8 +857,12 @@ async fn accept_loop(inner: Arc<Inner>, peer: Arc<Peer>) {
 
 /// Lê os quadros de controle até a conexão fechar.
 async fn read_loop(inner: Arc<Inner>, friend: String, conn: Connection, mut recv: RecvStream) {
-    while let Ok(Some(frame)) = read_frame::<_, Frame>(&mut recv).await {
-        inner.on_frame(&friend, frame).await;
+    // Lê como JSON e só então como quadro: um tipo novo (de um app mais novo) é ignorado, em vez
+    // de derrubar a conexão como acontecia nos apps até a 0.9.
+    while let Ok(Some(value)) = read_frame::<_, serde_json::Value>(&mut recv).await {
+        if let Some(frame) = parse_frame(value) {
+            inner.on_frame(&friend, frame).await;
+        }
     }
     inner.detach(&friend, &conn);
 }
