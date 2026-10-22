@@ -282,11 +282,12 @@ export class RoomState {
         changed = true;
       }
     }
-    if (!changed) return;
-    this.effects.putSeats(seats);
+    if (changed) this.effects.putSeats(seats);
     for (const id of left) {
       for (const [c] of this.joined()) c.send({ type: "member-left", id });
     }
+    // Sempre reagenda: um alarme que dispara um pouco antes do prazo não pode deixar a vaga
+    // (o "clone" de quem caiu) para sempre na sala.
     this.scheduleExpiry(seats);
   }
 
@@ -327,7 +328,8 @@ export class RoomState {
       : msg.discord;
     if (protocol !== PROTOCOL_VERSION) return this.fail(conn, "version-mismatch", CLOSE.versionMismatch);
 
-    const back = this.resumable(msg.resume, verified);
+    // Volta pelo token; sem ele (app reaberto), a mesma conta conferida retoma a vaga que caiu.
+    const back = this.resumable(msg.resume, verified) ?? this.ghostOf(verified);
     if (back) {
       // A conexão antiga pode estar pendurada (a queda ainda não chegou aqui): esta a substitui.
       for (const [c, m] of this.joined()) {
@@ -361,7 +363,9 @@ export class RoomState {
       : { id, name, live: false, muted: false, deafened: false, discord, verified: !!verified };
     const token = back?.token ?? this.newToken();
     const seats = this.effects.getSeats();
-    seats[id] = { token, member, room: roomName, verified, until: null };
+    // Só guarda a vaga de quem sabe voltar para ela; a de um app antigo some na queda, como antes.
+    if (msg.resumable) seats[id] = { token, member, room: roomName, verified, until: null };
+    else delete seats[id];
     this.effects.putSeats(seats);
 
     conn.setAttachment({ ...attachment, member, room: roomName });
@@ -389,6 +393,14 @@ export class RoomState {
     if (seat.until !== null && seat.until <= this.now()) return null;
     if (seat.verified && seat.verified !== verified) return null;
     return { member: seat.member, token: seat.token };
+  }
+
+  /** A vaga de quem caiu com a conta conferida `verified`, se ainda está no prazo. */
+  private ghostOf(verified: string | null): { member: Member; token: string } | null {
+    if (!verified) return null;
+    const now = this.now();
+    const seat = this.ghosts().find((s) => s.verified === verified && (s.until === null || s.until > now));
+    return seat ? { member: seat.member, token: seat.token } : null;
   }
 
   /** Recentes: quem é conferido "conhece" os outros conferidos da sala. */

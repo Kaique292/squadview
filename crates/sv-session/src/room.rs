@@ -156,6 +156,10 @@ type OnUpdate = Arc<dyn Fn(RoomUpdate) + Send + Sync>;
 
 /// Quanto esperar a resposta de quem transmite a um pedido para assistir.
 const WATCH_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+/// Quanto um pedido para assistir espera o primeiro quadro do encoder, quando chega logo depois de
+/// começarmos a transmitir (menos que o `WATCH_ANSWER_TIMEOUT` de quem pediu, para ele receber o
+/// motivo em vez de "não respondeu").
+const FIRST_FRAME_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
 /// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total). A
 /// primeira é na hora: a maioria das quedas é só a conexão com a sala, com a internet funcionando,
 /// e a sala guarda a nossa vaga por pouco tempo (ADR 0022).
@@ -189,6 +193,9 @@ struct Inner {
     relay_viewers: Mutex<HashMap<String, String>>,
     /// A voz com estes membros não abriu: pedindo a alguém para repassar (ADR 0020).
     pending_voice_relay: Mutex<HashMap<String, PendingVoiceRelay>>,
+    /// Pedidos para assistir que chegaram com o "AO VIVO" já anunciado, mas antes do primeiro
+    /// quadro do encoder: são respondidos quando ele sai (ou recusados depois de `FIRST_FRAME_WAIT`).
+    first_frame_waiters: Mutex<Vec<WatchWaiter>>,
     voice: Arc<VoiceMesh>,
     runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
@@ -305,6 +312,7 @@ impl Room {
                 relay_sources: Mutex::default(),
                 relay_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
+                first_frame_waiters: Mutex::default(),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
@@ -395,10 +403,11 @@ impl Room {
         self.inner.publish_members();
     }
 
-    /// Paramos de transmitir: desconecta quem assistia.
+    /// Paramos de transmitir: desconecta quem assistia (e recusa quem esperava o primeiro quadro).
     pub fn stream_stopped(&self) {
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
+        self.inner.flush_waiters();
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
         self.inner.send_status();
@@ -524,6 +533,74 @@ fn watches(member: &Member, streamer: &str) -> bool {
 }
 
 impl Inner {
+    /// Responde um pedido para assistir. Com o "AO VIVO" já anunciado e o encoder ainda sem o
+    /// primeiro quadro (uma janela parada pode demorar a mandar um), o pedido espera esse quadro em
+    /// vez de ser recusado: antes, quem clicava nesse intervalo via "Não está transmitindo agora."
+    /// com o selo de ao vivo aceso.
+    fn answer_watch(self: &Arc<Self>, request: WatchWaiter) {
+        let live = lock(&self.keyframes).is_some();
+        let desc = *lock(&self.stream);
+        let reply = match (live, desc) {
+            (true, Some(stream)) => {
+                self.peer.allowed().allow(&request.fingerprint);
+                self.peer.punch(&request.candidates);
+                // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
+                self.peer.permit_relay(&request.candidates);
+                Signal::WatchAccept {
+                    candidates: self.peer.candidates().to_vec(),
+                    fingerprint: self.peer.fingerprint().to_owned(),
+                    stream,
+                    relay: self.peer.relay_addr(),
+                }
+            }
+            (true, None) => {
+                let key = (request.from.clone(), request.fingerprint.clone());
+                lock(&self.first_frame_waiters).push(request);
+                let weak = Arc::downgrade(self);
+                self.runtime.spawn(async move {
+                    tokio::time::sleep(FIRST_FRAME_WAIT).await;
+                    if let Some(inner) = weak.upgrade() {
+                        inner.give_up_waiter(&key.0, &key.1);
+                    }
+                });
+                return;
+            }
+            (false, _) => Signal::WatchDeny {
+                reason: NOT_LIVE.into(),
+            },
+        };
+        lock(&self.client).signal(&request.from, &reply);
+    }
+
+    /// O primeiro quadro não saiu a tempo: recusa o pedido que ainda esperava.
+    fn give_up_waiter(&self, from: &str, fingerprint: &str) {
+        let mut waiters = lock(&self.first_frame_waiters);
+        let Some(i) = waiters
+            .iter()
+            .position(|w| w.from == from && w.fingerprint == fingerprint)
+        else {
+            return;
+        };
+        let waiter = waiters.remove(i);
+        drop(waiters);
+        lock(&self.client).signal(
+            &waiter.from,
+            &Signal::WatchDeny {
+                reason: STILL_STARTING.into(),
+            },
+        );
+    }
+
+    /// O primeiro quadro saiu (ou a transmissão parou): responde quem esperava.
+    fn flush_waiters(self: &Arc<Self>) {
+        // Chamado da thread do encoder (o primeiro quadro) ou da interface: aceitar usa o runtime.
+        let _runtime = self.runtime.enter();
+        let waiters = std::mem::take(&mut *lock(&self.first_frame_waiters));
+        for waiter in waiters {
+            self.answer_watch(waiter);
+        }
+    }
+
     /// Manda para a sala o nosso estado (ao vivo, mudo, surdo, quem assistimos e o efeito de fala).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
@@ -736,28 +813,11 @@ impl Inner {
             Signal::WatchRequest {
                 candidates,
                 fingerprint,
-            } => {
-                let desc = *lock(&self.stream);
-                let ready = desc.is_some() && lock(&self.keyframes).is_some();
-                let reply = match (ready, desc) {
-                    (true, Some(stream)) => {
-                        self.peer.allowed().allow(&fingerprint);
-                        self.peer.punch(&candidates);
-                        // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
-                        self.peer.permit_relay(&candidates);
-                        Signal::WatchAccept {
-                            candidates: self.peer.candidates().to_vec(),
-                            fingerprint: self.peer.fingerprint().to_owned(),
-                            stream,
-                            relay: self.peer.relay_addr(),
-                        }
-                    }
-                    _ => Signal::WatchDeny {
-                        reason: "Não está transmitindo agora.".into(),
-                    },
-                };
-                lock(&self.client).signal(&from, &reply);
-            }
+            } => self.answer_watch(WatchWaiter {
+                from,
+                candidates,
+                fingerprint,
+            }),
             Signal::WatchAccept {
                 candidates,
                 fingerprint,
@@ -1173,6 +1233,18 @@ async fn accept_viewers(inner: Arc<Inner>) {
 }
 
 /// Entrega o que a prévia produz para os amigos conectados.
+/// Recusa de quem não está ao vivo.
+const NOT_LIVE: &str = "Não está transmitindo agora.";
+/// Recusa de quem está ao vivo, mas cujo encoder ainda não mandou o primeiro quadro.
+const STILL_STARTING: &str = "A transmissão ainda está começando. Tente de novo em instantes.";
+
+/// Um pedido para assistir, guardado até o primeiro quadro do encoder.
+struct WatchWaiter {
+    from: String,
+    candidates: Vec<std::net::SocketAddr>,
+    fingerprint: String,
+}
+
 struct BroadcastTap {
     inner: Arc<Inner>,
 }
@@ -1185,6 +1257,8 @@ impl StreamTap for BroadcastTap {
             fps: info.fps,
             audio: true,
         });
+        // Quem pediu para assistir antes do primeiro quadro entra agora.
+        self.inner.flush_waiters();
     }
 
     fn video(&self, seq: u32, frame: &EncodedFrame) {

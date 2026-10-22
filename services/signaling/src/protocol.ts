@@ -69,6 +69,11 @@ export type ClientMessage =
       session: string | null;
       /** Voltando de uma queda (ADR 0022): o id e o token do `welcome` anterior. */
       resume: Resume | null;
+      /**
+       * O app sabe voltar para a vaga depois de uma queda (ADR 0022). Só para esses a sala guarda a
+       * vaga: um app antigo volta com outro id, e a vaga guardada viraria um "clone" dele.
+       */
+      resumable: boolean;
     }
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
@@ -211,7 +216,18 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // Retomada: opcional (apps até o 0.10 não mandam).
       const resume = parseResume(data.resume);
       if (resume === false) return null;
-      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session, resume };
+      if (data.resumable !== undefined && typeof data.resumable !== "boolean") return null;
+      const resumable = data.resumable === true || resume !== null;
+      return {
+        type: "join",
+        name,
+        protocol: data.protocol,
+        room,
+        discord: discord ?? null,
+        session,
+        resume,
+        resumable,
+      };
     }
     case "room": {
       const name = cleanName(data.name);

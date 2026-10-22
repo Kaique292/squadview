@@ -108,9 +108,11 @@ async fn quem_cai_volta_com_o_mesmo_id_sem_os_outros_verem() {
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("{url}/rooms/{code}"))
         .await
         .unwrap();
-    ws.send(Message::Text(r#"{"type":"join","name":"Ana","protocol":1}"#.into()))
-        .await
-        .unwrap();
+    ws.send(Message::Text(
+        r#"{"type":"join","name":"Ana","protocol":1,"resumable":true}"#.into(),
+    ))
+    .await
+    .unwrap();
     let welcome: serde_json::Value = loop {
         if let Some(Ok(Message::Text(t))) = ws.next().await {
             break serde_json::from_str(&t).unwrap();

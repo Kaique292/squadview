@@ -25,7 +25,9 @@ O app tenta voltar na hora (a primeira tentativa não espera), só mostra o avis
 - **Saída de verdade continua imediata.** Quem sai com `leave` ou é derrubado por erro (mensagem inválida, limite de taxa) sai na hora e não deixa vaga.
 - **Quem fecha o app à força continua na lista por até 60 s.** Durante o prazo, sinais para essa pessoa se perdem sem o erro `unknown-peer` (o app tenta de novo). Isso é aceitável: o Discord faz o mesmo.
 - **O token é um segredo de 128 bits**, conhecido só por quem recebeu o `welcome` e nunca gravado no registro. Membro conferido só retoma a vaga da própria conta.
-- **Compatível com apps antigos, sem mudar a versão do protocolo.** Os campos são opcionais: o app antigo ignora o `resume` do `welcome`, não manda `resume` no `join` e continua voltando como membro novo. A diferença é que a vaga antiga dele ainda aparece por até 60 s.
+- **Compatível com apps antigos, sem mudar a versão do protocolo.** Os campos são opcionais, e só o app que manda `resumable: true` no `join` ganha vaga guardada. O app antigo (até a 0.10) continua saindo da sala na hora quando cai e volta como membro novo, exatamente como antes.
+  - Revisão de 2026-10-22: a primeira versão guardava a vaga de todos. Com os apps 0.10 (que voltam com outro id e, ao sair, nem mandam o `leave`), a vaga guardada aparecia como um "clone" de quem tinha saído, ainda "AO VIVO", por até 60 s. Agora a vaga é só de quem sabe voltar para ela; o alarme também passa a se reagendar sempre, para uma vaga nunca ficar além do prazo.
+- **App reaberto volta para a mesma vaga.** Sem o token (o app foi fechado e aberto de novo), o membro conferido retoma a vaga da mesma conta do Discord, se ela ainda estiver no prazo. Assim também não aparece clone de quem reabre o app.
 - **Fica de fora o WebSocket de amigos e presença.** Ele tem o mesmo padrão de queda, mas a queda nele não afeta a voz. Se os registros mostrarem que incomoda, vale outra ADR.
 - **O que acompanhar:** os motivos anotados em `room-connection` (`reason`) e quantas voltas são `resumed: false`.
 

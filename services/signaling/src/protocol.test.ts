@@ -61,6 +61,15 @@ describe("mensagens do cliente", () => {
     }
   });
 
+  it("resumable: só o app novo manda; quem manda resume também sabe voltar", () => {
+    const parse = (extra: object) =>
+      parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, ...extra }));
+    expect(parse({})).toMatchObject({ resumable: false });
+    expect(parse({ resumable: true })).toMatchObject({ resumable: true });
+    expect(parse({ resume: { id: "0123456789abcdef", token: "0".repeat(32) } })).toMatchObject({ resumable: true });
+    expect(parse({ resumable: "sim" })).toBeNull();
+  });
+
   it("lê o resume do join e recusa um fora do formato", () => {
     const resume = { id: "0123456789abcdef", token: "0123456789abcdef0123456789abcdef" };
     expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, resume }))).toMatchObject({
@@ -80,6 +89,7 @@ describe("mensagens do cliente", () => {
       discord: null,
       session: null,
       resume: null,
+      resumable: false,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
@@ -89,6 +99,7 @@ describe("mensagens do cliente", () => {
       discord: null,
       session: null,
       resume: null,
+      resumable: false,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });
