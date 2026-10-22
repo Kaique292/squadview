@@ -7,7 +7,7 @@
 | Unidade (Rust)    | `cargo test`              | Lógica dos crates, principalmente `sv-mesh` (pura) e configurações de encode |
 | Unidade (TS)      | Vitest + Testing Library  | Componentes e estado da interface; rotas e códigos da sinalização            |
 | Integração (Rust) | `cargo test` em `tests/`  | Dois `sv-net` falando em loopback; simulador de sala para a malha            |
-| Hardware          | `cargo test -- --ignored` | Captura e NVENC reais. Só roda numa máquina com GPU, nunca no CI             |
+| Hardware          | `cargo test -- --ignored` | Captura, NVENC e controles virtuais (ViGEmBus) reais. Nunca no CI            |
 | Performance       | skill `perf-check`        | Impacto no FPS do jogo, latência, uso do encoder                             |
 
 ## Metas de cobertura (linhas)

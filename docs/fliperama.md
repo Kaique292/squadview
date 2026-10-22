@@ -15,18 +15,25 @@ janela do fliperama ◀──────── live normal (Stream) ─── c
 
 ## Etapa 0: prova de conceito do driver (só host, sem rede)
 
-- [ ] Instalar o ViGEmBus pelo instalador oficial numa máquina de teste e registrar a versão.
-- [ ] Exemplo `examples/arcade_loopback.rs` em um crate novo `crates/sv-input`:
-  - lê o controle físico pelo XInput;
-  - repete o estado num controle virtual X360 (`vigem-client`);
-  - mostra o `user index` que o Windows deu.
+- [x] Instalar o ViGEmBus pelo instalador oficial numa máquina de teste e registrar a versão: **1.22.0**, desinstalador `MsiExec.exe /X{966606F3-2745-49E9-BF15-5C3EAA4E9077}`.
+- [x] Exemplo `examples/arcade_loopback.rs` no crate novo `crates/sv-input`:
+  - lê o controle físico pelo XInput (250 leituras por segundo);
+  - repete o estado num controle virtual X360 (`vigem-rust`) e mostra quanto cada atualização leva;
+  - mostra a vaga do XInput que o Windows deu ao controle virtual.
+  - Rodar: `cargo run -p sv-input --example arcade_loopback -- [--from 0] [--seconds 60]`. Back + Start por 2 s para parar.
 - [ ] Abrir um jogo com vários controles locais e conferir que ele vê o controle virtual como P2.
-- [ ] Detectar se o driver está instalado (abrir o cliente e tratar "bus não encontrado") e achar o desinstalador registrado (`HKLM\...\Uninstall`, pelo nome do produto).
+- [x] Detectar se o driver está instalado (`driver_status`: `Installed`, `Missing`, `Incompatible` ou `Unavailable`) e achar o desinstalador registrado (`find_uninstaller`, em `HKLM\...\Uninstall` nas vistas de 64 e 32 bits, pelo nome do produto).
+  - Conferido sem o driver: o exemplo mostra o link do instalador oficial e para.
+  - Conferido com o driver: o exemplo acha o driver e o desinstalador, e o teste `#[ignore]` `pluga_atualiza_e_tira_um_controle_virtual` (`cargo test -p sv-input -- --ignored`) passa: o XInput vê o estado aplicado no controle virtual, e a vaga fica livre ao desplugar.
+  - Achados:
+    - no **primeiro** plug depois de instalar o driver, o Windows instala o driver do controle e a espera "pronto" volta abortada (`ERROR_OPERATION_ABORTED`); do segundo em diante, funciona;
+    - logo depois do plug, o driver ainda não sabe a vaga do XInput (`XUSB_GET_USER_INDEX` responde `ERROR_INSUFFICIENT_BUFFER`). O `plug` pergunta por até 2 s e, enquanto isso, também olha qual vaga do XInput passou a estar ocupada.
+  - Na Etapa 3, o host deve tentar plugar de novo uma vez quando o primeiro plug for abortado.
 - **Pronto quando:** o jogo responde ao controle virtual e a detecção funciona com e sem o driver.
 
 ## Etapa 1: crate `sv-input` (lógica pura + plataforma)
 
-- [ ] `PadState`: botões (u16 no layout do XInput), gatilhos (u8), analógicos (i16) e `seq` (u32). Também `encode`/`decode` de tamanho fixo (~16 bytes) com teste de ida e volta.
+- [ ] `PadState`: botões (u16 no layout do XInput), gatilhos (u8), analógicos (i16) e `seq` (u32). Também `encode`/`decode` de tamanho fixo (~16 bytes) com teste de ida e volta. O estado (sem `seq`) e a conversão para o controle virtual já existem desde a Etapa 0.
 - [ ] `PadReader`: thread que lê o XInput a 250 Hz e entrega só quando o estado muda (com zona morta). Sem alocação no laço.
 - [ ] `KeyMap`: teclado → `PadState`, com o mapeamento padrão (WASD/setas, J K L I, Enter, Esc) editável e salvo em `arcade.json`.
 - [ ] `VirtualPads` (só host): cria e remove os controles X360, aplica o estado, devolve o `user index`, e fecha tudo no `Drop`.

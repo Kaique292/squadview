@@ -1,0 +1,18 @@
+[package]
+name = "sv-input"
+description = "Controles do fliperama: leitura do XInput e controles virtuais de Xbox 360 pelo ViGEmBus (ADR 0023)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vigem-rust.workspace = true
+windows.workspace = true
+windows-core.workspace = true
+
+[lints]
+workspace = true
