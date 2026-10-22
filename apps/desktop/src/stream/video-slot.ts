@@ -1,9 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import { rememberVideoRect } from "../ui/dissolve-effect";
-import { watchVideoHoles } from "../ui/overlay";
 import { setSeeThrough } from "../ui/see-through";
-import { OWN_VIDEO, setVideoRect } from "./video-pointer";
+import { OWN_VIDEO } from "./video-key";
 
 type PhysicalBounds = { x: number; y: number; width: number; height: number; radius: number };
 
@@ -43,8 +42,6 @@ export function useVideoSlot(memberId?: string, hidden = false, showing = true) 
       const r = el.getBoundingClientRect();
       // Guarda onde o vídeo está: a animação de saída aparece exatamente ali.
       rememberVideoRect({ x: r.left, y: r.top, width: r.width, height: r.height }, of);
-      // E onde o mouse que o vídeo repassa cai na página.
-      setVideoRect(r, of);
       const radius = hidden ? 0 : tileRadius(el);
       setSeeThrough(
         of,
@@ -70,14 +67,10 @@ export function useVideoSlot(memberId?: string, hidden = false, showing = true) 
     observer.observe(el);
     window.addEventListener("resize", report);
     report();
-    // Menus e dicas por cima do vídeo: ele abre buracos para eles, em vez de cobri-los.
-    const stopHoles = watchVideoHoles();
     return () => {
       reportRef.current = () => {};
-      stopHoles();
       observer.disconnect();
       window.removeEventListener("resize", report);
-      setVideoRect(null, of);
       setSeeThrough(of, null);
       sendBounds(memberId, { x: 0, y: 0, width: 0, height: 0, radius: 0 });
     };

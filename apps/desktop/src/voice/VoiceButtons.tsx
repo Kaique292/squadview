@@ -1,7 +1,6 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, ChevronRight, Headphones, HeadphoneOff, Mic, MicOff } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useOverlayMenu } from "../ui/overlay";
 import { Tooltip } from "../ui/Tooltip";
 import { type AudioDevice, MAX_VOICE_VOLUME, useVoiceStore } from "./voice-store";
 import { CheckMark } from "../ui/Checkbox";
@@ -99,7 +98,9 @@ function SplitButton(props: {
       ? "text-text hover:bg-surface-hover"
       : "text-text-muted hover:bg-surface-hover hover:text-text";
   const height = props.large ? "h-12" : "h-8";
-  const onOpenChange = useOverlayMenu((open) => open && props.onOpenMenu());
+  const onOpenChange = (open: boolean) => {
+    if (open) props.onOpenMenu();
+  };
   return (
     <div
       className={`flex items-center transition-colors ${props.large ? "rounded-lg" : "rounded-md"} ${

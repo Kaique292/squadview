@@ -4,11 +4,11 @@ import { ImageOff, Loader2, Monitor, MoreHorizontal, PictureInPicture2, VolumeX 
 import { type KeyboardEvent, useEffect, useState } from "react";
 import { useRoomStore } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
-import { stopInsideMenu, useOverlayMenu } from "../ui/overlay";
+import { stopInsideMenu } from "../ui/overlay";
 import { MENU_CONTENT } from "./StreamMenu";
 import type { StreamTileVariant } from "./StreamTile";
 import { WatchMenuItems } from "./WatchMenu";
-import { onVideoEnter, useStreamStore } from "./stream-store";
+import { useStreamStore } from "./stream-store";
 import { useVideoSlot } from "./video-slot";
 
 /** Sem nenhum quadro por esse tempo, avisamos que a imagem não está chegando. */
@@ -50,7 +50,7 @@ export function WatchTile(props: {
   onDetails: () => void;
 }) {
   const watch = useRoomStore((s) => s.watching[props.memberId]);
-  const { fullscreen, fullscreenOf, videoHover, pip, setFullscreen, setPip } = useStreamStore();
+  const { fullscreen, fullscreenOf, pip, setFullscreen, setPip } = useStreamStore();
   const inPip = pip === props.memberId;
   // Com imagem chegando (e o vídeo aqui, não no picture in picture), o quadro fica transparente e
   // o vídeo, desenhado por baixo da página, aparece.
@@ -58,18 +58,13 @@ export function WatchTile(props: {
   const slot = useVideoSlot(props.memberId, props.hidden, showing);
   const arriving = useImageArriving(watch?.stats?.fps);
   const [pointerIn, setPointerIn] = useState(false);
-  // O mouse indo da página para o vídeo nativo não avisa a página: ao entrar num vídeo, o "em
-  // cima" dela deixa de valer (senão os ... ficavam presos na tela depois de sair da janela).
-  useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [menuOpen, setMenuOpen] = useState(false);
-  const onMenuOpenChange = useOverlayMenu(setMenuOpen);
-  const onContextOpenChange = useOverlayMenu();
   if (!watch) return null;
 
   const { member, stats, listening } = watch;
   const name = member.name;
   const strip = props.variant === "strip";
-  const showMore = !strip && (videoHover === props.memberId || pointerIn || menuOpen);
+  const showMore = !strip && (pointerIn || menuOpen);
   const shape =
     props.variant === "focus" || props.variant === "fullscreen"
       ? "h-full w-full"
@@ -85,7 +80,7 @@ export function WatchTile(props: {
   }
 
   return (
-    <ContextMenu.Root onOpenChange={onContextOpenChange}>
+    <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
           role="button"
@@ -153,13 +148,12 @@ export function WatchTile(props: {
 
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>
             {!strip && stats && stats.height > 0 && (
-              <InfoBadge data-video-hole>{`${stats.height}p ${Math.round(stats.fps)}fps`}</InfoBadge>
+              <InfoBadge>{`${stats.height}p ${Math.round(stats.fps)}fps`}</InfoBadge>
             )}
-            <LiveBadge data-video-hole size={strip ? "sm" : "md"} />
+            <LiveBadge size={strip ? "sm" : "md"} />
           </div>
 
           <span
-            data-video-hole
             className={`absolute flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-black/60 font-medium ${
               strip ? "bottom-1.5 left-1.5 px-1.5 py-0.5 text-xs" : "bottom-2.5 left-2.5 px-2 py-1 text-sm"
             }`}
@@ -176,12 +170,11 @@ export function WatchTile(props: {
           </span>
 
           {showMore && (
-            <DropdownMenu.Root open={menuOpen} onOpenChange={onMenuOpenChange}>
+            <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
               <DropdownMenu.Trigger asChild>
                 <button
                   type="button"
                   aria-label={`Mais opções da live de ${name}`}
-                  data-video-hole
                   onClick={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
                   className="absolute right-2.5 bottom-2.5 grid size-8 place-items-center rounded-md bg-black/60 text-white transition-colors hover:bg-black/80 data-[state=open]:bg-black/80"

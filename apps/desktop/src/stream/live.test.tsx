@@ -5,7 +5,6 @@ import { useToastStore } from "../ui/toast-store";
 import { DEFAULT_PREFS, useVoiceStore } from "../voice/voice-store";
 import { DEFAULT_QUALITY, listenToStreamEvents, type Source, useStreamStore } from "./stream-store";
 import { qualityLabel } from "./StreamMenu";
-import { DOUBLE_CLICK_MS, handleVideoPointer, setVideoRect, toClient } from "./video-pointer";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -48,7 +47,6 @@ beforeEach(async () => {
     history: [],
     notice: null,
     fullscreen: false,
-    videoHover: null,
     fullscreenOf: null,
     current: { source: JOGO, audioPid: 7, lastAudioPid: 7 },
   });
@@ -71,7 +69,7 @@ describe("a nossa live como um quadro da sala", () => {
     const grade = within(canal()).getByRole("list", { name: "Quem está na voz" });
     const [primeiro] = within(grade).getAllByRole("listitem");
     expect(within(primeiro).getByRole("button", { name: "Pôr sua transmissão em foco" })).toBeInTheDocument();
-    expect(within(primeiro).getByText("1080p 60fps")).toHaveAttribute("data-video-hole");
+    expect(within(primeiro).getByText("1080p 60fps")).toBeInTheDocument();
     const selo = within(primeiro).getByText("Ao vivo");
     expect(selo).toHaveClass("uppercase", "rounded-full");
     expect(within(primeiro).getByText("Kaique")).toBeInTheDocument();
@@ -203,13 +201,7 @@ describe("a nossa live como um quadro da sala", () => {
   it("os ... aparecem com o mouse em cima e abrem o menu, com os detalhes", async () => {
     render(<App />);
     expect(screen.queryByRole("button", { name: "Mais opções da transmissão" })).toBeNull();
-    // O mouse sobre o vídeo nativo chega pelo Rust.
-    emit("video-pointer", { kind: "enter" });
-    const mais = screen.getByRole("button", { name: "Mais opções da transmissão" });
-    expect(mais).toHaveAttribute("data-video-hole");
-    emit("video-pointer", { kind: "leave" });
-    expect(screen.queryByRole("button", { name: "Mais opções da transmissão" })).toBeNull();
-    // Sobre os selos (buracos no vídeo), o mouse é da página.
+    // O vídeo fica por baixo da página: o mouse em cima dele é o mouse em cima do quadro.
     fireEvent.mouseEnter(live());
     expect(screen.getByRole("button", { name: "Mais opções da transmissão" })).toBeInTheDocument();
     fireEvent.mouseLeave(live());
@@ -224,20 +216,6 @@ describe("a nossa live como um quadro da sala", () => {
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Detalhes da transmissão/ }));
     const detalhes = await screen.findByRole("dialog", { name: "Detalhes da transmissão" });
     expect(within(detalhes).getByText("1 assistindo")).toBeInTheDocument();
-  });
-
-  it("o mouse saindo da janela por cima do vídeo esconde os controles e os ...", () => {
-    render(<App />);
-    // O mouse entra pela página e passa para o vídeo nativo (a página não fica sabendo que ele saiu).
-    fireEvent.mouseEnter(canal());
-    fireEvent.mouseEnter(live());
-    emit("video-pointer", { kind: "enter" });
-    expect(canal()).toHaveAttribute("data-chrome");
-    expect(screen.getByRole("button", { name: "Mais opções da transmissão" })).toBeInTheDocument();
-    // Sai da janela por cima do vídeo: só o Rust avisa.
-    emit("video-pointer", { kind: "leave" });
-    expect(canal()).not.toHaveAttribute("data-chrome");
-    expect(screen.queryByRole("button", { name: "Mais opções da transmissão" })).toBeNull();
   });
 
   it("o foco de um clique não segura os controles depois que o mouse sai; o do teclado segura", () => {
@@ -284,54 +262,5 @@ describe("selo da qualidade", () => {
   it("na Fonte mostra a altura de verdade, ou Fonte enquanto ela não chega", () => {
     expect(qualityLabel({ resolution: "source", fps: 60 }, 1440)).toBe("1440p 60fps");
     expect(qualityLabel({ resolution: "source", fps: 30 })).toBe("Fonte 30fps");
-  });
-});
-
-describe("o mouse que o vídeo nativo repassa", () => {
-  afterEach(() => {
-    setVideoRect(null);
-    vi.useRealTimers();
-  });
-
-  it("sem saber onde está o vídeo, não entrega nada", () => {
-    expect(toClient(10, 10)).toBeNull();
-    handleVideoPointer({ kind: "menu", x: 1, y: 1 }, () => {});
-  });
-
-  it("converte o ponto do vídeo para a página e abre o menu do elemento embaixo", () => {
-    vi.stubGlobal("devicePixelRatio", 2);
-    setVideoRect({ left: 100, top: 50 });
-    expect(toClient(40, 20)).toEqual({ clientX: 120, clientY: 60 });
-    const alvo = document.createElement("div");
-    const menu = vi.fn();
-    alvo.addEventListener("contextmenu", (e) => menu([e.clientX, e.clientY, e.button]));
-    document.body.append(alvo);
-    const elementFromPoint = vi.fn(() => alvo);
-    Object.assign(document, { elementFromPoint });
-    handleVideoPointer({ kind: "menu", x: 40, y: 20 }, () => {});
-    expect(elementFromPoint).toHaveBeenCalledWith(120, 60);
-    expect(menu).toHaveBeenCalledWith([120, 60, 2]);
-    alvo.remove();
-    vi.unstubAllGlobals();
-  });
-
-  it("o clique espera para não ser o primeiro de dois; os dois cliques o cancelam", async () => {
-    vi.useFakeTimers();
-    setVideoRect({ left: 0, top: 0 });
-    const alvo = document.createElement("div");
-    const click = vi.fn();
-    alvo.addEventListener("click", click);
-    Object.assign(document, { elementFromPoint: () => alvo });
-    handleVideoPointer({ kind: "click", x: 5, y: 5 }, () => {});
-    expect(click).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(DOUBLE_CLICK_MS);
-    expect(click).toHaveBeenCalledTimes(1);
-
-    // Dois cliques: chega o clique e logo a tela cheia, que o cancela.
-    invoke.mockResolvedValue(undefined);
-    handleVideoPointer({ kind: "click", x: 5, y: 5 }, () => {});
-    emit("video-fullscreen", { kind: "toggle", source: null });
-    vi.advanceTimersByTime(DOUBLE_CLICK_MS);
-    expect(click).toHaveBeenCalledTimes(1);
   });
 });

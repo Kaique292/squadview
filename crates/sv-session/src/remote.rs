@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use quinn::Connection;
 use sv_encode::EncodedFrame;
 use sv_gpu::{Size, clock};
-use sv_media::{Bounds, Hole, WindowEvent, WindowTarget};
+use sv_media::{Bounds, WindowTarget};
 use sv_net::protocol::{FrameHeader, StreamDescription};
 use sv_net::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
 
@@ -186,19 +186,6 @@ impl RemoteView {
         s.apply();
     }
 
-    pub fn set_video_hidden(&self, hidden: bool) {
-        let mut s = lock(&self.state.surface);
-        s.hidden = hidden;
-        s.apply();
-    }
-
-    /// Onde a interface está por cima do vídeo (menus, dicas): ali o vídeo deixa ela aparecer.
-    pub fn set_video_holes(&self, holes: Vec<Hole>) {
-        let mut s = lock(&self.state.surface);
-        s.holes = holes;
-        s.apply();
-    }
-
     /// Raio dos cantos do quadro (pixels físicos): o vídeo por baixo da interface acompanha a borda.
     pub fn set_video_radius(&self, radius: u32) {
         let mut s = lock(&self.state.surface);
@@ -212,17 +199,6 @@ impl RemoteView {
         let mut s = lock(&self.state.surface);
         s.host = host;
         s.apply();
-    }
-
-    /// Solta o vídeo numa janela pequena, sempre no topo (picture in picture), ou devolve ao app.
-    pub fn set_video_pip(&self, pip: bool) {
-        let mut s = lock(&self.state.surface);
-        s.pip = pip;
-        s.apply();
-    }
-
-    pub fn on_video_event(&self, cb: impl Fn(WindowEvent) + Send + Sync + 'static) {
-        lock(&self.state.surface).set_on_event(Arc::new(cb));
     }
 
     /// Liga ou desliga o som do amigo.

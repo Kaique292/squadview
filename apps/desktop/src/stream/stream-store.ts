@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { playVideoExit } from "../ui/dissolve-effect";
 import { toast } from "../ui/toast-store";
-import { cancelVideoClick, handleVideoPointer, OWN_VIDEO, type VideoPointer, videoKey } from "./video-pointer";
+import { OWN_VIDEO, videoKey } from "./video-key";
 
 /**
  * O que a janelinha do picture in picture mostra além do vídeo (espelha `room::PipInfo`): quem
@@ -131,8 +131,6 @@ interface StreamState {
   fullscreenOf: string | null;
   /** Põe (ou tira) em tela cheia o vídeo `of` (sem `of`: a nossa live). */
   setFullscreen: (fullscreen: boolean, of?: string) => Promise<void>;
-  /** Sobre qual vídeo nativo o mouse está (ele não passa pela interface: o Rust avisa). */
-  videoHover: string | null;
   /** A live (id de quem transmite) solta numa janela pequena, sempre no topo. Uma por vez. */
   pip: string | null;
   setPip: (memberId: string | null) => Promise<void>;
@@ -199,8 +197,6 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       set({ fullscreen: before.fullscreen, fullscreenOf: before.fullscreenOf });
     }
   },
-
-  videoHover: null,
 
   pip: null,
   async setPip(memberId) {
@@ -270,16 +266,6 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 }));
 
 /**
- * Chama `cb` quando o mouse entra no vídeo nativo. A página não recebe o "saiu" quando o mouse
- * passa dela para o vídeo: quem guarda "mouse em cima" usa isto para desligar. Devolve o cancelar.
- */
-export function onVideoEnter(cb: () => void) {
-  return useStreamStore.subscribe((s, prev) => {
-    if (s.videoHover && s.videoHover !== prev.videoHover) cb();
-  });
-}
-
-/**
  * Teto do upload por pessoa assistindo, em Mbps. Mesma fórmula de `StreamQuality::bitrate_kbps`
  * no Rust (0,064 bit por pixel por quadro, entre 1,5 e 25 Mbps), assumindo uma fonte 16:9.
  * Sem saber o tamanho da fonte, supõe que ela preenche a resolução escolhida (4K em "Fonte").
@@ -304,33 +290,12 @@ export async function listenToStreamEvents() {
   const unlistenNotice = await listen<StreamNotice | null>("stream-notice", (e) =>
     useStreamStore.setState({ notice: e.payload }),
   );
-  // Pedidos de tela cheia feitos dentro de um vídeo nativo (que recebe o teclado e os cliques dele).
-  // `source` diz qual: `null` é a nossa live; um id, a live de quem assistimos.
-  const unlistenFullscreen = await listen<{ kind: "toggle" | "exit"; source: string | null }>(
-    "video-fullscreen",
-    (e) => {
-      const of = videoKey(e.payload.source);
-      // Dois cliques: o clique que esperava para ver se vinha outro não vale.
-      if (e.payload.kind === "toggle") cancelVideoClick(of);
-      const { fullscreen, fullscreenOf, setFullscreen } = useStreamStore.getState();
-      const on = e.payload.kind === "toggle" && !(fullscreen && fullscreenOf === of);
-      void setFullscreen(on, of);
-    },
-  );
-  // Clique, botão direito e o mouse entrando e saindo de um vídeo, que fica por cima da interface.
-  const unlistenPointer = await listen<VideoPointer>("video-pointer", (e) =>
-    handleVideoPointer(e.payload, (of, inside) => {
-      const hover = useStreamStore.getState().videoHover;
-      if (inside) useStreamStore.setState({ videoHover: of });
-      else if (hover === of) useStreamStore.setState({ videoHover: null });
-    }),
-  );
-  // Dois cliques, Esc ou fechar na janelinha do picture in picture: o vídeo volta para o app.
+  // A janelinha do picture in picture fechou (voltar, dois cliques ou Alt+F4): o vídeo volta para o app.
   const unlistenPip = await listen<{ pip: boolean; source: string | null }>("video-pip", (e) => {
     const { pip, setPip } = useStreamStore.getState();
     if (!e.payload.pip && pip === e.payload.source) void setPip(null);
   });
-  // Esc com o foco na interface também sai da tela cheia.
+  // Esc sai da tela cheia.
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && useStreamStore.getState().fullscreen) void useStreamStore.getState().setFullscreen(false);
   };
@@ -351,8 +316,6 @@ export async function listenToStreamEvents() {
     unlistenSystem();
     unlistenExit();
     unlistenNotice();
-    unlistenFullscreen();
-    unlistenPointer();
     unlistenPip();
     window.removeEventListener("keydown", onKey);
   };

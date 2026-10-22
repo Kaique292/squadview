@@ -169,7 +169,7 @@ describe("na sala", () => {
     const foco = screen.getByRole("group", { name: "Em foco" });
     expect(within(foco).getByRole("button", { name: "Voltar para a grade (live de Ana em foco)" })).toBeInTheDocument();
     emit("watch-stats", { memberId: ANA.id, stats: { fps: 60, height: 1080, rttMs: 18 } as StreamStats });
-    expect(within(foco).getByText("1080p 60fps")).toHaveAttribute("data-video-hole");
+    expect(within(foco).getByText("1080p 60fps")).toBeInTheDocument();
     // Medição de quem não assistimos (chegou atrasada) não mexe em nada.
     emit("watch-stats", { memberId: BETO.id, stats: { fps: 30 } as StreamStats });
     expect(useRoomStore.getState().watching[BETO.id]).toBeUndefined();

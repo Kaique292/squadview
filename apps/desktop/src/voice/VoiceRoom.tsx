@@ -27,10 +27,9 @@ import { MENU_CONTENT, StreamMenuItems } from "../stream/StreamMenu";
 import { StreamTile, type StreamTileVariant } from "../stream/StreamTile";
 import { WatchDetailsDialog } from "../stream/WatchDetailsDialog";
 import { WatchTile } from "../stream/WatchTile";
-import { onVideoEnter, useStreamStore } from "../stream/stream-store";
-import { OWN_VIDEO } from "../stream/video-pointer";
+import { useStreamStore } from "../stream/stream-store";
+import { OWN_VIDEO } from "../stream/video-key";
 import { Backdrop } from "../ui/Backdrop";
-import { useOverlayMenu } from "../ui/overlay";
 import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
@@ -67,10 +66,6 @@ export function VoiceRoom() {
   const [focusIn, setFocusIn] = useState(false);
   // Foco que veio de um clique (não do teclado) não segura os controles depois que o mouse sai.
   const clicked = useRef(false);
-  // Sobre o vídeo nativo o mouse sai da página sem ela saber: quem avisa é o Rust. Ao entrar no
-  // vídeo, o "mouse em cima" da página deixa de valer (senão ficava preso ligado ao sair da janela).
-  const videoHover = useStreamStore((s) => s.videoHover !== null);
-  useEffect(() => onVideoEnter(() => setPointerIn(false)), []);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
   // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
@@ -155,7 +150,7 @@ export function VoiceRoom() {
     );
   }
   if (!code) return null;
-  const chrome = pointerIn || videoHover || focusIn;
+  const chrome = pointerIn || focusIn;
   const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
     chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
   }`;
@@ -330,7 +325,6 @@ export function VoiceRoom() {
       {live && notice && (
         <p
           role="status"
-          data-video-hole
           className={`absolute top-14 left-1/2 z-20 flex max-w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-start gap-2 rounded-lg px-3 py-2 text-left text-sm shadow-lg ${
             notice.kind === "source-changed" ? "bg-brand" : "bg-warning text-black"
           }`}
@@ -527,7 +521,7 @@ function watchTileId(memberId: string) {
 /** Transmitindo, o botão de tela da barra fica verde (como no Discord) e abre o menu da live. */
 function StreamControl(props: { onChange: () => void; onDetails: () => void }) {
   return (
-    <DropdownMenu.Root onOpenChange={useOverlayMenu()}>
+    <DropdownMenu.Root>
       <Tooltip label="Opções da transmissão" side="top">
         <DropdownMenu.Trigger asChild>
           <button
