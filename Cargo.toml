@@ -18,6 +18,7 @@ sv-encode = { path = "crates/sv-encode" }
 sv-media = { path = "crates/sv-media" }
 sv-session = { path = "crates/sv-session" }
 sv-net = { path = "crates/sv-net" }
+sv-input = { path = "crates/sv-input" }
 
 windows-core = "0.62"
 windows = { version = "0.62", features = [
@@ -46,15 +47,19 @@ windows = { version = "0.62", features = [
   "Win32_System_Performance",
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_System_WinRT",
   "Win32_System_WinRT_Direct3D11",
   "Win32_System_WinRT_Graphics_Capture",
   "Win32_UI_Controls",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Input_XboxController",
   "Win32_UI_WindowsAndMessaging",
 ] }
 serde = { version = "1", features = ["derive"] }
+# Controles virtuais de Xbox 360 pelo ViGEmBus (fliperama, ADR 0023).
+vigem-rust = { version = "0.2", default-features = false, features = ["x360"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

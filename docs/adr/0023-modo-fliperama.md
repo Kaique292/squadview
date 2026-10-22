@@ -32,7 +32,7 @@ Pontos principais:
 - **Vagas:** o host decide. Sinais novos pela sinalização (`ArcadeJoin`, `ArcadeSeat { slot }`, `ArcadeDeny { reason }`, `ArcadeLeave`). O status do host ganha o campo opcional `arcade: { game, slots, players }`, para a sala mostrar "Fliperama: 2 vagas".
   - O número do jogador mostrado é o índice real do XInput que o Windows deu ao controle virtual (o `user index` do ViGEm).
   - O host pode tirar alguém ou trocar a ordem.
-- **ViGEmBus:** só o host precisa. O app **não embute o instalador**: ao abrir o fliperama, ele verifica se o driver existe e, se não existir, leva ao instalador oficial (precisa de administrador uma vez). O cliente é uma crate Rust pura (`vigem-client`), sem DLL.
+- **ViGEmBus:** só o host precisa. O app **não embute o instalador**: ao abrir o fliperama, ele verifica se o driver existe e, se não existir, leva ao instalador oficial (precisa de administrador uma vez). O cliente é uma crate Rust pura (`vigem-rust`), sem DLL: usa o mesmo `windows` 0.62 do projeto e distingue "driver não instalado" de outros erros. A `vigem-client` foi descartada por puxar o `winapi` antigo.
 - **Desinstalar a qualquer momento:** em Configurações, a seção "Fliperama" mostra se o driver está instalado e tem um botão **"Remover o driver de controle"**.
   - O botão chama o desinstalador registrado no Windows (o mesmo de "Aplicativos instalados", com o aviso de administrador) e depois confere se o driver saiu.
   - Com o fliperama aberto, o app pede para fechá-lo antes.
