@@ -64,7 +64,7 @@ Em out/2026 a `target/` chegou a 133 GB e quase lotou o disco C: (117 GB em `tar
 | ---------------------------------------- | ------------------------------------------------------------- |
 | `./scripts/clean-build.ps1`              | Só mostra: `target/`, as subpastas grandes e as dos worktrees |
 | `./scripts/clean-build.ps1 -IfOverGB 20` | `cargo clean` se a `target/` passar de 20 GB                  |
-| `./scripts/clean-build.ps1 -Coverage`    | `cargo llvm-cov clean --workspace` (só a cobertura)           |
+| `./scripts/clean-build.ps1 -Coverage`    | Apaga a `target/llvm-cov-target` inteira (só a cobertura)     |
 | `./scripts/clean-build.ps1 -Clean`       | `cargo clean` (a `target/` inteira)                           |
 | `./scripts/clean-build.ps1 -Worktrees`   | Apaga a `target/` de cada worktree em `.claude/worktrees`     |
 
