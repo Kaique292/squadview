@@ -139,7 +139,7 @@ describe("painel do fliperama: os outros estados", () => {
     expect(await screen.findByRole("button", { name: "Baixar o instalador oficial" })).toBeInTheDocument();
   });
 
-  it("aberto sem ninguém, cheio e com quem ainda conecta; o rodapé fecha", () => {
+  it("aberto sem ninguém, cheio e com quem ainda conecta; só o X fecha", () => {
     useRoomStore.setState({ members: [{ ...ME, arcade: { game: "Bomberman", slots: 1, players: [] } }] });
     useArcadeStore.setState({ hostDialog: true });
     render(<ArcadeHostDialog />);
@@ -149,8 +149,8 @@ describe("painel do fliperama: os outros estados", () => {
     expect(screen.getByText(/Vagas cheias/)).toBeInTheDocument();
     expect(screen.getByText("Conectando…")).toBeInTheDocument();
     expect(screen.getByText("Alguém")).toBeInTheDocument();
-    // O "Fechar" do rodapé (o outro é o X do canto).
-    fireEvent.click(screen.getAllByRole("button", { name: "Fechar" }).find((b) => b.textContent === "Fechar")!);
+    // Sem o "Fechar" do rodapé: o X do canto é o único.
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
     expect(useArcadeStore.getState().hostDialog).toBe(false);
   });
 

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { UpdateButton } from "./UpdateButton";
 import { REJOIN_WITHIN_MS, rememberRoomToRejoin, takeRoomToRejoin, useRoomStore } from "../room/room-store";
-import { parseNotes, takeWhatsNew, useUpdateStore } from "./update-store";
+import { FOCUS_CHECK_GAP_MS, parseNotes, takeWhatsNew, useUpdateStore } from "./update-store";
 
 const { check, relaunch } = vi.hoisted(() => ({ check: vi.fn(), relaunch: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check }));
@@ -37,7 +37,7 @@ function fakeUpdate(download: (onEvent: (e: ProgressEvent) => void) => Promise<v
 beforeEach(() => {
   check.mockReset();
   relaunch.mockReset();
-  useUpdateStore.setState({ status: { kind: "idle" }, notes: null });
+  useUpdateStore.setState({ status: { kind: "idle" }, notes: null, lastCheckAt: 0 });
   useRoomStore.setState({ code: null });
   localStorage.clear();
 });
@@ -54,6 +54,25 @@ describe("atualização automática", () => {
     render(<UpdateButton />);
     await act(() => useUpdateStore.getState().checkForUpdate());
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // Regressão: com o app aberto, só a procura de hora em hora achava a versão nova; quem estava
+  // numa call podia ficar até 1 h sem ver a atualização.
+  it("ao voltar o foco, procura versão nova, no máximo a cada 10 min", async () => {
+    check.mockResolvedValue(null);
+    const t0 = 1_000_000_000;
+    await useUpdateStore.getState().checkOnFocus(t0);
+    expect(check).toHaveBeenCalledTimes(1);
+
+    // Procurou agora há pouco (pelo foco ou pela procura de hora em hora): não procura de novo.
+    useUpdateStore.setState({ lastCheckAt: t0 });
+    await useUpdateStore.getState().checkOnFocus(t0 + FOCUS_CHECK_GAP_MS - 1);
+    expect(check).toHaveBeenCalledTimes(1);
+
+    check.mockResolvedValue(fakeUpdate(async () => {}));
+    await useUpdateStore.getState().checkOnFocus(t0 + FOCUS_CHECK_GAP_MS);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(useUpdateStore.getState().status).toEqual({ kind: "available", version: "0.2.0" });
   });
 
   it("fica quieto se a checagem falhar (sem internet)", async () => {
