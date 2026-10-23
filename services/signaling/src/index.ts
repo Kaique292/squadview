@@ -3,6 +3,7 @@ import { generateRoomCode } from "./room-code";
 import { type Attachment, type Connection, randomPeerId, RoomState, type VerifiedProfile } from "./room-state";
 import { bearer, route } from "./router";
 import {
+  type Occupant,
   type ServerOp,
   type ServerPresence,
   type ServerResult,
@@ -105,6 +106,36 @@ export class Room extends DurableObject<Env> {
   /** Fim do prazo de alguém que caiu: sai da sala se não voltou. */
   async alarm(): Promise<void> {
     this.state.expire();
+    this.reportOccupants();
+  }
+
+  /**
+   * RPC do servidor: esta sala é dele (ou deixou de ser, com `null`). A partir daqui, a sala conta
+   * a ele quem está nela (ADR 0025).
+   */
+  bindServer(id: string | null, code: string): void {
+    // A sala pode nunca ter recebido ninguém: o código vem junto.
+    this.ctx.storage.kv.put("code", code);
+    if (id) this.ctx.storage.kv.put("server", id);
+    else this.ctx.storage.kv.delete("server");
+    this.ctx.storage.kv.delete("reported");
+    this.reportOccupants();
+  }
+
+  /** Conta ao servidor da sala quem está nela, se mudou desde a última vez. */
+  private reportOccupants(): void {
+    const id = this.ctx.storage.kv.get<string>("server");
+    const code = this.ctx.storage.kv.get<string>("code");
+    if (!id || !code) return;
+    const list = this.state.occupants();
+    const key = JSON.stringify(list);
+    if (this.ctx.storage.kv.get<string>("reported") === key) return;
+    this.ctx.storage.kv.put("reported", key);
+    this.ctx.waitUntil(
+      server(this.env, id)
+        .setRoomOccupants(code, list)
+        .catch(() => this.ctx.storage.kv.delete("reported")),
+    );
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -127,6 +158,7 @@ export class Room extends DurableObject<Env> {
     const conn = connection(ws);
     const wasIn = !!conn.getAttachment()?.member;
     this.state.message(conn, message, await this.verifiedJoin(message));
+    this.reportOccupants();
     // Acabou de entrar: manda o repassador (só quem é da sala recebe a credencial).
     if (!wasIn && conn.getAttachment()?.member) {
       const turn = await this.turn.get();
@@ -136,10 +168,12 @@ export class Room extends DurableObject<Env> {
 
   async webSocketClose(ws: WebSocket): Promise<void> {
     this.state.closed(connection(ws));
+    this.reportOccupants();
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
     this.state.closed(connection(ws));
+    this.reportOccupants();
   }
 
   /** RPC: um amigo de alguém da sala pediu para entrar. */
@@ -271,10 +305,14 @@ export class Server extends DurableObject<Env> {
   }
 
   create(id: string, name: string, owner: Profile): ServerSnapshot {
-    return this.state.create(id, name, owner);
+    const snapshot = this.state.create(id, name, owner);
+    this.ctx.storage.kv.put("id", id);
+    this.bindRooms();
+    return snapshot;
   }
 
   snapshot(): ServerSnapshot | null {
+    this.bindRooms();
     return this.state.snapshot();
   }
 
@@ -282,14 +320,32 @@ export class Server extends DurableObject<Env> {
     const id = this.state.snapshot()?.id;
     const result = this.state.act(actor, op);
     if (result.ok && id) this.notify(id, actor.id, result.snapshot, result.removed);
+    // Sala criada ou apagada (ou o servidor todo): liga ou desliga a sala deste servidor.
+    if (result.ok) this.bindRooms(id);
     return result;
   }
 
   /** Um membro entrou numa sala daqui, saiu ou mudou o ao vivo (ADR 0018): avisa todos. */
   setPresence(member: string, code: string | null, live: boolean, voice: VoiceFlags): void {
+    this.bindRooms();
+    if (this.state.setPresence(member, code, live, voice)) this.broadcastPresence();
+  }
+
+  /** RPC de uma sala daqui: quem está nela agora, membro ou não (ADR 0025). Avisa todos. */
+  setRoomOccupants(code: string, list: Occupant[]): void {
+    if (this.state.setOccupants(code, list)) this.broadcastPresence();
+  }
+
+  presence(): ServerPresence {
+    this.bindRooms();
+    return this.state.presence();
+  }
+
+  /** Manda a presença nova a todos os membros. */
+  private broadcastPresence(): void {
     const state = this.state;
     const snapshot = state.snapshot();
-    if (!snapshot || !state.setPresence(member, code, live, voice)) return;
+    if (!snapshot) return;
     const presence = state.presence();
     for (const id of state.memberIds())
       this.ctx.waitUntil(
@@ -299,8 +355,26 @@ export class Server extends DurableObject<Env> {
       );
   }
 
-  presence(): ServerPresence {
-    return this.state.presence();
+  /**
+   * Diz às salas novas (e às que já existiam antes da ADR 0025) que são deste servidor, e às
+   * apagadas que deixaram de ser. `id`: o do servidor, se ele acabou de ser apagado.
+   */
+  private bindRooms(id = this.state.snapshot()?.id ?? this.ctx.storage.kv.get<string>("id")): void {
+    if (!id) return;
+    this.ctx.storage.kv.put("id", id);
+    const { bind, unbind } = this.state.syncRoomBindings();
+    for (const code of bind)
+      this.ctx.waitUntil(
+        room(this.env, code)
+          .bindServer(id, code)
+          .catch(() => {}),
+      );
+    for (const code of unbind)
+      this.ctx.waitUntil(
+        room(this.env, code)
+          .bindServer(null, code)
+          .catch(() => {}),
+      );
   }
 
   refresh(profile: Profile): void {
@@ -335,6 +409,10 @@ function user(env: Env, id: string): DurableObjectStub<User> {
 
 function server(env: Env, id: string): DurableObjectStub<Server> {
   return env.SERVERS.get(env.SERVERS.idFromName(id));
+}
+
+function room(env: Env, code: string): DurableObjectStub<Room> {
+  return env.ROOMS.get(env.ROOMS.idFromName(code));
 }
 
 /** Id de servidor: 16 hex sorteados. */

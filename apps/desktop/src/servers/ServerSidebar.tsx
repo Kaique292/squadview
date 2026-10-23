@@ -111,8 +111,9 @@ export function ServerSidebar(props: { server: Server }) {
 }
 
 /**
- * Quem está numa sala do servidor em que **não** estamos (ADR 0018): foto, nome, mudo, silenciado e
- * AO VIVO, vindos da lista de membros. Na sala em que estamos aparece a lista da própria sala, mais completa.
+ * Quem está numa sala do servidor em que **não** estamos (ADR 0018 e 0025): foto, nome, mudo,
+ * silenciado e AO VIVO. Membro aparece como está na lista de membros; quem entrou só com o código
+ * aparece com o nome e a foto que a sala mandou, como no Discord. Na sala em que estamos aparece a lista da própria sala, mais completa.
  */
 function RoomOccupants(props: { server: Server; roomId: string }) {
   const people = useServersStore((s) => s.presence[props.server.id]?.[props.roomId]);
@@ -121,11 +122,19 @@ function RoomOccupants(props: { server: Server; roomId: string }) {
     <ul aria-label="Quem está na sala" className="flex flex-col gap-0.5 py-0.5 pl-6">
       {people.map((p) => {
         const member = props.server.members.find((m) => m.id === p.id);
-        if (!member) return null;
+        const name = member?.name ?? p.name;
+        if (!name) return null;
+        const photo = member
+          ? member.avatar
+            ? avatarUrl(member, 64)
+            : undefined
+          : p.discord?.avatar
+            ? avatarUrl(p.discord, 64)
+            : undefined;
         return (
           <li key={p.id} className="flex items-center gap-2 rounded-md px-2 py-1 text-text-muted">
-            <Avatar name={member.name} size={24} src={member.avatar ? avatarUrl(member, 64) : undefined} />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{member.name}</span>
+            <Avatar name={name} size={24} src={photo} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
             {(p.muted || p.deafened) && (
               <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
             )}

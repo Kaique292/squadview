@@ -1,3 +1,4 @@
+import type { Occupant } from "./server-state";
 import {
   byteLength,
   type ClientMessage,
@@ -317,6 +318,22 @@ export class RoomState {
   private scheduleExpiry(seats: Record<string, Seat>): void {
     const next = Math.min(...Object.values(seats).map((s) => s.until ?? Infinity));
     if (Number.isFinite(next)) this.effects.wakeAt(next);
+  }
+
+  /**
+   * Quem está na sala agora (conectados e quem caiu e ainda pode voltar), como a sala conta ao
+   * servidor dela (ADR 0025). O id é o do Discord de quem entrou conferido; o da sala, dos outros.
+   */
+  occupants(): Occupant[] {
+    const members = [...this.joined().map(([, m]) => m), ...this.ghosts().map((s) => s.member)];
+    return members.map((m) => ({
+      id: m.verified && m.discord ? m.discord.id : m.id,
+      name: m.name,
+      discord: m.discord ? { id: m.discord.id, avatar: m.discord.avatar ?? null } : null,
+      live: m.live,
+      muted: !!m.muted,
+      deafened: !!m.deafened,
+    }));
   }
 
   /** Quem caiu e ainda está no prazo para voltar (continua na sala para os outros). */

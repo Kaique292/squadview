@@ -34,8 +34,21 @@ export interface Server {
 }
 
 /** Quem está em cada sala do servidor (id da sala → membros), espelha o Worker (ADR 0018). */
-/** Quem está em cada sala. `muted`/`deafened` faltam num Worker antigo. */
-export type ServerPresence = Record<string, { id: string; live: boolean; muted?: boolean; deafened?: boolean }[]>;
+/**
+ * Quem está em cada sala. `muted`/`deafened` faltam num Worker antigo. `name` e `discord` vêm da
+ * própria sala (ADR 0025): servem para mostrar quem não é membro do servidor.
+ */
+export type ServerPresence = Record<
+  string,
+  {
+    id: string;
+    live: boolean;
+    muted?: boolean;
+    deafened?: boolean;
+    name?: string;
+    discord?: { id: string; avatar: string | null } | null;
+  }[]
+>;
 
 /** Pedido a um servidor (espelha `sv_net::friends::ServerOp`). */
 export type ServerOp =

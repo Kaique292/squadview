@@ -169,6 +169,53 @@ describe("servidor", () => {
     expect(state.act(DONO, { kind: "update", icon: null })).toMatchObject({ snapshot: { icon: null } });
   });
 
+  // Regressão (ADR 0025): quem entrou numa sala do servidor só com o código não aparecia para quem
+  // via a sala de fora, porque só o registro de cada membro avisava o servidor.
+  it("a lista que a sala manda vale por ela: membros e quem não é membro", () => {
+    const { state } = fresh();
+    state.setPresence(DONO.id, "ABCDEF", false);
+    const geral = state.snapshot()!.rooms[0].id;
+    expect(state.presence()[geral]).toEqual([{ id: DONO.id, live: false, muted: false, deafened: false }]);
+
+    const visita = {
+      id: "0123456789abcdef",
+      name: "Lobo",
+      discord: { id: "444444444444444444", avatar: null },
+      live: false,
+      muted: true,
+      deafened: true,
+    };
+    const dona = {
+      id: DONO.id,
+      name: "Dona",
+      discord: { id: DONO.id, avatar: null },
+      live: true,
+      muted: false,
+      deafened: false,
+    };
+    expect(state.setOccupants("ABCDEF", [dona, visita])).toBe(true);
+    expect(state.presence()[geral]).toEqual([
+      { id: DONO.id, live: true, muted: false, deafened: false, name: "Dona", discord: dona.discord },
+      { id: visita.id, live: false, muted: true, deafened: true, name: "Lobo", discord: visita.discord },
+    ]);
+    expect(state.setOccupants("ABCDEF", [dona, visita])).toBe(false);
+    expect(state.setOccupants("ZZZZZZ", [visita])).toBe(false);
+
+    // A sala esvaziou: lista vazia (a presença antiga da Dona não volta a valer).
+    expect(state.setOccupants("ABCDEF", [])).toBe(true);
+    expect(state.presence()[geral]).toEqual([]);
+  });
+
+  it("liga as salas ao servidor uma vez, e desliga tudo quando ele é apagado", () => {
+    const { state, store } = fresh();
+    expect(state.syncRoomBindings()).toEqual({ bind: ["ABCDEF"], unbind: [] });
+    expect(state.syncRoomBindings()).toEqual({ bind: [], unbind: [] });
+    state.setOccupants("ABCDEF", []);
+    state.act(DONO, { kind: "delete" });
+    expect(state.syncRoomBindings()).toEqual({ bind: [], unbind: ["ABCDEF"] });
+    expect(store.size).toBe(0);
+  });
+
   it("apagado, o servidor não responde mais a ninguém", () => {
     const { state, store } = fresh();
     join(state, ZE);
