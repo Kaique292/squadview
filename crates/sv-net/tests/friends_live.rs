@@ -170,6 +170,8 @@ async fn amigos_de_ponta_a_ponta() {
             name: Some("Galera".into()),
         }),
         live: true,
+        muted: false,
+        deafened: false,
     });
     let state = wait(&mut beto_rx, "presença da Ana", |v| {
         v["type"] == "state" && friends_of(v).iter().any(|f| f["presence"]["room"] == "Galera")

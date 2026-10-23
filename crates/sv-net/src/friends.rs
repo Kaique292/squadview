@@ -34,6 +34,11 @@ pub enum FriendAction {
     Status {
         room: Option<RoomStatus>,
         live: bool,
+        /// Mudo e silenciado, para quem vê a sala do servidor de fora (o Worker antigo ignora).
+        #[serde(default)]
+        muted: bool,
+        #[serde(default)]
+        deafened: bool,
     },
     FriendRequest {
         id: String,
@@ -245,10 +250,23 @@ mod tests {
                 name: Some("Galera".into()),
             }),
             live: true,
+            muted: true,
+            deafened: false,
         };
         assert_eq!(
             serde_json::to_string(&status).unwrap(),
-            r#"{"type":"status","room":{"code":"B8RJ2Q","name":"Galera"},"live":true}"#
+            r#"{"type":"status","room":{"code":"B8RJ2Q","name":"Galera"},"live":true,"muted":true,"deafened":false}"#
+        );
+        // A interface até a 0.11.1 não mandava o mudo: conta como falando.
+        let old: FriendAction = serde_json::from_str(r#"{"type":"status","room":null,"live":false}"#).unwrap();
+        assert_eq!(
+            old,
+            FriendAction::Status {
+                room: None,
+                live: false,
+                muted: false,
+                deafened: false
+            }
         );
         assert_eq!(
             serde_json::to_string(&FriendAction::SetDirect {

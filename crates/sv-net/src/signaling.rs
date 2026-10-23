@@ -199,6 +199,9 @@ enum Incoming {
         /// Token para voltar com o mesmo id (ADR 0022). Ausente no Worker antigo.
         #[serde(default)]
         resume: Option<String>,
+        /// Há quantos ms a sala deixou de estar vazia. Ausente no Worker antigo.
+        #[serde(default)]
+        elapsed: Option<u64>,
     },
     RoomUpdated {
         name: String,
@@ -265,6 +268,9 @@ pub enum RoomEvent {
         room: Option<String>,
         /// Token para voltar com o mesmo `you` se a conexão cair (`None`: Worker antigo).
         resume: Option<String>,
+        /// Há quantos ms a sala deixou de estar vazia, o tempo do canal de voz (`None`: Worker
+        /// antigo).
+        elapsed: Option<u64>,
     },
     /// Alguém renomeou a sala.
     RoomRenamed(String),
@@ -298,11 +304,13 @@ impl RoomEvent {
                 members,
                 room,
                 resume,
+                elapsed,
             } => Self::Joined {
                 you,
                 members,
                 room,
                 resume,
+                elapsed,
             },
             Incoming::RoomUpdated { name } => Self::RoomRenamed(name),
             Incoming::MemberJoined { member } => Self::MemberJoined(member),
@@ -784,15 +792,17 @@ mod tests {
                 }],
                 room: None,
                 resume: None,
+                elapsed: None,
             })
         );
         assert_eq!(
-            parse(r#"{"type":"welcome","you":"aa","members":[],"room":"Galera","resume":"ff"}"#),
+            parse(r#"{"type":"welcome","you":"aa","members":[],"room":"Galera","resume":"ff","elapsed":90000}"#),
             Some(RoomEvent::Joined {
                 you: "aa".into(),
                 members: vec![],
                 room: Some("Galera".into()),
                 resume: Some("ff".into()),
+                elapsed: Some(90_000),
             })
         );
         assert_eq!(

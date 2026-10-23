@@ -386,6 +386,41 @@ describe("na sala", () => {
     expect(screen.getByRole("button", { name: "Entrar com código" })).toBeInTheDocument();
   });
 
+  // Regressão: sair da sala com a live no ar e voltar fazia a gente voltar já transmitindo.
+  it("sair da sala encerra a nossa live", async () => {
+    useStreamStore.setState({ status: "live" });
+    await act(() => useRoomStore.getState().leave());
+    const cmds = invoke.mock.calls.map(([cmd]) => cmd);
+    expect(cmds).toContain("stop_preview");
+    expect(cmds.indexOf("stop_preview")).toBeLessThan(cmds.indexOf("room_leave"));
+    expect(useStreamStore.getState().status).toBe("idle");
+  });
+
+  it("trocar de sala encerra a live; entrar numa sala com a live já no ar não", async () => {
+    invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "room_join" ? { code: "B8RJ2Q" } : undefined));
+    // Transmitindo fora de uma sala: entrar leva a live para a sala.
+    useRoomStore.setState({ code: null });
+    useStreamStore.setState({ status: "live" });
+    await act(() => useRoomStore.getState().join("B8RJ2Q", "Kaique"));
+    expect(invoke).not.toHaveBeenCalledWith("stop_preview");
+
+    // Já numa sala: trocar de sala é sair desta, e a live acaba com ela.
+    useStreamStore.setState({ status: "live" });
+    await act(() => useRoomStore.getState().join("XY7KQ2", "Kaique"));
+    const cmds = invoke.mock.calls.map(([cmd]) => cmd);
+    expect(cmds.indexOf("stop_preview")).toBeLessThan(cmds.lastIndexOf("room_join"));
+  });
+
+  // Regressão: o tempo era a hora em que entramos; sair e voltar zerava o relógio da sala.
+  it("o tempo da sala vem de quando ela deixou de estar vazia, não de quando entramos", async () => {
+    const since = Date.now() - 90 * 60 * 1000;
+    invoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "room_join" ? { code: "B8RJ2Q", since } : undefined),
+    );
+    await act(() => useRoomStore.getState().join("B8RJ2Q", "Kaique"));
+    expect(useRoomStore.getState().joinedAt).toBe(since);
+  });
+
   it("vários amigos ao vivo aparecem juntos", () => {
     render(<App />);
     emit("room-members", [ME, ANA, { ...BETO, live: true }]);
@@ -402,7 +437,7 @@ describe("na sala", () => {
     );
   });
 
-  it("mostra há quanto tempo estamos na sala, como o canal de voz", () => {
+  it("mostra há quanto tempo a sala está ocupada, como o canal de voz", () => {
     vi.useFakeTimers();
     useRoomStore.setState({ joinedAt: Date.now() - (2 * 3600 + 15 * 60 + 6) * 1000 });
     render(<App />);

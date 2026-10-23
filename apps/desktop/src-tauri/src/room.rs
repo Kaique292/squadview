@@ -71,6 +71,8 @@ pub struct RoomInfo {
     pub url: String,
     /// Nome da sala (`None`: sem nome, a interface mostra o código).
     pub room_name: Option<String>,
+    /// Desde quando a sala está ocupada (ms desde 1970): o tempo do canal de voz.
+    pub since: u64,
 }
 
 /// Nome de exibição (pessoa ou sala), como o Worker aceita: sem espaços nas pontas, sem
@@ -156,6 +158,7 @@ pub async fn room_join<R: Runtime>(
     // Tipo de NAT no registro (sem o IP): ajuda a entender quando alguém não consegue assistir.
     let nat = room.nat();
     let room_name = room.room_name();
+    let since = room.occupied_since();
 
     // Se já estávamos transmitindo, os amigos da sala nova passam a poder assistir.
     let state = app.state::<RoomState>();
@@ -173,7 +176,12 @@ pub async fn room_join<R: Runtime>(
     .await?;
     app.state::<Diagnostics>()
         .write("room-join", &json!({ "code": code, "nat": nat }));
-    Ok(RoomInfo { code, url, room_name })
+    Ok(RoomInfo {
+        code,
+        url,
+        room_name,
+        since,
+    })
 }
 
 /// Renomeia a sala para todos.
