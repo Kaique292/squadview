@@ -24,7 +24,14 @@ interface UpdateState {
   status: UpdateStatus;
   /** Novidades da versão nova (corpo da release, em Markdown). */
   notes: string | null;
+  /** Quando procurou versão nova pela última vez (ms, `Date.now()`). */
+  lastCheckAt: number;
   checkForUpdate: () => Promise<void>;
+  /**
+   * A janela voltou ao foco: procura versão nova, mas só se a última procura foi há mais de
+   * [`FOCUS_CHECK_GAP_MS`] (trocar de janela toda hora não vira uma procura a cada vez).
+   */
+  checkOnFocus: (now?: number) => Promise<void>;
   install: () => Promise<void>;
   /**
    * Abriu o app e havia versão nova: baixa e instala já, mostrando o andamento na splash (como o
@@ -71,16 +78,21 @@ export function takeWhatsNew(): WhatsNew | null {
 /** De quanto em quanto tempo procurar versão nova com o app aberto. */
 export const CHECK_EVERY_MS = 60 * 60 * 1000;
 
+/** Intervalo mínimo entre duas procuras quando a janela volta ao foco. */
+export const FOCUS_CHECK_GAP_MS = 10 * 60 * 1000;
+
 // O objeto Update guarda o recurso nativo do download; não vai para o estado da interface.
 let pending: Update | null = null;
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
   status: { kind: "idle" },
   notes: null,
+  lastCheckAt: 0,
 
   async checkForUpdate() {
     // Já achou (ou está baixando): não troca o que a pessoa está vendo.
     if (get().status.kind !== "idle") return;
+    set({ lastCheckAt: Date.now() });
     try {
       const update = await check();
       if (!update) return;
@@ -89,6 +101,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     } catch {
       // Sem internet ou GitHub fora do ar: tenta de novo mais tarde, sem incomodar.
     }
+  },
+
+  async checkOnFocus(now = Date.now()) {
+    if (now - get().lastCheckAt < FOCUS_CHECK_GAP_MS) return;
+    await get().checkForUpdate();
   },
 
   async installAtStartup(report, sleep = wait) {

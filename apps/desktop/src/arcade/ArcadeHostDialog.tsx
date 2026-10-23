@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { memberPhoto, useRoomStore } from "../room/room-store";
 import { useStreamStore } from "../stream/stream-store";
 import { Avatar } from "../ui/Avatar";
-import { Modal, ModalClose } from "../ui/Modal";
+import { Modal } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
 import { type DriverInfo, useArcadeStore } from "./arcade-store";
 
@@ -28,18 +28,9 @@ export function ArcadeHostDialog() {
       title="Fliperama"
       description="Seu jogo com vários controles, para a galera da call jogar junto como P2, P3 e P4."
       width={480}
-      footer={
-        <ModalClose asChild>
-          <button
-            type="button"
-            className="rounded-md px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:text-text"
-          >
-            Fechar
-          </button>
-        </ModalClose>
-      }
     >
-      {open && (arcadeOpen ? <Running /> : <Setup />)}
+      {/* Sem rodapé: o X do canto já fecha. */}
+      {open && <div className="pb-6">{arcadeOpen ? <Running /> : <Setup />}</div>}
     </Modal>
   );
 }

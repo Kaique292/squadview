@@ -87,9 +87,11 @@ function startApp() {
       progress: (p) => void emitTo("splash", SPLASH_EVENT, p).catch(() => {}),
       ready: () => invoke("app_ready"),
     });
-    // Com o app aberto, procura versão nova de hora em hora (o botão verde aparece na barra de título).
+    // Com o app aberto, procura versão nova de hora em hora e quando a janela volta ao foco (no
+    // máximo a cada 10 min); o botão verde aparece na barra de título.
     if (!import.meta.env.DEV) {
       setInterval(() => void useUpdateStore.getState().checkForUpdate(), CHECK_EVERY_MS);
+      window.addEventListener("focus", () => void useUpdateStore.getState().checkOnFocus());
     }
   }
 
