@@ -50,9 +50,14 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 
 ## Tipografia
 
-- Fonte: Figtree (livre, embutida via `@fontsource-variable/figtree`, parecida com a gg sans do Discord), com Segoe UI Variable de reserva.
-- Tamanhos: 12 (rótulos), 14 (corpo), 16 (títulos de seção), 20–24 (títulos de tela).
-- Pesos: 400, 500 e 600. 700 só no logo.
+- Fonte: **Noto Sans** (livre, embutida via `@fontsource-variable/noto-sans`), a mesma que o Discord usa de reserva quando a gg sans dele não carrega. A gg sans e a ABC Ginto são proprietárias e não entram no app. Segoe UI Variable fica de reserva.
+- Aplicação no padrão do Discord:
+  - Cabeçalhos de seção ("SALAS DE VOZ", "NA SALA"): 12 px, maiúsculas, peso 600, espaçamento 0,02em (`text-xs font-semibold tracking-wide uppercase`).
+  - Nomes de salas e itens de navegação: 16 px, peso 500.
+  - Nomes de quem está numa sala e de conversas: 14 px, peso 500.
+  - Corpo e descrições: 14 px, peso 400; textos de apoio em 12 px.
+  - Títulos de tela e de modal: 20–24 px, peso 700.
+- Texto com `-webkit-font-smoothing: antialiased` e `text-rendering: optimizeLegibility`, como no Discord.
 
 ## Componentes
 

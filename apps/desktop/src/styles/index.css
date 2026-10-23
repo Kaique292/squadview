@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@fontsource-variable/figtree";
+@import "@fontsource-variable/noto-sans";
 
 /*
  * Mãozinha em tudo que é clicável. O Tailwind v4 tirou o `cursor: pointer` dos botões (volta ao
@@ -65,7 +65,10 @@
   --color-online: #23a55a;
   --color-warning: #f0b232;
 
-  --font-sans: "Figtree Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  /* A Noto Sans é a reserva do próprio Discord (a gg sans dele é proprietária). */
+  --font-sans: "Noto Sans Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  /* Os cabeçalhos em maiúsculas ("SALAS DE VOZ") com o espaçamento do Discord. */
+  --tracking-wide: 0.02em;
 
   --radius-card: 0.75rem;
 
@@ -407,6 +410,7 @@ body {
   color: var(--color-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   user-select: none;
 }
 

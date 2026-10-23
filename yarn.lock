@@ -935,10 +935,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@fontsource-variable/figtree@npm:^5.3.0":
+"@fontsource-variable/noto-sans@npm:^5.3.0":
   version: 5.3.0
-  resolution: "@fontsource-variable/figtree@npm:5.3.0"
-  checksum: 10c0/0048a260ba9104b62925589c0113f525c179c47e02aea264f6e5487791fb706fafdcd7a3043f70786600e0e79a28093189eec3db992f71b76b924d3b06eb1d2c
+  resolution: "@fontsource-variable/noto-sans@npm:5.3.0"
+  checksum: 10c0/5518c158bc8bdd067ac6e59972bdfb019888c5bf03da4c1d6f208995ed642ea7ae67c04e4f8efd8f21c1bc40998c3654b0bf21d2563947b98ff9c35a52fd1edc
   languageName: node
   linkType: hard
 
@@ -2145,7 +2145,7 @@ __metadata:
   resolution: "@squadview/desktop@workspace:apps/desktop"
   dependencies:
     "@eslint/js": "npm:^10.0.1"
-    "@fontsource-variable/figtree": "npm:^5.3.0"
+    "@fontsource-variable/noto-sans": "npm:^5.3.0"
     "@radix-ui/react-context-menu": "npm:^2.4.1"
     "@radix-ui/react-dialog": "npm:^1.3.1"
     "@radix-ui/react-dropdown-menu": "npm:^2.2.1"
