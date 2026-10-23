@@ -15,7 +15,16 @@ import {
   UserPlus,
   Volume2,
 } from "lucide-react";
-import { type HTMLAttributes, type KeyboardEvent, type ReactNode, type Ref, useEffect, useRef, useState } from "react";
+import {
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useAccountStore } from "../account/account-store";
 import { inviteUrl } from "../room/invite";
 import { MemberMenu } from "../room/MemberMenu";
@@ -47,6 +56,47 @@ export function gridColumns(n: number): number {
   return 4;
 }
 
+/** O espaço entre os quadros da grade (o `gap-3`). */
+const GRID_GAP = 12;
+/** Sozinho na grade, o quadro não passa desta largura. */
+const MAX_SINGLE_WIDTH = 900;
+
+/**
+ * Colunas e largura dos quadros (16:9) para `n` pessoas caberem inteiras numa área de
+ * `width` × `height`: escolhe as colunas que deixam o quadro maior sem passar da largura nem da
+ * altura. Sem medida (0), a largura volta 0 e a grade usa `gridColumns`.
+ */
+export function gridLayout(n: number, width: number, height: number): { columns: number; tileWidth: number } {
+  let best = { columns: gridColumns(n), tileWidth: 0 };
+  if (n < 1 || width <= 0 || height <= 0) return best;
+  for (let columns = 1; columns <= n; columns++) {
+    const rows = Math.ceil(n / columns);
+    const byWidth = (width - GRID_GAP * (columns - 1)) / columns;
+    const byHeight = ((height - GRID_GAP * (rows - 1)) / rows) * (16 / 9);
+    const tileWidth = Math.floor(Math.min(byWidth, byHeight, columns === 1 ? MAX_SINGLE_WIDTH : Infinity));
+    if (tileWidth > best.tileWidth) best = { columns, tileWidth };
+  }
+  return best;
+}
+
+/** O tamanho da área de conteúdo de um elemento (sem o padding), acompanhando as mudanças. */
+function useContentSize() {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const ref = useCallback((el: HTMLElement | null) => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries?.[0]?.contentRect;
+      if (!rect) return;
+      setSize((s) =>
+        s.width === rect.width && s.height === rect.height ? s : { width: rect.width, height: rect.height },
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, size] as const;
+}
+
 /** Como cada quadro aparece: na grade com todos, grande em foco ou pequeno na faixa de baixo. */
 type TileVariant = "grid" | "focus" | "strip";
 
@@ -68,6 +118,8 @@ export function VoiceRoom() {
   const clicked = useRef(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
+  // A área da grade: os quadros são medidos para caber nela inteiros, na largura e na altura.
+  const [gridArea, gridSize] = useContentSize();
   // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
   const live = useStreamStore((s) => s.status === "live");
   const fullscreen = useStreamStore((s) => s.fullscreen);
@@ -155,7 +207,7 @@ export function VoiceRoom() {
   const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
     chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
   }`;
-  const columns = gridColumns(ids.length);
+  const { columns, tileWidth } = gridLayout(ids.length, gridSize.width, gridSize.height);
   // Cada pessoa com o seu fundo em degradê, sem repetir o de ninguém da sala.
   const glows = tileGlows(members.map((m) => m.id));
   const others = ids.map((_, i) => i).filter((i) => i !== focusIndex);
@@ -258,17 +310,30 @@ export function VoiceRoom() {
       </header>
 
       {focusIndex < 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pt-14 pb-2">
+        <div ref={gridArea} className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pt-14 pb-2">
+          {/* Com a área medida, cada quadro tem a largura que faz a grade caber inteira (antes, só
+              a largura contava e, numa janela baixa, as linhas passavam da altura e eram cortadas). */}
           <ul
             aria-label="Quem está na voz"
             className="flex w-full animate-focus-in flex-wrap content-center justify-center gap-3"
-            style={{ maxWidth: columns === 1 ? 900 : undefined }}
+            style={{
+              maxWidth:
+                tileWidth > 0
+                  ? columns * tileWidth + (columns - 1) * GRID_GAP
+                  : columns === 1
+                    ? MAX_SINGLE_WIDTH
+                    : undefined,
+            }}
           >
             {ids.map((id, i) => (
               <li
                 key={id}
-                className="min-w-0"
-                style={{ flexBasis: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` }}
+                className="min-w-0 shrink-0"
+                style={
+                  tileWidth > 0
+                    ? { width: tileWidth }
+                    : { flexBasis: `calc((100% - ${(columns - 1) * GRID_GAP}px) / ${columns})` }
+                }
               >
                 {tile(i, "grid")}
               </li>
