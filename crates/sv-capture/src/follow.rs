@@ -21,6 +21,9 @@ pub const FOLLOW_AFTER_TICKS: u8 = 2;
 pub const FULLSCREEN_QUIET_MS: u64 = 2_000;
 /// Sem quadros por este tempo numa janela → aviso de "sem imagem".
 pub const STALL_AFTER_MS: u64 = 4_000;
+/// Checagens seguidas (de 500 ms) sem nenhuma janela do programa antes de parar a transmissão:
+/// 5 s cobrem o launcher que fecha um pouco antes de a janela do jogo abrir.
+pub const CLOSED_AFTER_TICKS: u8 = 10;
 
 /// Retângulo em pixels da tela (as coordenadas do Windows, `right`/`bottom` exclusivos).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -122,8 +125,9 @@ pub enum Step {
         game: Source,
         reason: SwitchReason,
     },
-    /// Estávamos no monitor e o jogo fechou sem deixar nenhuma janela: parar, para não mostrar a
-    /// área de trabalho para a sala.
+    /// O programa fechou sem deixar nenhuma janela: parar a transmissão. No monitor, já na primeira
+    /// checagem (senão a sala veria a área de trabalho); numa janela, depois de
+    /// [`CLOSED_AFTER_TICKS`] checagens.
     Stop,
 }
 
@@ -138,6 +142,8 @@ pub struct GameFollower {
     capture: CaptureSource,
     /// Janela da família na frente, e há quantas checagens.
     pending: Option<(CaptureSource, u8)>,
+    /// Há quantas checagens não existe nenhuma janela do programa.
+    closed_ticks: u8,
 }
 
 impl GameFollower {
@@ -148,6 +154,7 @@ impl GameFollower {
             game: chosen.clone(),
             chosen,
             pending: None,
+            closed_ticks: 0,
         }
     }
 
@@ -171,11 +178,16 @@ impl GameFollower {
             return self.switch(next.id(), next.source.clone(), SwitchReason::NewWindow);
         }
         let Some(game) = obs.game.as_ref() else {
+            // Nenhuma janela do programa existe mais (sem nenhuma escondida para seguir): ele
+            // fechou. Antes, numa janela, a transmissão ficava esperando para sempre.
+            self.closed_ticks = self.closed_ticks.saturating_add(1);
             return match self.capture {
                 CaptureSource::Monitor(_) => Step::Stop,
+                CaptureSource::Window(_) if self.closed_ticks >= CLOSED_AFTER_TICKS => Step::Stop,
                 CaptureSource::Window(_) => Step::Stay(Status::Waiting),
             };
         };
+        self.closed_ticks = 0;
         match self.capture {
             CaptureSource::Window(_) => {
                 let quiet = obs.quiet_ms;
@@ -493,6 +505,40 @@ mod tests {
             Step::Stay(Status::Waiting),
             "janela de outro programa nunca é seguida"
         );
+    }
+
+    /// Regressão: fechar o programa transmitido (uma janela, não o monitor) deixava a live no ar
+    /// com o último quadro e o aviso "sumiu, esperando voltar" para sempre.
+    #[test]
+    fn programa_que_fecha_de_vez_para_a_transmissao() {
+        let mut f = GameFollower::new(match_window().source);
+        for _ in 1..CLOSED_AFTER_TICKS {
+            assert_eq!(f.step(&obs(None, &[], None, 0)), Step::Stay(Status::Waiting));
+        }
+        assert_eq!(f.step(&obs(None, &[], None, 0)), Step::Stop);
+    }
+
+    #[test]
+    fn janela_que_volta_antes_do_prazo_zera_a_contagem() {
+        let mut f = GameFollower::new(match_window().source);
+        for _ in 1..CLOSED_AFTER_TICKS {
+            f.step(&obs(None, &[], None, 0));
+        }
+        // A janela voltou (ex.: o jogo reabriu a janela): a contagem recomeça do zero.
+        f.step(&obs(Some(match_window()), &[match_window()], Some(match_window()), 0));
+        assert_eq!(f.step(&obs(None, &[], None, 0)), Step::Stay(Status::Waiting));
+    }
+
+    #[test]
+    fn janela_escondida_do_jogo_nao_conta_como_fechado() {
+        // O cliente do LoL some durante a partida (escondido, não fechado): espera sem parar.
+        let mut f = GameFollower::new(lobby().source);
+        for _ in 0..CLOSED_AFTER_TICKS * 3 {
+            assert_eq!(
+                f.step(&obs(Some(hidden(lobby())), &[hidden(lobby())], None, 1_000)),
+                Step::Stay(Status::Waiting)
+            );
+        }
     }
 
     #[test]
