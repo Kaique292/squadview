@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Download, Gamepad2, Keyboard, Loader2, UserX } from "lucide-react";
+import { Download, Gamepad2, Gauge, Keyboard, Loader2, UserX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { memberPhoto, useRoomStore } from "../room/room-store";
+import { useStreamStore } from "../stream/stream-store";
 import { Avatar } from "../ui/Avatar";
 import { Modal, ModalClose } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
@@ -73,6 +74,7 @@ function Setup() {
           Comece a transmitir a janela do jogo antes de abrir o fliperama: os jogadores veem o jogo pela sua live.
         </p>
       )}
+      <SmoothnessHint />
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-xs font-semibold tracking-wide text-text-muted uppercase">Vagas</legend>
         <div role="radiogroup" aria-label="Vagas" className="flex gap-2">
@@ -107,6 +109,32 @@ function Setup() {
       >
         {busy ? <Loader2 size={16} className="animate-spin" /> : <Gamepad2 size={18} />}
         Abrir fliperama
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Abaixo de 60 fps, cada quadro do jogo espera até 33 ms para sair (a 30 fps), e o jogador sente
+ * o atraso entre apertar e ver. Avisa e troca com um clique (a live continua no ar).
+ */
+function SmoothnessHint() {
+  const quality = useStreamStore((s) => s.quality);
+  const changeQuality = useStreamStore((s) => s.changeQuality);
+  if (quality.fps >= 60) return null;
+  return (
+    <div className="flex items-center gap-3 rounded-md bg-warning/15 px-3 py-2">
+      <Gauge size={18} className="shrink-0 text-warning" />
+      <p className="min-w-0 flex-1 text-xs">
+        Sua live está a {quality.fps} fps. Para jogar com fluidez, transmita a 60 fps: cada quadro sai mais rápido e o
+        atraso entre apertar e ver cai.
+      </p>
+      <button
+        type="button"
+        onClick={() => void changeQuality({ ...quality, fps: 60 })}
+        className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-hover"
+      >
+        Mudar para 60 fps
       </button>
     </div>
   );
@@ -149,6 +177,7 @@ function Running() {
 
   return (
     <div className="flex flex-col gap-4 text-left">
+      <SmoothnessHint />
       <p className="text-sm text-text-muted">
         {arcade?.game ? `${arcade.game} · ` : ""}
         {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra pelo botão

@@ -145,6 +145,11 @@ impl KeyboardPad {
         self.stick.decay(dt);
     }
 
+    /// O analógico do mouse ainda está voltando ao centro (precisa de `tick` para chegar lá).
+    pub fn stick_moving(&self) -> bool {
+        self.stick.value() != (0, 0)
+    }
+
     /// O controle que esse teclado e mouse formam agora.
     pub fn state(&self) -> PadState {
         use PadInput::*;

@@ -1,6 +1,7 @@
 //! Controles virtuais de Xbox 360 pelo ViGEmBus: o jogo do host enxerga cada jogador do
 //! fliperama como um controle plugado no PC (ADR 0023).
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use vigem_rust::{Client, ClientError, TargetHandle, Xbox360};
@@ -42,8 +43,21 @@ impl VirtualPads {
             .plug()?
             .wait_for_ready_timeout(READY_TIMEOUT)?;
         let slot = find_slot(&target, before);
+        if let Some(s) = slot {
+            OUR_SLOTS.fetch_or(1 << s, Ordering::SeqCst);
+        }
         Ok(VirtualPad { target, slot })
     }
+}
+
+/// Vagas do XInput ocupadas pelos controles virtuais que este app criou (um bit por vaga). Quem lê
+/// o controle físico do jogador ignora essas vagas: com o host e o jogador no mesmo PC, ele leria
+/// o controle virtual do host como se fosse o próprio, e um botão apertado ficaria preso em laço.
+static OUR_SLOTS: AtomicU8 = AtomicU8::new(0);
+
+/// A vaga `slot` do XInput é um controle virtual criado por este app.
+pub fn is_ours(slot: u32) -> bool {
+    slot < xinput::SLOTS && OUR_SLOTS.load(Ordering::SeqCst) & (1 << slot) != 0
 }
 
 /// Quanto esperar o Windows dar uma vaga do XInput ao controle novo.
@@ -102,6 +116,9 @@ impl Drop for VirtualPad {
         // Solta tudo antes de sair, para nenhum botão ficar "preso" no jogo.
         let _ = self.target.update(&PadState::default().to_x360());
         let _ = self.target.unplug();
+        if let Some(s) = self.slot {
+            OUR_SLOTS.fetch_and(!(1 << s), Ordering::SeqCst);
+        }
     }
 }
 
@@ -149,7 +166,10 @@ mod tests {
             .expect("o XInput vê o estado do controle virtual");
         assert!(seen.pressed(crate::pad::buttons::A));
 
+        assert!(is_ours(slot), "a vaga do controle virtual é marcada como nossa");
+
         drop(pad);
+        assert!(!is_ours(slot), "ao sair, a vaga deixa de ser nossa");
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(crate::xinput::read(slot), None, "o controle saiu do PC");
     }

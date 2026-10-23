@@ -3,6 +3,37 @@ import { Gamepad2, Keyboard, MousePointer2 } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, type WheelEvent, useEffect, useRef, useState } from "react";
 import { useArcadeStore } from "./arcade-store";
 
+/** O navegador tem o evento cru do mouse (o WebView2 do app tem; o jsdom dos testes, não). */
+const RAW_POINTER = typeof window !== "undefined" && "onpointerrawupdate" in window;
+
+/** Movimento do mouse ainda não mandado ao Rust, e se uma chamada está a caminho. */
+interface PendingMove {
+  dx: number;
+  dy: number;
+  inflight: boolean;
+}
+
+/** Soma o movimento e manda na hora (ou assim que a chamada anterior voltar). */
+function pushMove(p: PendingMove, dx: number, dy: number) {
+  p.dx += dx;
+  p.dy += dy;
+  flushMove(p);
+}
+
+function flushMove(p: PendingMove) {
+  if (p.inflight || (!p.dx && !p.dy)) return;
+  const { dx, dy } = p;
+  p.dx = 0;
+  p.dy = 0;
+  p.inflight = true;
+  void invoke("arcade_mouse", { dx, dy })
+    .catch(() => {})
+    .finally(() => {
+      p.inflight = false;
+      flushMove(p);
+    });
+}
+
 /** Botão do mouse do DOM → o nome que o Rust entende. */
 const BUTTONS: Record<number, "left" | "middle" | "right"> = { 0: "left", 1: "middle", 2: "right" };
 
@@ -17,8 +48,9 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
   const playing = useArcadeStore((s) => s.playing);
   const area = useRef<HTMLDivElement>(null);
   const [captured, setCaptured] = useState(false);
-  // Movimento do mouse somado até o próximo quadro da página (uma chamada ao Rust por quadro).
-  const pending = useRef({ dx: 0, dy: 0, frame: 0 });
+  // Movimento do mouse ainda não mandado ao Rust. Vai na hora; só se junta enquanto a chamada
+  // anterior não voltou (antes esperava o próximo quadro da página: até 16 ms a mais).
+  const pending = useRef<PendingMove>({ dx: 0, dy: 0, inflight: false });
 
   const mine = playing?.hostId === props.hostId && playing.slot !== null;
 
@@ -33,10 +65,19 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
     document.addEventListener("pointerlockchange", onLockChange);
     return () => {
       document.removeEventListener("pointerlockchange", onLockChange);
-      cancelAnimationFrame(pending.current.frame);
       if (element && document.pointerLockElement === element) document.exitPointerLock();
     };
   }, [mine]);
+
+  // O movimento cru do mouse (`pointerrawupdate`, no WebView2): chega assim que o mouse manda,
+  // sem esperar o quadro da página como o `mousemove`.
+  useEffect(() => {
+    const element = area.current;
+    if (!captured || !element || !RAW_POINTER) return;
+    const onRaw = (e: Event) => pushMove(pending.current, (e as PointerEvent).movementX, (e as PointerEvent).movementY);
+    element.addEventListener("pointerrawupdate", onRaw);
+    return () => element.removeEventListener("pointerrawupdate", onRaw);
+  }, [captured]);
 
   if (!mine || !playing) return null;
 
@@ -55,16 +96,9 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
   }
 
   function onMove(e: MouseEvent<HTMLDivElement>) {
-    if (!captured) return;
-    const p = pending.current;
-    p.dx += e.movementX;
-    p.dy += e.movementY;
-    if (p.frame) return;
-    p.frame = requestAnimationFrame(() => {
-      const { dx, dy } = pending.current;
-      pending.current = { dx: 0, dy: 0, frame: 0 };
-      if (dx || dy) void invoke("arcade_mouse", { dx, dy }).catch(() => {});
-    });
+    // Com o evento cru disponível, o movimento já foi por ele.
+    if (!captured || RAW_POINTER) return;
+    pushMove(pending.current, e.movementX, e.movementY);
   }
 
   function onButton(e: MouseEvent<HTMLDivElement>, down: boolean) {

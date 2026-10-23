@@ -1314,3 +1314,60 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
     assert!(gone, "o controle virtual saiu do PC");
     ana.room.stream_stopped();
 }
+
+/// Mede a latência da entrada do fliperama no mesmo PC (sinalização local, QUIC pelo loopback,
+/// controle virtual do ViGEmBus): do `arcade_key` do jogador até o XInput do host ver o botão.
+/// Não inclui a rede de verdade nem o vídeo; mostra o que o app acrescenta. Ver o PR para os
+/// números antes e depois.
+#[test]
+#[ignore = "precisa do ViGEmBus instalado e do Worker local; mede, não confere comportamento"]
+fn latencia_da_tecla_ate_o_controle_virtual() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let beto = join(&url, &code, "Beto", None);
+    let ana_id = beto.id_of("Ana");
+    ana.room.stream_started(KeyframeHandle::detached());
+    ana.room
+        .arcade_open(Some("Teste".into()), 1, None)
+        .expect("ViGEmBus instalado");
+    beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
+    let slot = beto.wait("a vaga", |u| match u {
+        RoomUpdate::ArcadeSeat { slot, .. } => Some(slot),
+        _ => None,
+    });
+    ana.wait("o Beto conectado", |u| match u {
+        RoomUpdate::ArcadePlayers(seats) => seats.iter().any(|s| s.connected).then_some(()),
+        _ => None,
+    });
+    let xinput = u32::from(slot) - 1;
+    let pressed =
+        |want: bool| sv_input::xinput::read(xinput).is_some_and(|p| p.pressed(sv_input::pad::buttons::A) == want);
+    let mut samples = Vec::new();
+    for _ in 0..30 {
+        for down in [true, false] {
+            let started = Instant::now();
+            beto.room.arcade_key("KeyJ", down);
+            while !pressed(down) {
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "o botão não chegou (amostra {}, apertando {down}): {:?}",
+                    samples.len(),
+                    sv_input::xinput::read(xinput)
+                );
+                std::hint::spin_loop();
+            }
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+    samples.sort_by(f64::total_cmp);
+    let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+    let p95 = samples[samples.len() * 95 / 100];
+    eprintln!(
+        "LATENCIA entrada: média {avg:.2} ms, p95 {p95:.2} ms, máx {:.2} ms ({} amostras)",
+        samples.last().unwrap(),
+        samples.len()
+    );
+    ana.room.stream_stopped();
+}

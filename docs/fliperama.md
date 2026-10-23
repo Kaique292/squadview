@@ -8,7 +8,7 @@ Decisão e motivos: [ADR 0023](adr/0023-modo-fliperama.md). Este documento é o 
 
 ```
 Jogador (P2–P4)                                   Host
-XInput 250 Hz / teclado ──datagrama QUIC (Arcade)──▶ vaga → controle virtual X360 (ViGEmBus) → jogo
+XInput 1000 Hz / teclado ──datagrama QUIC (Arcade)──▶ vaga → controle virtual X360 (ViGEmBus) → jogo
 janela do fliperama ◀──────── live normal (Stream) ─── captura WGC da janela → encoder
               └──── sinais ArcadeJoin/Seat/Deny/Leave pela sinalização ────┘
 ```
@@ -34,7 +34,7 @@ janela do fliperama ◀──────── live normal (Stream) ─── c
 ## Etapa 1: crate `sv-input` (lógica pura + plataforma)
 
 - [x] `PadState` em 12 bytes (`to_bytes`/`from_bytes`), `merge` (controle físico + teclado) e zona morta. O datagrama (`wire.rs`) leva o tipo, o `seq` e o estado: 17 bytes.
-- [x] `PadReader`: thread que lê o XInput a 250 Hz e entrega só quando o estado muda (com zona morta), sem alocação no laço. Sem controle ligado, procura de novo a cada 500 ms.
+- [x] `PadReader`: thread que lê o XInput a 1000 Hz, acima da prioridade normal, e entrega só quando o estado muda (com zona morta), sem alocação no laço. Sem controle ligado, procura de novo a cada 500 ms. Ignora os controles virtuais criados pelo próprio app: com o host e o jogador no mesmo PC, ele lia o controle virtual do host e um botão ficava preso em laço.
 - [x] `KeyMap` e `KeyboardPad`: teclado (pelo `KeyboardEvent.code`) → controle, com o mapeamento padrão (WASD e setas, J/Espaço, K, L, I, U/O, Q/E, Enter, Backspace, teclado numérico) editável e salvo em `arcade.json`. O mouse vira o analógico direito (ADR 0024).
 - [x] `VirtualPads` (só host): cria e remove os controles X360, aplica o estado e devolve a vaga do XInput. O controle sai do PC no `Drop`.
 - [x] Controle total (`kbm.rs`, ADR 0024): `vk_from_code`, `KbmGuard` (bloqueia as teclas do sistema e solta tudo), `Injector` (`SendInput` só com a janela do jogo em primeiro plano) e `PanicHotkey` (Ctrl+Alt+F12).
@@ -77,6 +77,22 @@ janela do fliperama ◀──────── live normal (Stream) ─── c
   - botão **"Remover o driver de controle"**: chama o desinstalador registrado (aviso de administrador), confere se saiu e volta a "não instalado". Com o fliperama aberto, pede para fechar antes.
 - [x] Testes de interface (14): painel com e sem driver, abrir, jogadores, controle total, tirar, entrar, cheio, sair, avisos, captura do teclado, Esc e foco, remover o driver e trocar uma tecla.
 - [ ] Interface conforme `docs/design/ui.md`. Atualizar o README com prints (depois do teste real da Etapa 5).
+
+## Latência da entrada (medida)
+
+O teste `#[ignore]` `latencia_da_tecla_ate_o_controle_virtual` (`crates/sv-session/tests/room_scenarios.rs`, com o ViGEmBus e o Worker local) mede, no mesmo PC, do `arcade_key` do jogador até o XInput do host ver o botão. Passa pela sinalização, pela conexão QUIC do fliperama (loopback) e pelo controle virtual. Não inclui a rede de verdade nem o vídeo: é o que o app acrescenta.
+
+|                                    | Média   | p95      | Máximo   |
+| ---------------------------------- | ------- | -------- | -------- |
+| Antes (envio num relógio de 4 ms)  | 9,10 ms | 16,58 ms | 16,85 ms |
+| Depois (envio na hora em que muda) | 0,43 ms | 0,60 ms  | 1,47 ms  |
+
+O relógio de 4 ms do envio, na prática, andava na granularidade padrão do Windows (~15,6 ms): cada botão esperava até 16 ms para sair. Agora o envio acorda na hora em que o controle, uma tecla ou o mouse mudam. Também do lado do jogador:
+
+- o controle físico é lido a 1000 Hz, e não mais a 250 Hz;
+- o mouse vai pelo evento cru (`pointerrawupdate`), na hora, em vez de uma vez por quadro da página (até 16 ms a 60 Hz);
+- quem assiste não mostra mais, um por um, os quadros atrasados de uma rajada da rede: decodifica e pula para o mais novo;
+- com a live abaixo de 60 fps, o painel do fliperama avisa e troca com um clique (a 30 fps, cada quadro espera até 33 ms).
 
 ## Etapa 5: medição e testes reais
 
