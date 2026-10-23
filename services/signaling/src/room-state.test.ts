@@ -533,6 +533,40 @@ describe("ids", () => {
   });
 });
 
+describe("quem está na sala, para o servidor (ADR 0025)", () => {
+  it("conta conectados e quem caiu e ainda pode voltar, com o id do Discord de quem é conferido", () => {
+    const ana = join("Ana");
+    send(ana, { type: "status", live: true, muted: true, deafened: false });
+    const beto = connect();
+    room.message(
+      wrap(beto),
+      JSON.stringify({
+        type: "join",
+        name: "Beto",
+        protocol: 1,
+        resumable: true,
+        session: "x",
+        discord: { id: "222222222222222222", avatar: "b".repeat(32) },
+      }),
+      "222222222222222222",
+    );
+    // A Ana caiu: continua na sala por 60 s.
+    room.closed(wrap(ana));
+    ana.closedWith = { code: 1006, reason: "" };
+    expect(room.occupants()).toEqual([
+      {
+        id: "222222222222222222",
+        name: "Beto",
+        discord: { id: "222222222222222222", avatar: "b".repeat(32) },
+        live: false,
+        muted: false,
+        deafened: false,
+      },
+      { id: idOf(ana), name: "Ana", discord: null, live: true, muted: true, deafened: false },
+    ]);
+  });
+});
+
 describe("amigos na sala (ADR 0011)", () => {
   const ANA = "111111111111111111";
   const BETO = "222222222222222222";

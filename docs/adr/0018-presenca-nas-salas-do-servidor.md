@@ -1,6 +1,6 @@
 # 0018. Presença nas salas do servidor e entrada direta para membros
 
-- **Status:** aceita
+- **Status:** aceita (a origem da presença muda na [ADR 0025](0025-presenca-vinda-da-sala.md))
 - **Data:** 2026-10-21
 
 ## Contexto
