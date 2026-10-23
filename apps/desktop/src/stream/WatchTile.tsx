@@ -4,7 +4,7 @@ import { ImageOff, Loader2, Monitor, MoreHorizontal, PictureInPicture2, VolumeX 
 import { type KeyboardEvent, useEffect, useState } from "react";
 import { ArcadePlayOverlay } from "../arcade/ArcadePlayOverlay";
 import { useRoomStore } from "../room/room-store";
-import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
+import { ArcadeBadge, InfoBadge, LiveBadge } from "../ui/LiveBadge";
 import { stopInsideMenu } from "../ui/overlay";
 import { MENU_CONTENT } from "./StreamMenu";
 import type { StreamTileVariant } from "./StreamTile";
@@ -154,6 +154,7 @@ export function WatchTile(props: {
             {!strip && stats && stats.height > 0 && (
               <InfoBadge>{`${stats.height}p ${Math.round(stats.fps)}fps`}</InfoBadge>
             )}
+            {member.arcade && <ArcadeBadge arcade={member.arcade} size={strip ? "sm" : "md"} compact={strip} />}
             <LiveBadge size={strip ? "sm" : "md"} />
           </div>
 

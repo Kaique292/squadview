@@ -31,8 +31,9 @@ pub const MAX_SLOTS: u8 = 3;
 const SILENCE_RELEASE: Duration = Duration::from_secs(1);
 /// Parado, o jogador manda o estado de novo a cada tanto (o host sabe que ele continua lá).
 const RESEND_EVERY: Duration = Duration::from_millis(100);
-/// De quanto em quanto o jogador olha se o estado mudou (o analógico do mouse volta ao centro).
-const TICK: Duration = Duration::from_millis(4);
+/// Com o analógico do mouse voltando ao centro, o jogador manda o estado a cada tanto, até parar.
+/// Fora isso, o envio é na hora em que algo muda (controle, tecla ou mouse), sem esperar relógio.
+const DECAY_TICK: Duration = Duration::from_millis(4);
 
 /// Um jogador no fliperama que abrimos (para a interface do host).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -89,11 +90,14 @@ struct Player {
     kbm_guard: KbmGuard,
     mouse: (bool, bool),
     stop: Arc<AtomicBool>,
+    /// Acorda o envio na hora em que o controle, uma tecla ou o mouse mudam.
+    wake: Arc<tokio::sync::Notify>,
 }
 
 impl Player {
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.wake.notify_one();
         self.reader = None;
         self.kbm_tx = None;
         if let Some(conn) = self.conn.take() {
@@ -438,6 +442,7 @@ impl Inner {
             kbm_guard: KbmGuard::default(),
             mouse: (false, false),
             stop: Arc::default(),
+            wake: Arc::default(),
         });
         if let Some(old) = previous.filter(|p| p.host != host) {
             lock(&self.client).signal(&old.host, &Signal::ArcadeLeave);
@@ -510,7 +515,7 @@ impl Inner {
                     return;
                 }
             };
-            let (physical, keyboard, stop) = {
+            let (physical, keyboard, stop, wake) = {
                 let mut guard = lock(&inner.arcade.player);
                 let Some(p) = guard.as_mut().filter(|p| p.host == host) else {
                     conn.close(0u32.into(), b"saiu");
@@ -519,14 +524,19 @@ impl Inner {
                 p.conn = Some(conn.clone());
                 let physical = p.physical.clone();
                 let sink = physical.clone();
-                p.reader = PadReader::start(move |state| *lock(&sink) = state).ok();
-                (physical, p.keyboard.clone(), p.stop.clone())
+                let wake = p.wake.clone();
+                p.reader = PadReader::start(move |state| {
+                    *lock(&sink) = state;
+                    wake.notify_one();
+                })
+                .ok();
+                (physical, p.keyboard.clone(), p.stop.clone(), p.wake.clone())
             };
             (inner.on_update)(RoomUpdate::ArcadeSeat {
                 host: host.clone(),
                 slot,
             });
-            send_pads(&conn, &physical, &keyboard, &stop).await;
+            send_pads(&conn, &physical, &keyboard, &stop, &wake).await;
             if !stop.load(Ordering::Relaxed) {
                 inner.player_gone(&host, "A conexão com o fliperama caiu.");
             }
@@ -564,7 +574,9 @@ impl Inner {
                 p.send_kbm(KbmEvent::Key { vk, extended, down });
             }
         } else {
-            lock(&p.keyboard).key(code, down);
+            if lock(&p.keyboard).key(code, down) {
+                p.wake.notify_one();
+            }
         }
     }
 
@@ -580,6 +592,7 @@ impl Inner {
             });
         } else {
             lock(&p.keyboard).mouse_move(dx, dy);
+            p.wake.notify_one();
         }
     }
 
@@ -596,7 +609,9 @@ impl Inner {
             MouseButton::Middle => return,
         }
         let (left, right) = p.mouse;
-        lock(&p.keyboard).mouse_buttons(left, right);
+        if lock(&p.keyboard).mouse_buttons(left, right) {
+            p.wake.notify_one();
+        }
     }
 
     pub(super) fn arcade_wheel(&self, delta: i16) {
@@ -612,6 +627,7 @@ impl Inner {
         let Some(p) = guard.as_mut() else { return };
         lock(&p.keyboard).release_all();
         p.mouse = (false, false);
+        p.wake.notify_one();
         for event in p.kbm_guard.release_all() {
             if let Some(tx) = &p.kbm_tx {
                 let _ = tx.send(event);
@@ -721,6 +737,8 @@ async fn serve_player(
                     && is_newer(seq, last)
                 {
                     last = Some(seq);
+                    // O Guide abriria a Xbox Game Bar ou o Big Picture no nosso PC, fora do jogo.
+                    let state = state.without_system_buttons();
                     released = state == PadState::default();
                     let _ = pad.update(&state);
                 }
@@ -738,28 +756,40 @@ async fn serve_player(
     kbm_task.abort();
 }
 
-/// Jogador: manda o controle (físico + teclado e mouse) quando muda e, parado, a cada 100 ms.
+/// Jogador: manda o controle (físico + teclado e mouse) na hora em que ele muda e, parado, a cada
+/// 100 ms. Antes, um relógio de 4 ms olhava se o estado tinha mudado: cada botão esperava até 4 ms
+/// a mais para sair.
 async fn send_pads(
     conn: &Connection,
     physical: &Arc<Mutex<PadState>>,
     keyboard: &Arc<Mutex<KeyboardPad>>,
     stop: &Arc<AtomicBool>,
+    wake: &tokio::sync::Notify,
 ) {
     let mut seq: u32 = 0;
     let mut last: Option<PadState> = None;
     let mut last_sent = Instant::now();
-    let mut ticker = tokio::time::interval(TICK);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut previous_tick = Instant::now();
+    let mut previous = Instant::now();
     while !stop.load(Ordering::Relaxed) && conn.close_reason().is_none() {
-        ticker.tick().await;
+        // Espera algo mudar; com o analógico do mouse voltando ao centro, acorda a cada 4 ms até ele
+        // parar; parado, acorda para o reenvio de 100 ms.
+        let decaying = lock(keyboard).stick_moving();
+        let wait = if decaying {
+            DECAY_TICK
+        } else {
+            RESEND_EVERY.saturating_sub(last_sent.elapsed())
+        };
+        tokio::select! {
+            () = wake.notified() => {}
+            () = tokio::time::sleep(wait) => {}
+        }
         let now = Instant::now();
         let state = {
             let mut kb = lock(keyboard);
-            kb.tick(now - previous_tick);
+            kb.tick(now - previous);
             (*lock(physical)).merge(kb.state())
         };
-        previous_tick = now;
+        previous = now;
         if last != Some(state) || now - last_sent >= RESEND_EVERY {
             seq = seq.wrapping_add(1);
             let datagram = encode_pad(seq, &state);

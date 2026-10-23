@@ -3,7 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Monitor, MoreHorizontal } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 import { useRoomStore } from "../room/room-store";
-import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
+import { ArcadeBadge, InfoBadge, LiveBadge } from "../ui/LiveBadge";
 import { stopInsideMenu } from "../ui/overlay";
 import { MENU_CONTENT, StreamMenuItems, qualityLabel } from "./StreamMenu";
 import { useStreamStore } from "./stream-store";
@@ -29,6 +29,7 @@ export function StreamTile(props: {
 }) {
   const { quality, stats, fullscreen, setFullscreen } = useStreamStore();
   const myName = useRoomStore((s) => s.members[0]?.name) ?? "Você";
+  const arcade = useRoomStore((s) => s.members[0]?.arcade);
   // Com imagem chegando, o quadro fica transparente e o vídeo, desenhado por baixo, aparece.
   const showing = (stats?.fps ?? 0) > 0;
   const slot = useVideoSlot(undefined, false, showing);
@@ -77,6 +78,7 @@ export function StreamTile(props: {
 
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>
             {!strip && <InfoBadge>{qualityLabel(quality, stats?.height)}</InfoBadge>}
+            {arcade && <ArcadeBadge arcade={arcade} size={strip ? "sm" : "md"} compact={strip} />}
             <LiveBadge size={strip ? "sm" : "md"} />
           </div>
 
