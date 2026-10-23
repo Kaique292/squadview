@@ -37,7 +37,18 @@ export interface ServerSnapshot {
 }
 
 /** Quem está em cada sala do servidor agora (id da sala → membros), ver ADR 0018. */
-export type ServerPresence = Record<string, { id: string; live: boolean }[]>;
+/** Mudo e silenciado de quem está numa sala, para quem vê a sala de fora (como no Discord). */
+export interface VoiceFlags {
+  muted: boolean;
+  deafened: boolean;
+}
+
+export const NO_VOICE_FLAGS: VoiceFlags = { muted: false, deafened: false };
+
+/** Onde um membro está: o código da sala, o ao vivo, o mudo e o silenciado. */
+type Here = { code: string; live: boolean } & Partial<VoiceFlags>;
+
+export type ServerPresence = Record<string, ({ id: string; live: boolean } & VoiceFlags)[]>;
 
 /** O que alguém pode pedir ao servidor (já conferido quem é pelo registro dele). */
 export type ServerOp =
@@ -138,23 +149,31 @@ export class ServerState {
   private invites(): Record<string, Invite> {
     return this.store.get<Record<string, Invite>>("invites") ?? {};
   }
-  /** Onde cada membro está (código da sala do servidor) e se está ao vivo. */
-  private here(): Record<string, { code: string; live: boolean }> {
-    return this.store.get<Record<string, { code: string; live: boolean }>>("presence") ?? {};
+  /** Onde cada membro está (código da sala do servidor), se está ao vivo, mudo ou silenciado. */
+  private here(): Record<string, Here> {
+    return this.store.get<Record<string, Here>>("presence") ?? {};
   }
 
   /**
    * O registro de um membro avisou que ele entrou numa sala (`code`), saiu (`null`) ou mudou o
-   * "ao vivo". Código que não é de uma sala daqui conta como fora. `true` se algo mudou (avisar).
+   * "ao vivo", o mudo ou o silenciado. Código que não é de uma sala daqui conta como fora. `true` se
+   * algo mudou (avisar).
    */
-  setPresence(member: string, code: string | null, live: boolean): boolean {
+  setPresence(member: string, code: string | null, live: boolean, voice: VoiceFlags = NO_VOICE_FLAGS): boolean {
     if (!this.members()[member]) return false;
     const inRoom = code !== null && this.rooms().some((r) => r.code === code);
     const before = this.here()[member];
     if (!inRoom && !before) return false;
-    if (inRoom && before?.code === code && before.live === live) return false;
-    this.update<Record<string, { code: string; live: boolean }>>("presence", {}, (all) => {
-      if (inRoom) all[member] = { code: code!, live };
+    if (
+      inRoom &&
+      before?.code === code &&
+      before.live === live &&
+      !!before.muted === voice.muted &&
+      !!before.deafened === voice.deafened
+    )
+      return false;
+    this.update<Record<string, Here>>("presence", {}, (all) => {
+      if (inRoom) all[member] = { code: code!, live, muted: voice.muted, deafened: voice.deafened };
       else delete all[member];
     });
     return true;
@@ -171,7 +190,8 @@ export class ServerState {
     const byCode = new Map(this.rooms().map((r) => [r.code, r.id]));
     for (const [id, at] of Object.entries(this.here())) {
       const room = byCode.get(at.code);
-      if (room && members[id]) result[room].push({ id, live: at.live });
+      // A presença guardada por um Worker antigo não tem o mudo: conta como falando.
+      if (room && members[id]) result[room].push({ id, live: at.live, muted: !!at.muted, deafened: !!at.deafened });
     }
     return result;
   }

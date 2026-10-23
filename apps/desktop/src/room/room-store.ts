@@ -126,7 +126,7 @@ interface RoomState {
   roomName: string | null;
   /** A ligação com a sala caiu e o app está tentando voltar. */
   reconnecting: boolean;
-  /** Quando entramos na sala (ms), para o tempo conectado. */
+  /** Desde quando a sala está ocupada (ms), para o tempo do canal de voz. */
   joinedAt: number | null;
   /** Membros da sala, nós primeiro. */
   members: Member[];
@@ -150,6 +150,12 @@ interface RoomState {
   stopWatching: (memberId: string) => Promise<void>;
   setWatchListening: (memberId: string, listening: boolean) => Promise<void>;
   clearError: () => void;
+}
+
+/** Encerra a nossa live, se houver (com a animação de saída do vídeo). */
+async function endLive() {
+  const stream = useStreamStore.getState();
+  if (stream.status !== "idle") await stream.stop().catch(() => {});
 }
 
 export const useRoomStore = create<RoomState>((set, get) => ({
@@ -186,7 +192,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     try {
       // A voz liga junto com a sala, com os dispositivos, volumes, mudo e surdo salvos.
       const voice = toRust(useVoiceStore.getState().prefs);
-      const info = await invoke<{ code: string; roomName?: string | null }>("room_join", {
+      // Trocando de sala: a live era da sala anterior e acaba com ela, como no Discord.
+      if (get().code) await endLive();
+      const info = await invoke<{ code: string; roomName?: string | null; since?: number }>("room_join", {
         code,
         name,
         discord: discordOf(useAccountStore.getState().profile),
@@ -198,7 +206,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       set({
         code: info.code,
         roomName: info.roomName ?? null,
-        joinedAt: Date.now(),
+        // Desde quando a sala está ocupada: sair e voltar não zera o tempo (só a sala vazia zera).
+        joinedAt: info.since ?? Date.now(),
         joining: false,
         watching: {},
         pendingWatch: [],
@@ -220,6 +229,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
 
   async leave() {
+    // Sair da sala encerra a live: ao voltar, é preciso transmitir de novo (como no Discord).
+    await endLive();
     await invoke("room_leave").catch(() => {});
     set({
       code: null,
@@ -340,6 +351,8 @@ export async function listenToRoomEvents() {
         useRoomStore.setState({ reconnecting: false });
         if (warned) toast.success("De volta à sala.", "Reconectado");
       } else {
+        // A sala acabou para nós: a live era dela e acaba junto.
+        void endLive();
         useRoomStore.setState({
           code: null,
           roomName: null,

@@ -171,8 +171,8 @@ function Running() {
       <SmoothnessHint />
       <p className="text-sm text-text-muted">
         {arcade?.game ? `${arcade.game} · ` : ""}
-        {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra pelo botão
-        direito no seu nome, em “Entrar no fliperama”.
+        {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra em “Entrar
+        no fliperama”, no botão direito no seu nome ou nos “...” da sua live.
       </p>
       <ul aria-label="Jogadores do fliperama" className="flex flex-col gap-2">
         {seats.length === 0 && <li className="text-sm text-text-faint">Ninguém entrou ainda.</li>}
