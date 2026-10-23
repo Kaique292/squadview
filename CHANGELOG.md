@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/Kaique292/squadview/compare/v0.12.0...v0.13.0) (2026-10-23)
+
+
+### ✨ Novidades
+
+* **signal:** a sala conta ao servidor quem está nela, membro ou não ([#117](https://github.com/Kaique292/squadview/issues/117)) ([dc77f9a](https://github.com/Kaique292/squadview/commit/dc77f9a3b75d1d645d757caf7b6785d793066b4c))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README para a versão 0.13.0 ([#118](https://github.com/Kaique292/squadview/issues/118)) ([7b894ee](https://github.com/Kaique292/squadview/commit/7b894ee6641447ef5de0abbe98f87270e8cbeb17))
+
 ## [0.12.0](https://github.com/Kaique292/squadview/compare/v0.11.1...v0.12.0) (2026-10-23)
 
 
