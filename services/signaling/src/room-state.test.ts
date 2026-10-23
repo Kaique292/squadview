@@ -41,6 +41,7 @@ let room: RoomState;
 let seats: Record<string, Seat>;
 let wakes: number[];
 let tokens: number;
+let since: number | null;
 
 beforeEach(() => {
   conns = [];
@@ -49,6 +50,7 @@ beforeEach(() => {
   seats = {};
   wakes = [];
   tokens = 0;
+  since = null;
   room = new RoomState(
     () => conns.filter((c) => c.closedWith === null).map(wrap),
     () => (ids++).toString(16).padStart(16, "0"),
@@ -62,6 +64,8 @@ beforeEach(() => {
       putRequests: () => {},
       getSeats: () => structuredClone(seats),
       putSeats: (s) => (seats = structuredClone(s)),
+      getSince: () => since,
+      putSince: (at) => (since = at),
       wakeAt: (at) => wakes.push(at),
     },
     () => (tokens++).toString(16).padStart(32, "a"),
@@ -129,7 +133,14 @@ function idOf(c: FakeConnection) {
 describe("entrar na sala", () => {
   it("recebe o próprio id e a lista de quem já está na sala", () => {
     const ana = join("Ana");
-    expect(ana.last()).toEqual({ type: "welcome", you: idOf(ana), members: [], room: null, resume: tokenOf(ana) });
+    expect(ana.last()).toEqual({
+      type: "welcome",
+      you: idOf(ana),
+      members: [],
+      room: null,
+      resume: tokenOf(ana),
+      elapsed: 0,
+    });
 
     const beto = join("Beto");
     expect(beto.last()).toEqual({
@@ -140,8 +151,48 @@ describe("entrar na sala", () => {
       ],
       room: null,
       resume: tokenOf(beto),
+      elapsed: 0,
     });
     expect(tokenOf(beto)).not.toBe(tokenOf(ana));
+  });
+
+  // Regressão: o tempo da sala era a hora em que cada um entrou, guardada no app; sair e voltar
+  // zerava o relógio, mesmo com a sala cheia de gente o tempo todo.
+  it("o tempo da sala conta de quando ela deixou de estar vazia e só zera quando esvazia", () => {
+    const elapsedOf = (c: FakeConnection) => {
+      const w = c.sent.findLast((m) => m.type === "welcome");
+      return w?.type === "welcome" ? w.elapsed : null;
+    };
+    now = 1_000;
+    const ana = join("Ana");
+    expect(elapsedOf(ana)).toBe(0);
+
+    now = 61_000;
+    const beto = join("Beto");
+    expect(elapsedOf(beto)).toBe(60_000);
+
+    // Beto sai e volta: a sala nunca ficou vazia, o tempo continua.
+    send(beto, { type: "leave" });
+    now = 121_000;
+    const betoDeNovo = join("Beto");
+    expect(elapsedOf(betoDeNovo)).toBe(120_000);
+
+    // Quem caiu e ainda pode voltar mantém a sala ocupada.
+    send(betoDeNovo, { type: "leave" });
+    room.closed(wrap(ana));
+    ana.closedWith = { code: 1006, reason: "" };
+    now = 130_000;
+    expect(elapsedOf(join("Caio"))).toBe(129_000);
+  });
+
+  it("a sala que esvazia recomeça o tempo do zero", () => {
+    now = 1_000;
+    const ana = join("Ana");
+    send(ana, { type: "leave" });
+    now = 500_000;
+    const beto = join("Beto");
+    const w = beto.sent.findLast((m) => m.type === "welcome");
+    expect(w?.type === "welcome" && w.elapsed).toBe(0);
   });
 
   it("avisa os outros quando alguém entra, mas não avisa a própria pessoa", () => {
@@ -505,6 +556,8 @@ describe("amigos na sala (ADR 0011)", () => {
         putRequests: (r) => (requests = structuredClone(r)),
         getSeats: () => ({}),
         putSeats: () => {},
+        getSince: () => null,
+        putSince: () => {},
         wakeAt: () => {},
       },
     );

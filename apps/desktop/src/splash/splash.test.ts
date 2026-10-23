@@ -14,7 +14,7 @@ const { listen, show, handlers } = vi.hoisted(() => {
 });
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ show }) }));
-vi.mock("@fontsource-variable/figtree", () => ({}));
+vi.mock("@fontsource-variable/noto-sans", () => ({}));
 
 /** O mesmo esqueleto do `splash.html`. */
 const HTML = `

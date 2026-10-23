@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { memberPhoto, useRoomStore } from "../room/room-store";
 import { useStreamStore } from "../stream/stream-store";
 import { Avatar } from "../ui/Avatar";
-import { Modal, ModalClose } from "../ui/Modal";
+import { Modal } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
 import { type DriverInfo, useArcadeStore } from "./arcade-store";
 
@@ -28,18 +28,9 @@ export function ArcadeHostDialog() {
       title="Fliperama"
       description="Seu jogo com vários controles, para a galera da call jogar junto como P2, P3 e P4."
       width={480}
-      footer={
-        <ModalClose asChild>
-          <button
-            type="button"
-            className="rounded-md px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:text-text"
-          >
-            Fechar
-          </button>
-        </ModalClose>
-      }
     >
-      {open && (arcadeOpen ? <Running /> : <Setup />)}
+      {/* Sem rodapé: o X do canto já fecha. */}
+      {open && <div className="pb-6">{arcadeOpen ? <Running /> : <Setup />}</div>}
     </Modal>
   );
 }
@@ -180,8 +171,8 @@ function Running() {
       <SmoothnessHint />
       <p className="text-sm text-text-muted">
         {arcade?.game ? `${arcade.game} · ` : ""}
-        {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra pelo botão
-        direito no seu nome, em “Entrar no fliperama”.
+        {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra em “Entrar
+        no fliperama”, no botão direito no seu nome ou nos “...” da sua live.
       </p>
       <ul aria-label="Jogadores do fliperama" className="flex flex-col gap-2">
         {seats.length === 0 && <li className="text-sm text-text-faint">Ninguém entrou ainda.</li>}

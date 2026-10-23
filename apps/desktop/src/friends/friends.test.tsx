@@ -4,6 +4,7 @@ import { useAccountStore } from "../account/account-store";
 import { App } from "../App";
 import { listenToRoomEvents, useRoomStore } from "../room/room-store";
 import { useToastStore } from "../ui/toast-store";
+import { useVoiceStore } from "../voice/voice-store";
 import { listenToFriendsEvents, presenceText, useFriendsStore } from "./friends-store";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
@@ -83,12 +84,31 @@ describe("amigos", () => {
         action: { type: "profile", name: "Kaique", avatar: null },
       }),
     );
-    expect(invoke).toHaveBeenCalledWith("friends_action", { action: { type: "status", room: null, live: false } });
+    expect(invoke).toHaveBeenCalledWith("friends_action", {
+      action: { type: "status", room: null, live: false, muted: false, deafened: false },
+    });
     // Entrou numa sala: os amigos ficam sabendo (o código só vai para o servidor).
     act(() => useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera" }));
     expect(invoke).toHaveBeenCalledWith("friends_action", {
-      action: { type: "status", room: { code: "B8RJ2Q", name: "Galera" }, live: false },
+      action: { type: "status", room: { code: "B8RJ2Q", name: "Galera" }, live: false, muted: false, deafened: false },
     });
+  });
+
+  // Regressão: quem via a sala do servidor de fora não sabia que estávamos mudos ou silenciados.
+  it("mudo e silenciado vão para o registro na hora em que mudam", async () => {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("friends_action", expect.anything()));
+    act(() => useRoomStore.setState({ code: "B8RJ2Q", roomName: "Geral" }));
+    const prefs = useVoiceStore.getState().prefs;
+    act(() => useVoiceStore.setState({ prefs: { ...prefs, muted: true } }));
+    expect(invoke).toHaveBeenLastCalledWith("friends_action", {
+      action: { type: "status", room: { code: "B8RJ2Q", name: "Geral" }, live: false, muted: true, deafened: false },
+    });
+    // Silenciado também conta como mudo, como na lista da sala.
+    act(() => useVoiceStore.setState({ prefs: { ...prefs, muted: false, deafened: true } }));
+    expect(invoke).toHaveBeenLastCalledWith("friends_action", {
+      action: { type: "status", room: { code: "B8RJ2Q", name: "Geral" }, live: false, muted: true, deafened: true },
+    });
+    act(() => useVoiceStore.setState({ prefs }));
   });
 
   it("o logo abre a página de amigos com quem está online", () => {

@@ -1263,8 +1263,9 @@ fn fliperama_fechado_recusa_a_vaga_e_abrir_pede_live_e_driver() {
     ana.room.stream_stopped();
 }
 
-/// O fliperama de ponta a ponta no mesmo PC: o Beto ganha a vaga, aperta J no teclado e o controle
-/// virtual da Ana aperta A (o Windows vê pelo XInput). Tirar o Beto solta a vaga e o controle.
+/// O fliperama de ponta a ponta no mesmo PC: o Beto ganha a vaga e cada tecla do mapa padrão
+/// (WASD, setas, J/Espaço, K, L, I, Enter...) chega ao controle virtual da Ana (o Windows vê pelo
+/// XInput). Tirar o Beto solta a vaga e o controle.
 #[test]
 #[ignore = "precisa do ViGEmBus instalado e do Worker local (SQUADVIEW_SIGNALING_URL)"]
 fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
@@ -1293,14 +1294,50 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
         _ => None,
     });
 
-    let xinput = u32::from(slot) - 1;
+    assert!((2..=4).contains(&slot), "o host é o P1; o Beto ganhou o P{slot}");
+    // A vaga do XInput do controle virtual (com o host no teclado, é a 0, e mesmo assim P2).
     beto.room.arcade_key("KeyJ", true);
-    let pressed = (0..100).find_map(|_| {
-        std::thread::sleep(Duration::from_millis(20));
-        sv_input::xinput::read(xinput).filter(|p| p.pressed(sv_input::pad::buttons::A))
-    });
-    assert!(pressed.is_some(), "o A do controle virtual do P{slot} apertou");
+    let xinput = (0..100)
+        .find_map(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            (0..sv_input::xinput::SLOTS)
+                .find(|&i| sv_input::xinput::read(i).is_some_and(|p| p.pressed(sv_input::pad::buttons::A)))
+        })
+        .expect("o A do controle virtual apertou");
     beto.room.arcade_key("KeyJ", false);
+
+    use sv_input::pad::buttons;
+    type Check = fn(&sv_input::PadState) -> bool;
+    let keys: [(&str, Check); 14] = [
+        ("KeyW", |p| p.thumb_ly > 20_000),
+        ("KeyS", |p| p.thumb_ly < -20_000),
+        ("KeyA", |p| p.thumb_lx < -20_000),
+        ("KeyD", |p| p.thumb_lx > 20_000),
+        ("ArrowLeft", |p| p.thumb_lx < -20_000),
+        ("ArrowRight", |p| p.thumb_lx > 20_000),
+        ("Space", |p| p.pressed(buttons::A)),
+        ("KeyK", |p| p.pressed(buttons::B)),
+        ("KeyL", |p| p.pressed(buttons::X)),
+        ("KeyI", |p| p.pressed(buttons::Y)),
+        ("KeyU", |p| p.pressed(buttons::LEFT_SHOULDER)),
+        ("KeyQ", |p| p.left_trigger > 200),
+        ("Enter", |p| p.pressed(buttons::START)),
+        ("Backspace", |p| p.pressed(buttons::BACK)),
+    ];
+    for (key, ok) in keys {
+        beto.room.arcade_key(key, true);
+        let seen = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            sv_input::xinput::read(xinput).is_some_and(|p| ok(&p))
+        });
+        beto.room.arcade_key(key, false);
+        let released = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            sv_input::xinput::read(xinput).is_some_and(|p| p == sv_input::PadState::default())
+        });
+        assert!(seen, "{key} chegou ao controle virtual");
+        assert!(released, "{key} soltou");
+    }
 
     ana.room.arcade_kick(&beto_id);
     beto.wait("tirado do fliperama", |u| match u {

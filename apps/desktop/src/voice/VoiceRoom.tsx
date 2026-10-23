@@ -110,9 +110,10 @@ export function VoiceRoom() {
       />
     </>
   );
-  const streamTile = (variant: StreamTileVariant) => (
+  const streamTile = (variant: StreamTileVariant, hidden = false) => (
     <StreamTile
       variant={variant}
+      hidden={hidden}
       focused={focusId === STREAM_TILE}
       onActivate={() => setFocusId(focusId === STREAM_TILE ? null : STREAM_TILE)}
       onChange={() => setChanging(true)}
@@ -180,7 +181,7 @@ export function VoiceRoom() {
    * pessoa somos nós). `hidden`: está na faixa recolhida.
    */
   function tile(index: number, variant: TileVariant, hidden = false) {
-    if (ids[index] === STREAM_TILE) return streamTile(variant);
+    if (ids[index] === STREAM_TILE) return streamTile(variant, hidden);
     if (index - (live ? 1 : 0) < watched.length) return watchTile(watched[index - (live ? 1 : 0)], variant, hidden);
     const memberIndex = index - (live ? 1 : 0) - watched.length;
     const m = members[memberIndex];

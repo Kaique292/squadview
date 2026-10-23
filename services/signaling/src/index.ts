@@ -8,6 +8,7 @@ import {
   type ServerResult,
   type ServerSnapshot,
   ServerState,
+  type VoiceFlags,
 } from "./server-state";
 import { exchangeDiscordToken, type Profile, signSession, verifySession } from "./session";
 import { TurnCache, type TurnEnv, turnProvider } from "./turn";
@@ -96,6 +97,8 @@ export class Room extends DurableObject<Env> {
     // Vagas de quem pode voltar depois de uma queda (ADR 0022): sobrevivem ao reinício da sala.
     getSeats: () => this.ctx.storage.kv.get("seats") ?? {},
     putSeats: (seats) => this.ctx.storage.kv.put("seats", seats),
+    getSince: () => this.ctx.storage.kv.get<number>("since") ?? null,
+    putSince: (at) => this.ctx.storage.kv.put("since", at),
     wakeAt: (at) => this.ctx.waitUntil(this.ctx.storage.setAlarm(at)),
   });
 
@@ -283,10 +286,10 @@ export class Server extends DurableObject<Env> {
   }
 
   /** Um membro entrou numa sala daqui, saiu ou mudou o ao vivo (ADR 0018): avisa todos. */
-  setPresence(member: string, code: string | null, live: boolean): void {
+  setPresence(member: string, code: string | null, live: boolean, voice: VoiceFlags): void {
     const state = this.state;
     const snapshot = state.snapshot();
-    if (!snapshot || !state.setPresence(member, code, live)) return;
+    if (!snapshot || !state.setPresence(member, code, live, voice)) return;
     const presence = state.presence();
     for (const id of state.memberIds())
       this.ctx.waitUntil(
@@ -355,7 +358,7 @@ function peers(env: Env): Peers {
     serverCreate: async (id, name, owner) => server(env, id).create(id, name, owner),
     serverAct: async (id, actor, op) => server(env, id).act(actor, op),
     serverSnapshot: async (id) => server(env, id).snapshot(),
-    serverSetPresence: async (id, member, code, live) => server(env, id).setPresence(member, code, live),
+    serverSetPresence: async (id, member, code, live, voice) => server(env, id).setPresence(member, code, live, voice),
     serverPresence: async (id) => server(env, id).presence(),
     serverRefresh: async (id, profile) => server(env, id).refresh(profile),
     dmSignal: async (to, from, payload) => user(env, to).onDmSignal(from, payload),

@@ -285,7 +285,7 @@ export function RoomMemberList() {
   );
 }
 
-/** Tempo desde que entramos na sala, como o "2:15:06" do canal de voz. */
+/** Tempo desde que a sala deixou de estar vazia, como o "2:15:06" do canal de voz. */
 export function Elapsed(props: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -336,7 +336,7 @@ function MemberRow(props: {
           src={memberPhoto(member, !!props.isMe, profile, 64)}
         />
         <span
-          className={`min-w-0 flex-1 truncate text-sm ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
+          className={`min-w-0 flex-1 truncate text-sm font-medium ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
         >
           {member.name}
           {props.isMe && <span className="text-text-faint"> (você)</span>}

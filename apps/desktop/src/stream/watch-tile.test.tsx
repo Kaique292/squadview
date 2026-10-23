@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { type Member, useRoomStore, type Watch } from "../room/room-store";
+import { useArcadeStore } from "../arcade/arcade-store";
 import { useDissolveStore } from "../ui/dissolve-effect";
 import { seeThroughAreas } from "../ui/see-through";
 import { listenToStreamEvents, type StreamStats, useStreamStore } from "./stream-store";
@@ -216,6 +217,37 @@ describe("o quadro da live", () => {
     expect(details).toHaveBeenCalled();
     expect(activate).not.toHaveBeenCalled();
     fireEvent.mouseLeave(screen.getByRole("button", { name: "Pôr a live de Ana em foco" }));
+  });
+
+  it("os ... da live com fliperama aberto deixam entrar como jogador", async () => {
+    invoke.mockResolvedValue(undefined);
+    useArcadeStore.setState({ playing: null });
+    useRoomStore.setState({ members: [{ ...ANA, arcade: { game: "Bomberman", slots: 3, players: [] } }, BETO] });
+    render(tile());
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /live de Ana/ }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Mais opções da live de Ana" }), { button: 0 });
+    const menu = await screen.findByRole("menu", { name: "Mais opções da live de Ana" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Entrar no fliperama \(3 vagas\)/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("arcade_join", { hostId: ANA.id }));
+  });
+
+  it("sem fliperama, os ... não oferecem entrar; cheio, o item fica desligado", async () => {
+    const openMenu = async () => {
+      fireEvent.mouseEnter(screen.getByRole("button", { name: /live de Ana/ }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Mais opções da live de Ana" }), { button: 0 });
+      return screen.findByRole("menu", { name: "Mais opções da live de Ana" });
+    };
+    useArcadeStore.setState({ playing: null });
+    const { unmount } = render(tile());
+    expect(within(await openMenu()).queryByText(/fliperama/i)).toBeNull();
+    unmount();
+
+    useRoomStore.setState({ members: [{ ...ANA, arcade: { game: null, slots: 1, players: [BETO.id] } }, BETO] });
+    render(tile());
+    expect(within(await openMenu()).getByRole("menuitem", { name: /Fliperama cheio/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("clicar nos ... não põe em foco nem em tela cheia", () => {

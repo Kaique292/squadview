@@ -6,6 +6,18 @@ import { OWN_VIDEO } from "./video-key";
 
 type PhysicalBounds = { x: number; y: number; width: number; height: number; radius: number };
 
+/** Animações e transições que podem mover o quadro sem mudar o tamanho dele. */
+const MOVE_EVENTS = [
+  "transitionrun",
+  "transitionend",
+  "transitioncancel",
+  "animationstart",
+  "animationend",
+  "animationcancel",
+] as const;
+/** Depois do último evento de animação em volta do vídeo, quanto tempo seguir o quadro. */
+const FOLLOW_MS = 300;
+
 /** Manda ao Rust onde fica um vídeo: a nossa live (sem `memberId`) ou a de quem assistimos. */
 function sendBounds(memberId: string | undefined, b: PhysicalBounds) {
   const sent = memberId ? invoke("set_watch_bounds", { memberId, ...b }) : invoke("set_video_bounds", b);
@@ -66,11 +78,29 @@ export function useVideoSlot(memberId?: string, hidden = false, showing = true) 
     const observer = new ResizeObserver(report);
     observer.observe(el);
     window.addEventListener("resize", report);
+    // A faixa abrindo ou o quadro entrando animado mudam o lugar sem mudar o tamanho: o
+    // ResizeObserver não vê, e o vídeo ficava fora do quadro. Enquanto algo em volta dele anima,
+    // segue o quadro a cada quadro da página (só nesse meio-tempo).
+    let until = 0;
+    let frame = 0;
+    const follow = () => {
+      report();
+      frame = performance.now() < until ? requestAnimationFrame(follow) : 0;
+    };
+    const onMove = (e: Event) => {
+      if (!(e.target instanceof Node) || !e.target.contains(el)) return;
+      until = performance.now() + FOLLOW_MS;
+      report();
+      if (!frame) frame = requestAnimationFrame(follow);
+    };
+    for (const type of MOVE_EVENTS) document.addEventListener(type, onMove, true);
     report();
     return () => {
       reportRef.current = () => {};
       observer.disconnect();
       window.removeEventListener("resize", report);
+      for (const type of MOVE_EVENTS) document.removeEventListener(type, onMove, true);
+      if (frame) cancelAnimationFrame(frame);
       setSeeThrough(of, null);
       sendBounds(memberId, { x: 0, y: 0, width: 0, height: 0, radius: 0 });
     };

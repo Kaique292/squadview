@@ -6,6 +6,7 @@ import { savedName, useRoomStore } from "../room/room-store";
 import { useStreamStore } from "../stream/stream-store";
 import { clearServers, onServerMessage, type ServerOp, serverErrorText } from "../servers/servers-store";
 import { toast } from "../ui/toast-store";
+import { useVoiceStore } from "../voice/voice-store";
 
 /** Amigos e presença (ver docs/adr/0011-amigos-e-presenca.md). */
 
@@ -55,7 +56,13 @@ type RegistryMessage =
 /** O que o app pode pedir ao registro (espelha `sv_net::friends::FriendAction`). */
 export type FriendAction =
   | { type: "profile"; name: string; avatar: string | null }
-  | { type: "status"; room: { code: string; name: string | null } | null; live: boolean }
+  | {
+      type: "status";
+      room: { code: string; name: string | null } | null;
+      live: boolean;
+      muted: boolean;
+      deafened: boolean;
+    }
   | { type: "friend-request" | "friend-accept" | "friend-decline" | "friend-cancel" | "unfriend"; id: string }
   | { type: "set-direct"; id: string; direct: boolean }
   | { type: "join" | "invite"; id: string }
@@ -248,7 +255,15 @@ function sendStatus() {
   if (status !== "online") return;
   const { code, roomName } = useRoomStore.getState();
   const live = useStreamStore.getState().status === "live";
-  void act({ type: "status", room: code ? { code, name: roomName } : null, live });
+  // Mudo e silenciado: quem vê a sala do servidor de fora vê os ícones, como no Discord.
+  const { muted, deafened } = voiceFlags();
+  void act({ type: "status", room: code ? { code, name: roomName } : null, live, muted, deafened });
+}
+
+/** Silenciado conta como mudo também (não dá para falar sem ouvir), como na lista da sala. */
+function voiceFlags() {
+  const { muted, deafened } = useVoiceStore.getState().prefs;
+  return { muted: muted || deafened, deafened };
 }
 
 /** Liga os eventos dos amigos vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
@@ -301,6 +316,9 @@ export async function listenToFriendsEvents() {
   const offAccount = useAccountStore.subscribe((s, prev) => {
     if (s.profile !== prev.profile) sendProfileAndStatus();
   });
+  const offVoice = useVoiceStore.subscribe((s, prev) => {
+    if (s.prefs.muted !== prev.prefs.muted || s.prefs.deafened !== prev.prefs.deafened) sendStatus();
+  });
   const status = await invoke<FriendsStatus>("friends_status").catch((): FriendsStatus => "signed-out");
   useFriendsStore.setState({ status });
   if (status === "online") sendProfileAndStatus();
@@ -309,6 +327,7 @@ export async function listenToFriendsEvents() {
     offRoom();
     offStream();
     offAccount();
+    offVoice();
   };
 }
 

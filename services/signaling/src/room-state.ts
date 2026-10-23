@@ -77,6 +77,9 @@ export interface RoomEffects {
   /** Vagas dos membros, por id (ficam guardadas mesmo se a sala reiniciar). */
   getSeats(): Record<string, Seat>;
   putSeats(seats: Record<string, Seat>): void;
+  /** Desde quando a sala está ocupada (`null`: nunca guardado). */
+  getSince(): number | null;
+  putSince(at: number): void;
   /** Pede um `expire` no instante `at` (no Durable Object, um alarme). */
   wakeAt(at: number): void;
 }
@@ -90,6 +93,8 @@ const NO_EFFECTS: RoomEffects = {
   putRequests: () => {},
   getSeats: () => ({}),
   putSeats: () => {},
+  getSince: () => null,
+  putSince: () => {},
   wakeAt: () => {},
 };
 
@@ -355,6 +360,15 @@ export class RoomState {
       return this.fail(conn, "room-not-found", CLOSE.notFound);
     }
 
+    // O tempo da sala só recomeça quando ela estava vazia (nem quem caiu e ainda pode voltar):
+    // sair e entrar de novo numa sala com gente não zera o relógio de ninguém.
+    const empty = !back && others.length === 0 && ghosts.length === 0;
+    let since = this.effects.getSince();
+    if (empty || since === null) {
+      since = this.now();
+      this.effects.putSince(since);
+    }
+
     let id = back?.member.id;
     if (!id) {
       const taken = new Set([...others.map(([, m]) => m.id), ...Object.keys(this.effects.getSeats())]);
@@ -384,6 +398,7 @@ export class RoomState {
       members: [...others.map(([, m]) => m), ...ghosts.map((s) => s.member)],
       room: roomName,
       resume: token,
+      elapsed: Math.max(0, this.now() - since),
     });
     // Para os outros, quem voltou nunca saiu: só uma atualização (sem som de entrada).
     this.broadcast(back ? { type: "member-updated", member } : { type: "member-joined", member }, conn);

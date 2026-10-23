@@ -323,12 +323,7 @@ impl Inner {
                 };
                 host.plugging.retain(|m| m != &from);
                 let taken: Vec<u8> = host.seats.values().map(|s| s.slot).collect();
-                // O P é a vaga real do XInput + 1 (o host com o controle dele é o P1).
-                let slot = pad
-                    .user_index()
-                    .map(|i| i as u8 + 1)
-                    .filter(|s| !taken.contains(s))
-                    .unwrap_or_else(|| (2..=4).find(|s| !taken.contains(s)).unwrap_or(2));
+                let slot = player_number(pad.user_index(), &taken);
                 host.expected.insert(fingerprint.clone(), from.clone());
                 host.seats.insert(
                     from.clone(),
@@ -811,4 +806,32 @@ async fn send_kbm(conn: Connection, mut events: tokio::sync::mpsc::UnboundedRece
         }
     }
     let _ = send.finish();
+}
+
+/// O P de um jogador novo (2 a 4): o host é sempre o P1. Usa a vaga do XInput + 1 quando ela já é
+/// P2 a P4 (o host joga com um controle na primeira vaga), para bater com o número que o jogo mostra.
+/// Com o host no teclado, o controle virtual pega a primeira vaga do Windows, e antes o jogador
+/// virava "P1", sendo que o P1 é o host.
+fn player_number(xinput: Option<u32>, taken: &[u8]) -> u8 {
+    xinput
+        .and_then(|i| u8::try_from(i + 1).ok())
+        .filter(|p| (2..=4).contains(p) && !taken.contains(p))
+        .unwrap_or_else(|| (2..=4).find(|p| !taken.contains(p)).unwrap_or(2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regressão: com o host jogando no teclado (sem controle ligado), o controle virtual pega a
+    /// vaga 0 do XInput e o amigo aparecia como P1.
+    #[test]
+    fn o_jogador_nunca_e_o_p1() {
+        assert_eq!(player_number(Some(0), &[]), 2, "vaga 0: o host está no teclado");
+        assert_eq!(player_number(Some(0), &[2]), 3);
+        assert_eq!(player_number(Some(1), &[]), 2, "o host com o controle na vaga 0");
+        assert_eq!(player_number(Some(2), &[]), 3, "segue a vaga do XInput quando dá");
+        assert_eq!(player_number(Some(2), &[3]), 2, "vaga já usada: a primeira livre");
+        assert_eq!(player_number(None, &[2, 3]), 4);
+    }
 }

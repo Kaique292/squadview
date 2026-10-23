@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Keyboard, MousePointer2 } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, type WheelEvent, useEffect, useRef, useState } from "react";
-import { useArcadeStore } from "./arcade-store";
+import { type KeyMap, useArcadeStore } from "./arcade-store";
+import { keyLegend } from "./key-legend";
 
 /** O navegador tem o evento cru do mouse (o WebView2 do app tem; o jsdom dos testes, não). */
 const RAW_POINTER = typeof window !== "undefined" && "onpointerrawupdate" in window;
@@ -53,6 +54,15 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
   const pending = useRef<PendingMove>({ dx: 0, dy: 0, inflight: false });
 
   const mine = playing?.hostId === props.hostId && playing.slot !== null;
+  // As teclas que viram o controle, para mostrar ao jogador (antes ele não sabia o que apertar).
+  const [legend, setLegend] = useState<string | null>(null);
+  useEffect(() => {
+    if (!mine) return;
+    void invoke<KeyMap>("arcade_keymap").then(
+      (map) => setLegend(map?.keys ? keyLegend(map) : null),
+      () => setLegend(null),
+    );
+  }, [mine]);
 
   useEffect(() => {
     if (!mine) return;
@@ -151,9 +161,12 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
         )}
       </span>
       {!props.compact && (
-        <span className="absolute bottom-12 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-md bg-black/70 px-2 py-1 text-xs text-white/90">
-          <MousePointer2 size={13} />
-          {hint}
+        <span className="absolute bottom-12 left-1/2 flex max-w-[90%] -translate-x-1/2 flex-col items-center gap-0.5 rounded-md bg-black/70 px-2 py-1 text-center text-xs text-white/90">
+          <span className="flex items-center gap-1.5">
+            <MousePointer2 size={13} />
+            {hint}
+          </span>
+          {legend && !playing.kbm && <span className="text-white/70">{legend}</span>}
         </span>
       )}
     </div>

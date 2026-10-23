@@ -1,5 +1,5 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Plus, UserPlus, Volume2 } from "lucide-react";
+import { ChevronDown, HeadphoneOff, MicOff, Plus, UserPlus, Volume2 } from "lucide-react";
 import { avatarUrl, useAccountStore } from "../account/account-store";
 import { Elapsed, RoomMemberList } from "../room/RoomSidebar";
 import { useRoomStore } from "../room/room-store";
@@ -111,8 +111,8 @@ export function ServerSidebar(props: { server: Server }) {
 }
 
 /**
- * Quem está numa sala do servidor em que **não** estamos (ADR 0018): foto, nome e AO VIVO, vindos
- * da lista de membros. Na sala em que estamos aparece a lista da própria sala, mais completa.
+ * Quem está numa sala do servidor em que **não** estamos (ADR 0018): foto, nome, mudo, silenciado e
+ * AO VIVO, vindos da lista de membros. Na sala em que estamos aparece a lista da própria sala, mais completa.
  */
 function RoomOccupants(props: { server: Server; roomId: string }) {
   const people = useServersStore((s) => s.presence[props.server.id]?.[props.roomId]);
@@ -125,7 +125,11 @@ function RoomOccupants(props: { server: Server; roomId: string }) {
         return (
           <li key={p.id} className="flex items-center gap-2 rounded-md px-2 py-1 text-text-muted">
             <Avatar name={member.name} size={24} src={member.avatar ? avatarUrl(member, 64) : undefined} />
-            <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{member.name}</span>
+            {(p.muted || p.deafened) && (
+              <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
+            )}
+            {p.deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
             {p.live && <LiveBadge size="sm" />}
           </li>
         );

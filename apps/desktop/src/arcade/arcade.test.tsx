@@ -171,6 +171,25 @@ describe("jogando: o teclado e o mouse no quadro do jogo", () => {
     ]);
   });
 
+  // Regressão: o amigo não sabia que tecla virava qual botão (achou que só W, S e Enter funcionavam).
+  it("mostra as teclas que viram o controle; com o controle total, não", async () => {
+    respond({
+      arcade_keymap: {
+        keys: {
+          KeyW: "left-stick-up",
+          KeyA: "left-stick-left",
+          KeyS: "left-stick-down",
+          KeyD: "left-stick-right",
+          KeyJ: "a",
+        },
+      },
+    });
+    renderTile();
+    expect(await screen.findByText(/WASD anda · J = A/)).toBeInTheDocument();
+    act(() => useArcadeStore.setState({ playing: { hostId: ANA.id, slot: 2, kbm: true } }));
+    expect(screen.queryByText(/WASD anda/)).toBeNull();
+  });
+
   it("Esc fica com o navegador e perder o foco solta tudo", () => {
     const area = renderTile();
     fireEvent.keyDown(area, { code: "Escape" });
