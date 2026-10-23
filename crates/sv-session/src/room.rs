@@ -21,9 +21,15 @@ use tokio::runtime::Runtime;
 
 use crate::surface::lock;
 use crate::voice_mesh::VoiceMesh;
+
+mod arcade;
 use crate::{AudioPacket, KeyframeHandle, RelaySource, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
+pub use arcade::{ArcadeSeatInfo, MAX_SLOTS as MAX_ARCADE_SLOTS};
 
 /// O que a interface precisa saber da sala.
+// Os avisos são poucos (um por mudança na sala), e o maior é o `WatchReady`, uma vez por live:
+// não vale pôr o membro numa caixa só para os outros ficarem menores.
+#[allow(clippy::large_enum_variant)]
 pub enum RoomUpdate {
     /// Lista completa de membros (nós primeiro).
     Members(Vec<Member>),
@@ -54,12 +60,21 @@ pub enum RoomUpdate {
     JoinRequestClosed(String),
     /// Erro da sala (cheia, versão diferente...).
     Error(String),
-    /// A conexão com a sinalização caiu; tentando voltar para a sala.
-    Reconnecting,
-    /// Voltamos para a sala depois de uma queda.
-    Reconnected,
+    /// A conexão com a sinalização caiu (`reason`, para o registro); tentando voltar para a sala.
+    Reconnecting { reason: String },
+    /// Voltamos para a sala depois de uma queda. `resumed`: com o mesmo id, sem ninguém ver a
+    /// gente sair (ADR 0022); `false` se a sala não guardou a vaga e entramos como membro novo.
+    Reconnected { resumed: bool },
     /// Perdemos a conexão com a sinalização e não deu para voltar.
     Disconnected,
+    /// O fliperama que abrimos (ADR 0023): quem joga em cada vaga.
+    ArcadePlayers(Vec<ArcadeSeatInfo>),
+    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu.
+    ArcadeSeat { host: String, slot: u8 },
+    /// Saímos do fliperama de `host`: recusado, tirado, fechado ou caiu (`reason` vazio: saímos nós).
+    ArcadeLeft { host: String, reason: String },
+    /// Quem hospeda ligou ou desligou o nosso controle total de teclado e mouse (ADR 0024).
+    ArcadeKbm { host: String, granted: bool },
 }
 
 /// Por onde chega o stream que assistimos (ADR 0014).
@@ -144,9 +159,25 @@ impl std::fmt::Debug for RoomUpdate {
                 .finish(),
             Self::JoinRequestClosed(id) => f.debug_tuple("JoinRequestClosed").field(id).finish(),
             Self::Error(e) => f.debug_tuple("Error").field(e).finish(),
-            Self::Reconnecting => f.write_str("Reconnecting"),
-            Self::Reconnected => f.write_str("Reconnected"),
+            Self::Reconnecting { reason } => f.debug_struct("Reconnecting").field("reason", reason).finish(),
+            Self::Reconnected { resumed } => f.debug_struct("Reconnected").field("resumed", resumed).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
+            Self::ArcadePlayers(seats) => f.debug_tuple("ArcadePlayers").field(seats).finish(),
+            Self::ArcadeSeat { host, slot } => f
+                .debug_struct("ArcadeSeat")
+                .field("host", host)
+                .field("slot", slot)
+                .finish(),
+            Self::ArcadeLeft { host, reason } => f
+                .debug_struct("ArcadeLeft")
+                .field("host", host)
+                .field("reason", reason)
+                .finish(),
+            Self::ArcadeKbm { host, granted } => f
+                .debug_struct("ArcadeKbm")
+                .field("host", host)
+                .field("granted", granted)
+                .finish(),
         }
     }
 }
@@ -155,8 +186,14 @@ type OnUpdate = Arc<dyn Fn(RoomUpdate) + Send + Sync>;
 
 /// Quanto esperar a resposta de quem transmite a um pedido para assistir.
 const WATCH_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
-/// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total).
-const RECONNECT_DELAYS_S: [u64; 8] = [1, 2, 4, 8, 15, 30, 30, 30];
+/// Quanto um pedido para assistir espera o primeiro quadro do encoder, quando chega logo depois de
+/// começarmos a transmitir (menos que o `WATCH_ANSWER_TIMEOUT` de quem pediu, para ele receber o
+/// motivo em vez de "não respondeu").
+const FIRST_FRAME_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+/// Intervalos entre as tentativas de voltar para a sala depois de uma queda (~2 min no total). A
+/// primeira é na hora: a maioria das quedas é só a conexão com a sala, com a internet funcionando,
+/// e a sala guarda a nossa vaga por pouco tempo (ADR 0022).
+const RECONNECT_DELAYS_S: [u64; 9] = [0, 1, 2, 4, 8, 15, 30, 30, 30];
 
 struct Inner {
     /// Trocado quando a sala reconecta depois de uma queda.
@@ -164,6 +201,8 @@ struct Inner {
     signaling_url: String,
     /// Sessão do SquadView, para entrar de novo como conferido ao reconectar.
     session: Mutex<Option<String>>,
+    /// Token do último `welcome`: volta para a mesma vaga se a sinalização cair (ADR 0022).
+    resume: Mutex<Option<String>>,
     code: String,
     peer: Peer,
     me: Mutex<Member>,
@@ -184,6 +223,11 @@ struct Inner {
     relay_viewers: Mutex<HashMap<String, String>>,
     /// A voz com estes membros não abriu: pedindo a alguém para repassar (ADR 0020).
     pending_voice_relay: Mutex<HashMap<String, PendingVoiceRelay>>,
+    /// Pedidos para assistir que chegaram com o "AO VIVO" já anunciado, mas antes do primeiro
+    /// quadro do encoder: são respondidos quando ele sai (ou recusados depois de `FIRST_FRAME_WAIT`).
+    first_frame_waiters: Mutex<Vec<WatchWaiter>>,
+    /// O fliperama que abrimos ou em que jogamos (ADR 0023).
+    arcade: arcade::ArcadeState,
     voice: Arc<VoiceMesh>,
     runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
@@ -210,13 +254,17 @@ pub struct JoinAs {
     pub discord: Option<DiscordUser>,
     /// Sessão do SquadView (ADR 0011): a sala confere e passa a saber quem somos de verdade.
     pub session: Option<String>,
+    /// Pode criar a sala (criando uma, ou numa sala fixa de servidor). `false` (entrando por um
+    /// código ou convite): se a sala não existe, a entrada falha com "Código inválido".
+    pub create: bool,
 }
 
 impl JoinAs {
-    /// Só o nome (sem Discord), como nos testes.
+    /// Só o nome (sem Discord), como nos testes: cria a sala se ela ainda não existe.
     pub fn named(name: &str) -> Self {
         Self {
             name: name.to_owned(),
+            create: true,
             ..Self::default()
         }
     }
@@ -232,7 +280,12 @@ impl Room {
         voice: Option<VoiceSettings>,
         on_update: impl Fn(RoomUpdate) + Send + Sync + 'static,
     ) -> Result<Self, String> {
-        let JoinAs { name, discord, session } = me;
+        let JoinAs {
+            name,
+            discord,
+            session,
+            create,
+        } = me;
         let name = name.as_str();
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -256,19 +309,27 @@ impl Room {
                 discord.as_ref(),
                 session.as_deref(),
                 room_name,
+                None,
+                create,
             )
             .await?;
             // A primeira resposta diz se entramos.
             let me = match events.recv().await {
-                Some(WireEvent::Joined { you, members, room }) => (you, members, room),
+                Some(WireEvent::Joined {
+                    you,
+                    members,
+                    room,
+                    resume,
+                }) => (you, members, room, resume),
                 Some(WireEvent::Error(code)) => return Err(error_message(&code).to_owned()),
                 _ => return Err("o serviço de salas não respondeu".to_owned()),
             };
-            let (you, members, room) = me;
+            let (you, members, room, resume) = me;
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
                 session: Mutex::new(session.clone()),
+                resume: Mutex::new(resume),
                 code: code.to_owned(),
                 peer,
                 me: Mutex::new(Member {
@@ -282,6 +343,7 @@ impl Room {
                     watching: None,
                     watching_all: Vec::new(),
                     effect: None,
+                    arcade: None,
                 }),
                 room_name: Mutex::new(room),
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
@@ -293,6 +355,8 @@ impl Room {
                 relay_sources: Mutex::default(),
                 relay_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
+                first_frame_waiters: Mutex::default(),
+                arcade: arcade::ArcadeState::default(),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
@@ -383,14 +447,83 @@ impl Room {
         self.inner.publish_members();
     }
 
-    /// Paramos de transmitir: desconecta quem assistia.
+    /// Paramos de transmitir: desconecta quem assistia (e recusa quem esperava o primeiro quadro).
     pub fn stream_stopped(&self) {
+        // Sem a live não há jogo para ver: o fliperama fecha junto.
+        self.inner.arcade_close();
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
+        self.inner.flush_waiters();
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
         self.inner.send_status();
         self.inner.publish_members();
+    }
+
+    /// Abre o fliperama sobre a nossa live (ADR 0023): até `slots` membros jogam como P2 a P4.
+    /// `window` é a janela do jogo que estamos capturando (sem ela, o controle total não liga).
+    pub fn arcade_open(&self, game: Option<String>, slots: u8, window: Option<isize>) -> Result<(), String> {
+        self.inner.arcade_open(game, slots, window)
+    }
+
+    /// O nosso fliperama está aberto.
+    pub fn arcade_is_open(&self) -> bool {
+        lock(&self.inner.me).arcade.is_some()
+    }
+
+    /// Fecha o nosso fliperama (os jogadores saem e os controles virtuais somem).
+    pub fn arcade_close(&self) {
+        self.inner.arcade_close();
+    }
+
+    /// Tira `member_id` do nosso fliperama.
+    pub fn arcade_kick(&self, member_id: &str) {
+        self.inner.arcade_kick(member_id);
+    }
+
+    /// Dá o controle total de teclado e mouse a `member_id` (ou corta, com `None`), ADR 0024.
+    pub fn arcade_grant_kbm(&self, member_id: Option<&str>) -> Result<(), String> {
+        self.inner.arcade_grant_kbm(member_id)
+    }
+
+    /// Pede uma vaga no fliperama de `host_id`. A resposta chega como [`RoomUpdate::ArcadeSeat`] ou
+    /// [`RoomUpdate::ArcadeLeft`]. O vídeo vem da live dele: assista com [`Room::watch`].
+    pub fn arcade_join(&self, host_id: &str, keymap: sv_input::KeyMap) {
+        self.inner.arcade_join(host_id, keymap);
+    }
+
+    /// Sai do fliperama em que estamos jogando.
+    pub fn arcade_leave(&self) {
+        self.inner.arcade_leave();
+    }
+
+    /// Tecla do jogador (`KeyboardEvent.code`): vira controle, ou vai crua com o controle total.
+    pub fn arcade_key(&self, code: &str, down: bool) {
+        self.inner.arcade_key(code, down);
+    }
+
+    /// Movimento do mouse do jogador (ponteiro preso): analógico direito, ou cru com o controle total.
+    pub fn arcade_mouse_move(&self, dx: f32, dy: f32) {
+        self.inner.arcade_mouse_move(dx, dy);
+    }
+
+    pub fn arcade_mouse_button(&self, button: sv_input::MouseButton, down: bool) {
+        self.inner.arcade_mouse_button(button, down);
+    }
+
+    /// Rolagem do mouse (só com o controle total).
+    pub fn arcade_wheel(&self, delta: i16) {
+        self.inner.arcade_wheel(delta);
+    }
+
+    /// A janela do fliperama perdeu o foco: solta tudo.
+    pub fn arcade_release(&self) {
+        self.inner.arcade_release();
+    }
+
+    /// O jogador trocou o mapeamento do teclado.
+    pub fn arcade_set_keymap(&self, keymap: sv_input::KeyMap) {
+        self.inner.arcade_set_keymap(keymap);
     }
 
     /// Pede para assistir `member_id`. A resposta chega como [`RoomUpdate::WatchReady`] ou
@@ -492,8 +625,16 @@ impl Room {
     }
 }
 
+/// Quanto esperar o `leave` sair ao deixar a sala.
+const LEAVE_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
+
 impl Drop for Room {
     fn drop(&mut self) {
+        // Antes de o runtime parar: sem o `leave`, a sala guardaria a nossa vaga por 60 s, como se
+        // a gente tivesse caído (ADR 0022).
+        self.inner.arcade_close();
+        self.inner.arcade_leave();
+        lock(&self.inner.client).leave(LEAVE_FLUSH);
         self.inner.broadcaster.close();
         self.inner.voice.close();
         self.inner.peer.close();
@@ -506,10 +647,85 @@ fn watches(member: &Member, streamer: &str) -> bool {
 }
 
 impl Inner {
+    /// Responde um pedido para assistir. Com o "AO VIVO" já anunciado e o encoder ainda sem o
+    /// primeiro quadro (uma janela parada pode demorar a mandar um), o pedido espera esse quadro em
+    /// vez de ser recusado: antes, quem clicava nesse intervalo via "Não está transmitindo agora."
+    /// com o selo de ao vivo aceso.
+    fn answer_watch(self: &Arc<Self>, request: WatchWaiter) {
+        let live = lock(&self.keyframes).is_some();
+        let desc = *lock(&self.stream);
+        let reply = match (live, desc) {
+            (true, Some(stream)) => {
+                self.peer.allowed().allow(&request.fingerprint);
+                self.peer.punch(&request.candidates);
+                // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
+                self.peer.permit_relay(&request.candidates);
+                Signal::WatchAccept {
+                    candidates: self.peer.candidates().to_vec(),
+                    fingerprint: self.peer.fingerprint().to_owned(),
+                    stream,
+                    relay: self.peer.relay_addr(),
+                }
+            }
+            (true, None) => {
+                let key = (request.from.clone(), request.fingerprint.clone());
+                lock(&self.first_frame_waiters).push(request);
+                let weak = Arc::downgrade(self);
+                self.runtime.spawn(async move {
+                    tokio::time::sleep(FIRST_FRAME_WAIT).await;
+                    if let Some(inner) = weak.upgrade() {
+                        inner.give_up_waiter(&key.0, &key.1);
+                    }
+                });
+                return;
+            }
+            (false, _) => Signal::WatchDeny {
+                reason: NOT_LIVE.into(),
+            },
+        };
+        lock(&self.client).signal(&request.from, &reply);
+    }
+
+    /// O primeiro quadro não saiu a tempo: recusa o pedido que ainda esperava.
+    fn give_up_waiter(&self, from: &str, fingerprint: &str) {
+        let mut waiters = lock(&self.first_frame_waiters);
+        let Some(i) = waiters
+            .iter()
+            .position(|w| w.from == from && w.fingerprint == fingerprint)
+        else {
+            return;
+        };
+        let waiter = waiters.remove(i);
+        drop(waiters);
+        lock(&self.client).signal(
+            &waiter.from,
+            &Signal::WatchDeny {
+                reason: STILL_STARTING.into(),
+            },
+        );
+    }
+
+    /// O primeiro quadro saiu (ou a transmissão parou): responde quem esperava.
+    fn flush_waiters(self: &Arc<Self>) {
+        // Chamado da thread do encoder (o primeiro quadro) ou da interface: aceitar usa o runtime.
+        let _runtime = self.runtime.enter();
+        let waiters = std::mem::take(&mut *lock(&self.first_frame_waiters));
+        for waiter in waiters {
+            self.answer_watch(waiter);
+        }
+    }
+
     /// Manda para a sala o nosso estado (ao vivo, mudo, surdo, quem assistimos e o efeito de fala).
     fn send_status(&self) {
         let me = lock(&self.me).clone();
-        lock(&self.client).set_status(me.live, me.muted, me.deafened, &me.watching_all, me.effect.as_ref());
+        lock(&self.client).set_status(
+            me.live,
+            me.muted,
+            me.deafened,
+            &me.watching_all,
+            me.effect.as_ref(),
+            me.arcade.as_ref(),
+        );
     }
 
     /// Chama para a voz quem a gente deve chamar (ver `VoiceMesh::should_offer`).
@@ -561,6 +777,7 @@ impl Inner {
             watching: None,
             watching_all: Vec::new(),
             effect: None,
+            arcade: None,
         })
     }
 
@@ -714,32 +931,19 @@ impl Inner {
     }
 
     fn on_signal(self: &Arc<Self>, from: String, signal: Signal) {
+        let signal = match self.arcade_signal(&from, signal) {
+            Ok(()) => return,
+            Err(other) => other,
+        };
         match signal {
             Signal::WatchRequest {
                 candidates,
                 fingerprint,
-            } => {
-                let desc = *lock(&self.stream);
-                let ready = desc.is_some() && lock(&self.keyframes).is_some();
-                let reply = match (ready, desc) {
-                    (true, Some(stream)) => {
-                        self.peer.allowed().allow(&fingerprint);
-                        self.peer.punch(&candidates);
-                        // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
-                        self.peer.permit_relay(&candidates);
-                        Signal::WatchAccept {
-                            candidates: self.peer.candidates().to_vec(),
-                            fingerprint: self.peer.fingerprint().to_owned(),
-                            stream,
-                            relay: self.peer.relay_addr(),
-                        }
-                    }
-                    _ => Signal::WatchDeny {
-                        reason: "Não está transmitindo agora.".into(),
-                    },
-                };
-                lock(&self.client).signal(&from, &reply);
-            }
+            } => self.answer_watch(WatchWaiter {
+                from,
+                candidates,
+                fingerprint,
+            }),
             Signal::WatchAccept {
                 candidates,
                 fingerprint,
@@ -926,6 +1130,12 @@ impl Inner {
                     self.publish_voice_peers();
                 }
             }
+            // Tratados antes, em `arcade_signal`.
+            Signal::ArcadeJoin { .. }
+            | Signal::ArcadeSeat { .. }
+            | Signal::ArcadeDeny { .. }
+            | Signal::ArcadeLeave
+            | Signal::ArcadeKbm { .. } => {}
             Signal::WatchDeny { reason } => {
                 if lock(&self.pending_watch).remove(&from) {
                     (self.on_update)(RoomUpdate::WatchFailed {
@@ -968,7 +1178,8 @@ fn connect_failure(error: &sv_net::ConnectError, nat: sv_net::NatMapping, relay_
     }
 }
 
-async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
+/// Trata os eventos da sala até a conexão cair. Devolve o motivo da queda.
+async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) -> String {
     while let Some(event) = events.recv().await {
         match event {
             WireEvent::Joined { .. } => {}
@@ -990,6 +1201,7 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 lock(&inner.members).remove(&id);
                 lock(&inner.pending_voice_relay).remove(&id);
                 inner.voice.unregister(&id);
+                inner.arcade_member_left(&id);
                 inner.publish_members();
                 inner.publish_voice_peers();
             }
@@ -1004,9 +1216,10 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
                 }
             }
             WireEvent::Error(code) => (inner.on_update)(RoomUpdate::Error(error_message(&code).to_owned())),
-            WireEvent::Disconnected => return,
+            WireEvent::Disconnected(reason) => return reason,
         }
     }
+    "o cliente da sala parou".into()
 }
 
 /// Pede o endereço no repassador TURN (ADR 0014). Só serve a quem não conecta direto: quem pede
@@ -1027,18 +1240,19 @@ async fn enable_relay(inner: Arc<Inner>, credentials: sv_net::signaling::TurnCre
 /// Ouve a sala; se a sinalização cair, volta para ela e continua ouvindo.
 async fn run_session(inner: Arc<Inner>, mut events: tokio::sync::mpsc::UnboundedReceiver<WireEvent>) {
     loop {
-        handle_events(inner.clone(), events).await;
-        match reconnect(&inner).await {
+        let reason = handle_events(inner.clone(), events).await;
+        match reconnect(&inner, reason).await {
             Some(next) => events = next,
             None => return,
         }
     }
 }
 
-/// A sinalização caiu: entra de novo na mesma sala, com o mesmo nome. As conexões QUIC (quem
+/// A sinalização caiu: entra de novo na mesma sala, com o mesmo nome e, se a sala ainda guarda a
+/// vaga, com o mesmo id (ADR 0022): para os outros, a gente nunca saiu. As conexões QUIC (voz, quem
 /// assiste a gente e quem a gente assiste) não dependem dela e continuam. `None` se desistiu.
-async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedReceiver<WireEvent>> {
-    (inner.on_update)(RoomUpdate::Reconnecting);
+async fn reconnect(inner: &Arc<Inner>, reason: String) -> Option<tokio::sync::mpsc::UnboundedReceiver<WireEvent>> {
+    (inner.on_update)(RoomUpdate::Reconnecting { reason });
     for delay in RECONNECT_DELAYS_S {
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         let (name, discord, live) = {
@@ -1048,6 +1262,10 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
         let room_name = lock(&inner.room_name).clone();
         // Copia antes do `await`: um lock não pode atravessar a espera.
         let session = lock(&inner.session).clone();
+        let resume = lock(&inner.resume).clone().map(|token| sv_net::Resume {
+            id: lock(&inner.me).id.clone(),
+            token,
+        });
         let Ok((client, mut events)) = RoomClient::join(
             &inner.signaling_url,
             &inner.code,
@@ -1055,14 +1273,24 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
             discord.as_ref(),
             session.as_deref(),
             room_name.as_deref(),
+            resume.as_ref(),
+            // Já estávamos na sala: se ela esvaziou (reinício), voltamos e ela continua existindo.
+            true,
         )
         .await
         else {
             continue;
         };
         match events.recv().await {
-            Some(WireEvent::Joined { you, members, room }) => {
+            Some(WireEvent::Joined {
+                you,
+                members,
+                room,
+                resume: token,
+            }) => {
+                let resumed = resume.as_ref().is_some_and(|r| r.id == you);
                 *lock(&inner.client) = client;
+                *lock(&inner.resume) = token;
                 lock(&inner.me).id = you;
                 *lock(&inner.members) = members.into_iter().map(|m| (m.id.clone(), m)).collect();
                 if room.is_some() {
@@ -1073,7 +1301,7 @@ async fn reconnect(inner: &Arc<Inner>) -> Option<tokio::sync::mpsc::UnboundedRec
                 inner.publish_members();
                 inner.offer_voice_to_all();
                 (inner.on_update)(RoomUpdate::RoomName(lock(&inner.room_name).clone()));
-                (inner.on_update)(RoomUpdate::Reconnected);
+                (inner.on_update)(RoomUpdate::Reconnected { resumed });
                 return Some(events);
             }
             // Sala cheia ou versão diferente: não adianta insistir.
@@ -1099,6 +1327,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
                 }
                 None => accepted.conn.close(quinn::VarInt::from_u32(2), b"desconhecido"),
             }
+            continue;
+        }
+        if accepted.purpose == sv_net::Purpose::Arcade {
+            // Fliperama (ADR 0023): só de quem recebeu vaga (a fingerprint diz quem é).
+            inner.arcade_accept(accepted.conn, accepted.fingerprint);
             continue;
         }
         if accepted.purpose == sv_net::Purpose::VoiceRelay {
@@ -1140,6 +1373,18 @@ async fn accept_viewers(inner: Arc<Inner>) {
 }
 
 /// Entrega o que a prévia produz para os amigos conectados.
+/// Recusa de quem não está ao vivo.
+const NOT_LIVE: &str = "Não está transmitindo agora.";
+/// Recusa de quem está ao vivo, mas cujo encoder ainda não mandou o primeiro quadro.
+const STILL_STARTING: &str = "A transmissão ainda está começando. Tente de novo em instantes.";
+
+/// Um pedido para assistir, guardado até o primeiro quadro do encoder.
+struct WatchWaiter {
+    from: String,
+    candidates: Vec<std::net::SocketAddr>,
+    fingerprint: String,
+}
+
 struct BroadcastTap {
     inner: Arc<Inner>,
 }
@@ -1152,6 +1397,8 @@ impl StreamTap for BroadcastTap {
             fps: info.fps,
             audio: true,
         });
+        // Quem pediu para assistir antes do primeiro quadro entra agora.
+        self.inner.flush_waiters();
     }
 
     fn video(&self, seq: u32, frame: &EncodedFrame) {
@@ -1235,6 +1482,7 @@ mod tests {
             watching: None,
             watching_all: Vec::new(),
             effect: None,
+            arcade: None,
         };
         let cases: Vec<(RoomUpdate, &str)> = vec![
             (RoomUpdate::Members(vec![member.clone()]), "Members(["),
@@ -1271,8 +1519,14 @@ mod tests {
             ),
             (RoomUpdate::JoinRequestClosed("r1".into()), "JoinRequestClosed(\"r1\")"),
             (RoomUpdate::Error("cheia".into()), "Error(\"cheia\")"),
-            (RoomUpdate::Reconnecting, "Reconnecting"),
-            (RoomUpdate::Reconnected, "Reconnected"),
+            (
+                RoomUpdate::Reconnecting { reason: "caiu".into() },
+                "Reconnecting { reason: \"caiu\" }",
+            ),
+            (
+                RoomUpdate::Reconnected { resumed: true },
+                "Reconnected { resumed: true }",
+            ),
             (RoomUpdate::Disconnected, "Disconnected"),
         ];
         for (update, expected) in cases {

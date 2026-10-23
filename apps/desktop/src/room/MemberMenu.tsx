@@ -1,6 +1,7 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Eye, Pencil, UserPlus } from "lucide-react";
+import { Eye, Gamepad2, LogOut, Pencil, UserPlus } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
+import { freeSlots, useArcadeStore } from "../arcade/arcade-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { stopInsideMenu } from "../ui/overlay";
 import { MAX_VOICE_VOLUME, useVoiceStore } from "../voice/voice-store";
@@ -45,6 +46,7 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
                     Assistir a transmissão
                   </Item>
                 )}
+                <ArcadeItems member={member} />
                 <AddFriend member={member} />
                 <PeerVoice member={member} />
               </>
@@ -64,6 +66,39 @@ export function MemberMenu(props: { member: Member; isMe: boolean; onWatch?: () 
         />
       )}
     </>
+  );
+}
+
+/** Fliperama do membro (ADR 0023): entrar como jogador, ou sair se já estamos jogando. */
+function ArcadeItems(props: { member: Member }) {
+  const { member } = props;
+  const playing = useArcadeStore((s) => s.playing);
+  const join = useArcadeStore((s) => s.join);
+  const leave = useArcadeStore((s) => s.leave);
+  if (!member.arcade) return null;
+  if (playing?.hostId === member.id) {
+    return (
+      <Item icon={<LogOut size={16} />} onSelect={() => void leave()}>
+        Sair do fliperama
+      </Item>
+    );
+  }
+  const free = freeSlots(member);
+  if (free === 0) {
+    return (
+      <ContextMenu.Item
+        disabled
+        className="flex items-center justify-between rounded px-2 py-1.5 text-sm font-medium text-text-faint outline-none"
+      >
+        Fliperama cheio
+        <Gamepad2 size={16} />
+      </ContextMenu.Item>
+    );
+  }
+  return (
+    <Item icon={<Gamepad2 size={16} />} onSelect={() => void join(member)}>
+      {`Entrar no fliperama (${free} ${free === 1 ? "vaga" : "vagas"})`}
+    </Item>
   );
 }
 

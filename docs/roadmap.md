@@ -4,15 +4,15 @@ Status: ⬜ não começou · 🟨 em andamento · ✅ concluída
 
 Onde estamos (v0.10): a Fase 0 fechou. Na Fase 1, o pipeline funciona com NVIDIA e AMD (League of Legends: 59 fps transmitidos, ~5 ms de captura até o encode), mas falta medir a perda de FPS do jogo com PresentMon em mais um jogo. Na Fase 2, a conexão direta, o hole punching e os repasses de reserva já estão no ar; faltam o NACK e o teste com um amigo em outra rede, medindo a latência. Na Fase 3 já entraram o planejador e o simulador da malha, o IPv6, o repasse do vídeo e da voz por um membro da sala e a sala sem limite de pessoas; falta a sala distribuir o vídeo de verdade (faixas, simulcast, troca de pai). Na Fase 4, entraram servidores com salas fixas e presença, conversas privadas, picture in picture com controles, efeitos de fala, várias lives ao mesmo tempo, o vídeo desenhado por baixo da interface e reações e respostas nas conversas. Na Fase 5, já saíram o AMF (pelo Media Foundation) e o Rich Presence.
 
-| Fase               | Status | Entrega                                                       | Critério de saída                                                                      |
-| ------------------ | ------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 0. Fundação        | ✅     | Estrutura, docs, esteira, esqueleto do app                    | CI verde em `dev` e `main`; release `v0.1.0` com instalador                            |
-| 1. Pipeline local  | 🟨     | Captura → NVENC → decode → preview; áudio do jogo             | 1080p60 com perda de FPS no jogo < 5% e latência local < 30 ms                         |
-| 2. Transmissão 1:1 | 🟨     | QUIC, hole punching, sinalização                              | 2 PCs em redes diferentes, < 100 ms ponta a ponta                                      |
-| 3. Malha da sala   | 🟨     | Árvore de repasse, medição, pai reserva, 2 camadas, NACK/FEC  | Sala com 6+ pessoas; troca de pai < 1 s; membro fraco recebe 720p sem afetar os outros |
-| 4. App completo    | 🟨     | Salas, vários streams, configurações, login Discord, UI final | Fluxo completo sem terminal; prints reais no README                                    |
-| 5. Distribuição    | 🟨     | AMF (AMD), Rich Presence, bot de aviso                        | `v1.0.0`                                                                               |
-| 6. Futuro          | ⬜     | Discord Activity, QuickSync (Intel), gravação local           | —                                                                                      |
+| Fase               | Status | Entrega                                                        | Critério de saída                                                                      |
+| ------------------ | ------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 0. Fundação        | ✅     | Estrutura, docs, esteira, esqueleto do app                     | CI verde em `dev` e `main`; release `v0.1.0` com instalador                            |
+| 1. Pipeline local  | 🟨     | Captura → NVENC → decode → preview; áudio do jogo              | 1080p60 com perda de FPS no jogo < 5% e latência local < 30 ms                         |
+| 2. Transmissão 1:1 | 🟨     | QUIC, hole punching, sinalização                               | 2 PCs em redes diferentes, < 100 ms ponta a ponta                                      |
+| 3. Malha da sala   | 🟨     | Árvore de repasse, medição, pai reserva, 2 camadas, NACK/FEC   | Sala com 6+ pessoas; troca de pai < 1 s; membro fraco recebe 720p sem afetar os outros |
+| 4. App completo    | 🟨     | Salas, vários streams, configurações, login Discord, UI final  | Fluxo completo sem terminal; prints reais no README                                    |
+| 5. Distribuição    | 🟨     | AMF (AMD), Rich Presence, bot de aviso                         | `v1.0.0`                                                                               |
+| 6. Futuro          | ⬜     | Discord Activity, QuickSync (Intel), gravação local, Lan House | —                                                                                      |
 
 ## Fase 0 — Fundação
 
@@ -83,3 +83,11 @@ Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
 - [x] Encoder AMF (pelo Media Foundation)
 - [x] Rich Presence com botão para entrar na sala
 - [ ] Bot de aviso no servidor do Discord
+
+## Fase 6 — Futuro
+
+- [ ] Modo Lan House Fliperama: jogo local com controles remotos, P2 a P4 ([ADR 0023](adr/0023-modo-fliperama.md), [plano](fliperama.md))
+- [ ] Modo Lan House em rede: rede local virtual entre os membros da call (ADR própria)
+- [ ] Discord Activity
+- [ ] QuickSync (Intel)
+- [ ] Gravação local

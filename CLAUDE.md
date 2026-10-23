@@ -40,6 +40,7 @@ Em out/2026 a `target/` chegou a **133 GB** (117 GB em `target/debug`, 11,6 GB e
 | `crates/sv-media`    | Decode D3D11VA, render, Opus          |
 | `crates/sv-net`      | QUIC P2P, hole punching               |
 | `crates/sv-mesh`     | Árvore de repasse (lógica pura)       |
+| `crates/sv-input`    | Controles do fliperama (ViGEmBus)     |
 | `apps/desktop`       | Tauri v2 + React 19 + Tailwind v4     |
 | `services/signaling` | Cloudflare Worker de sinalização      |
 

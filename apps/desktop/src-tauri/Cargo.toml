@@ -26,6 +26,7 @@ sv-gpu.workspace = true
 sv-media.workspace = true
 sv-net.workspace = true
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+sv-input.workspace = true
 sv-session.workspace = true
 tauri = { version = "2.12.4", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-process = "2.4.0"

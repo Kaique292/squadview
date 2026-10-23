@@ -53,6 +53,20 @@ export interface Member {
   watchingAll?: PeerId[];
   /** Efeito de fala escolhido, ou `null` (o anel padrão). Ausente até o primeiro `status` dele. */
   effect?: SpeakingEffect | null;
+  /** Fliperama aberto por este membro (ADR 0023), ou `null`. Ausente até o primeiro `status` dele. */
+  arcade?: Arcade | null;
+}
+
+/** Quantos jogadores um fliperama aceita além de quem hospeda (P2 a P4). */
+export const MAX_ARCADE_SLOTS = 3;
+/** Maior nome de jogo mostrado. */
+export const MAX_GAME_NAME = 64;
+
+/** Fliperama aberto (ADR 0023): o jogo, quantas vagas e quem já está jogando. */
+export interface Arcade {
+  game: string | null;
+  slots: number;
+  players: PeerId[];
 }
 
 /** Quantas lives um membro pode anunciar que assiste ao mesmo tempo. */
@@ -67,6 +81,19 @@ export type ClientMessage =
       discord: DiscordUser | null;
       /** Sessão do SquadView (ADR 0011): o servidor confere e o id do Discord passa a valer. */
       session: string | null;
+      /** Voltando de uma queda (ADR 0022): o id e o token do `welcome` anterior. */
+      resume: Resume | null;
+      /**
+       * O app sabe voltar para a vaga depois de uma queda (ADR 0022). Só para esses a sala guarda a
+       * vaga: um app antigo volta com outro id, e a vaga guardada viraria um "clone" dele.
+       */
+      resumable: boolean;
+      /**
+       * `false`: entrando por um código (digitado ou de convite), a sala precisa já existir; se não
+       * existir, o servidor responde `room-not-found`. `true`: criando a sala (ou numa sala fixa de
+       * servidor). `null`: app antigo, que não manda; a sala é criada como antes.
+       */
+      create: boolean | null;
     }
   | { type: "room"; name: string }
   /** `discord` ausente: continua a mesma conta; `null`: desvinculou. */
@@ -84,6 +111,8 @@ export type ClientMessage =
       /** Todas as lives que estamos assistindo (ADR 0019); sem ele, só o `watching`. */
       watchingAll: PeerId[];
       effect: SpeakingEffect | null;
+      /** Fliperama aberto (ADR 0023); `null` fechado ou fora do formato. */
+      arcade: Arcade | null;
     }
   | { type: "signal"; to: PeerId; payload: Record<string, unknown> }
   /** Resposta a um pedido de entrada de um amigo de alguém da sala. */
@@ -95,10 +124,24 @@ export type ClientMessage =
 /** `room-full` não é mais mandado: a sala não tem limite de pessoas (ADR 0012). Fica no contrato
  * porque os apps ainda entendem o código de um Worker antigo. */
 export type ErrorCode =
-  "room-full" | "invalid-message" | "version-mismatch" | "not-joined" | "unknown-peer" | "rate-limited";
+  | "room-full"
+  | "invalid-message"
+  | "version-mismatch"
+  | "not-joined"
+  | "unknown-peer"
+  | "rate-limited"
+  /** Entrando por um código (`create: false`) numa sala que não existe. */
+  | "room-not-found";
+
+/** Volta para a mesma vaga depois de uma queda (ADR 0022). */
+export interface Resume {
+  id: PeerId;
+  token: string;
+}
 
 export type ServerMessage =
-  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null }
+  /** `resume`: token para voltar com o mesmo `you` se a conexão cair (ADR 0022). */
+  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null; resume: string }
   | { type: "room-updated"; name: string }
   | { type: "member-joined"; member: Member }
   | { type: "member-updated"; member: Member }
@@ -128,6 +171,8 @@ export function cleanName(value: unknown): string | null {
 }
 
 export const PEER_ID_PATTERN = /^[0-9a-f]{16}$/;
+/** Token de retomada: 32 caracteres hexadecimais. */
+export const RESUME_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 /** Id de um pedido de entrada (como o peerId). */
 export const REQUEST_ID_PATTERN = PEER_ID_PATTERN;
 /** Snowflake do Discord. */
@@ -148,6 +193,27 @@ function parseEffect(value: unknown): SpeakingEffect | null {
 }
 
 /**
+ * Lê o campo `arcade` do `status`. Fora do formato vira `null` (fliperama fechado para os outros):
+ * como o efeito de fala, um campo estranho nunca derruba a conexão.
+ */
+function parseArcade(value: unknown): Arcade | null {
+  if (!isPlainObject(value)) return null;
+  const { slots, players } = value;
+  if (typeof slots !== "number" || !Number.isInteger(slots) || slots < 1 || slots > MAX_ARCADE_SLOTS) return null;
+  if (
+    !Array.isArray(players) ||
+    players.length > MAX_ARCADE_SLOTS ||
+    !players.every((p) => typeof p === "string" && PEER_ID_PATTERN.test(p))
+  )
+    return null;
+  const game =
+    typeof value.game === "string" && !/[\u0000-\u001f\u007f-\u009f]/.test(value.game)
+      ? [...value.game.trim()].slice(0, MAX_GAME_NAME).join("") || null
+      : null;
+  return { game, slots, players: [...new Set(players as string[])] };
+}
+
+/**
  * Lê o campo `discord`: `undefined` se veio ausente, `null` se veio nulo, a conta se for válida.
  * Devolve `false` quando o campo existe mas não segue o formato.
  */
@@ -158,6 +224,14 @@ function parseDiscord(value: unknown): DiscordUser | null | undefined | false {
   const avatar = value.avatar ?? null;
   if (avatar !== null && (typeof avatar !== "string" || !DISCORD_AVATAR_PATTERN.test(avatar))) return false;
   return { id: value.id, avatar };
+}
+
+/** Lê o campo `resume` do `join`: `null` se ausente, `false` se fora do formato. */
+function parseResume(value: unknown): Resume | null | false {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value) || typeof value.id !== "string" || typeof value.token !== "string") return false;
+  if (!PEER_ID_PATTERN.test(value.id) || !RESUME_TOKEN_PATTERN.test(value.token)) return false;
+  return { id: value.id, token: value.token };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -189,7 +263,25 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (discord === false) return null;
       const session = data.session === undefined || data.session === null ? null : data.session;
       if (session !== null && (typeof session !== "string" || session.length > 512)) return null;
-      return { type: "join", name, protocol: data.protocol, room, discord: discord ?? null, session };
+      // Retomada: opcional (apps até o 0.10 não mandam).
+      const resume = parseResume(data.resume);
+      if (resume === false) return null;
+      if (data.resumable !== undefined && typeof data.resumable !== "boolean") return null;
+      const resumable = data.resumable === true || resume !== null;
+      // Criar ou só entrar: opcional (apps até a 0.10 não mandam).
+      if (data.create !== undefined && data.create !== null && typeof data.create !== "boolean") return null;
+      const create = typeof data.create === "boolean" ? data.create : null;
+      return {
+        type: "join",
+        name,
+        protocol: data.protocol,
+        room,
+        discord: discord ?? null,
+        session,
+        resume,
+        resumable,
+        create,
+      };
     }
     case "room": {
       const name = cleanName(data.name);
@@ -223,7 +315,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const watching = first ?? watchingAll[0] ?? null;
       // effect também é opcional (apps até o 0.5.0 não mandam).
       const effect = parseEffect(data.effect);
-      return { type: "status", live: data.live, muted, deafened, watching, watchingAll, effect };
+      // arcade também é opcional (apps até a 0.10 não mandam).
+      const arcade = parseArcade(data.arcade);
+      return { type: "status", live: data.live, muted, deafened, watching, watchingAll, effect, arcade };
     }
     case "signal": {
       if (typeof data.to !== "string" || !PEER_ID_PATTERN.test(data.to) || !isPlainObject(data.payload)) return null;

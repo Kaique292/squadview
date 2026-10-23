@@ -4099,6 +4099,7 @@ dependencies = [
  "sv-core",
  "sv-encode",
  "sv-gpu",
+ "sv-input",
  "sv-media",
  "sv-net",
  "sv-session",
@@ -4205,6 +4206,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sv-input"
+version = "0.10.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vigem-rust",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "sv-media"
 version = "0.10.0"
 dependencies = [
@@ -4257,6 +4269,7 @@ dependencies = [
  "sv-core",
  "sv-encode",
  "sv-gpu",
+ "sv-input",
  "sv-media",
  "sv-net",
  "tokio",
@@ -5322,6 +5335,17 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vigem-rust"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05df9a77849f4c0b86c9d6089357a22b4915fe7b437da036a1c148cc2510b502"
+dependencies = [
+ "bitflags 2.13.2",
+ "thiserror 2.0.21",
+ "windows",
+]
 
 [[package]]
 name = "vswhom"

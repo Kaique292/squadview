@@ -108,6 +108,9 @@ pub async fn room_join<R: Runtime>(
     voice: Option<crate::voice::VoicePrefs>,
     effect: Option<SpeakingEffect>,
 ) -> Result<RoomInfo, String> {
+    // Só pode criar a sala quem está criando uma (sem código) ou entrando numa sala fixa de
+    // servidor (que vem com o nome). Pelo código digitado ou de convite, a sala precisa existir.
+    let create = code.as_deref().is_none_or(|c| c.trim().is_empty()) || room_name.is_some();
     let code = match code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         Some(c) => sv_net::signaling::normalize_room_code(c).ok_or("Código inválido: são 6 letras e números.")?,
         None => sv_net::signaling::new_room_code(),
@@ -125,7 +128,12 @@ pub async fn room_join<R: Runtime>(
         let joined = Room::join(
             &join_url,
             &join_code,
-            JoinAs { name, discord, session },
+            JoinAs {
+                name,
+                discord,
+                session,
+                create,
+            },
             room_name.as_deref(),
             settings,
             move |update| on_update(&events_app, update),
@@ -510,16 +518,20 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         RoomUpdate::Error(message) => {
             let _ = app.emit(ROOM_ERROR_EVENT, message);
         }
-        RoomUpdate::Reconnecting => {
+        RoomUpdate::Reconnecting { reason } => {
             app.state::<Diagnostics>()
-                .write("room-connection", &json!({ "state": "reconnecting" }));
+                .write("room-connection", &json!({ "state": "reconnecting", "reason": reason }));
             let _ = app.emit(ROOM_CONNECTION_EVENT, "reconnecting");
         }
-        RoomUpdate::Reconnected => {
+        RoomUpdate::Reconnected { resumed } => {
             app.state::<Diagnostics>()
-                .write("room-connection", &json!({ "state": "connected" }));
+                .write("room-connection", &json!({ "state": "connected", "resumed": resumed }));
             let _ = app.emit(ROOM_CONNECTION_EVENT, "connected");
         }
+        update @ (RoomUpdate::ArcadePlayers(_)
+        | RoomUpdate::ArcadeSeat { .. }
+        | RoomUpdate::ArcadeLeft { .. }
+        | RoomUpdate::ArcadeKbm { .. }) => crate::arcade::emit(app, update),
         RoomUpdate::Disconnected => {
             app.state::<Diagnostics>()
                 .write("room-connection", &json!({ "state": "lost" }));

@@ -27,6 +27,15 @@ export interface Member {
   watchingAll?: string[];
   /** Efeito de fala escolhido (ADR 0015). Ausente em apps até o 0.5.0; use `useMemberEffect`. */
   effect?: unknown;
+  /** Fliperama aberto por este membro (ADR 0023): o jogo, as vagas e quem joga. */
+  arcade?: ArcadeInfo | null;
+}
+
+/** Espelha `sv_net::Arcade`. */
+export interface ArcadeInfo {
+  game: string | null;
+  slots: number;
+  players: string[];
 }
 
 /** O que vai para a sala da nossa conta do Discord: só o id e o hash da foto. */
@@ -300,6 +309,11 @@ function syncPip(memberId: string) {
     .catch(() => {});
 }
 
+/** Quanto a volta para a sala pode demorar antes de avisar da queda. */
+export const RECONNECT_NOTICE_MS = 3_000;
+/** O aviso de queda agendado, e se ele chegou a aparecer (só aí avisa da volta). */
+const reconnectNotice: { timer?: ReturnType<typeof setTimeout>; shown: boolean } = { shown: false };
+
 /** Liga os eventos da sala vindos do Rust ao store. Chamar uma vez, ao abrir o app. */
 export async function listenToRoomEvents() {
   const offs = await Promise.all([
@@ -312,12 +326,19 @@ export async function listenToRoomEvents() {
     }),
     listen<string | null>("room-name", (e) => useRoomStore.setState({ roomName: e.payload })),
     listen<"reconnecting" | "connected" | "lost">("room-connection", (e) => {
+      const warned = reconnectNotice.shown;
+      clearTimeout(reconnectNotice.timer);
+      reconnectNotice.shown = false;
       if (e.payload === "reconnecting") {
         useRoomStore.setState({ reconnecting: true });
-        toast.warning("A conexão com a sala caiu. Tentando voltar…", "Reconectando");
+        // Quase toda queda volta em ~1 s sem ninguém notar (ADR 0022): só avisa se demorar.
+        reconnectNotice.timer = setTimeout(() => {
+          reconnectNotice.shown = true;
+          toast.warning("A conexão com a sala caiu. Tentando voltar…", "Reconectando");
+        }, RECONNECT_NOTICE_MS);
       } else if (e.payload === "connected") {
         useRoomStore.setState({ reconnecting: false });
-        toast.success("De volta à sala.", "Reconectado");
+        if (warned) toast.success("De volta à sala.", "Reconectado");
       } else {
         useRoomStore.setState({
           code: null,

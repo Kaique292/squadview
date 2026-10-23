@@ -48,6 +48,7 @@ flowchart LR
 | `sv-media`           | Decode por GPU, renderização, áudio Opus                              | 1     |
 | `sv-net`             | QUIC (quinn), hole punching, enquadramento de pacotes                 | 2     |
 | `sv-mesh`            | Árvore de repasse, medição, troca de pai — lógica pura e testável     | 3     |
+| `sv-input`           | Controles do fliperama: XInput e controles virtuais (ViGEmBus)        | 6     |
 | `apps/desktop`       | App Tauri: janela, interface React, comandos que ligam a UI ao núcleo | 0 → 4 |
 | `services/signaling` | Worker da Cloudflare: cria salas e troca candidatos de endereço       | 2     |
 

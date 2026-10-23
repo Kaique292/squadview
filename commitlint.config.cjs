@@ -39,6 +39,7 @@ module.exports = {
         "media",
         "net",
         "mesh",
+        "input",
         "signal",
         "ui",
         "app",

@@ -61,6 +61,34 @@ describe("mensagens do cliente", () => {
     }
   });
 
+  it("create: criar, só entrar ou ausente (app antigo); outro tipo é recusado", () => {
+    const parse = (extra: object) =>
+      parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, ...extra }));
+    expect(parse({})).toMatchObject({ create: null });
+    expect(parse({ create: true })).toMatchObject({ create: true });
+    expect(parse({ create: false })).toMatchObject({ create: false });
+    expect(parse({ create: "não" })).toBeNull();
+  });
+
+  it("resumable: só o app novo manda; quem manda resume também sabe voltar", () => {
+    const parse = (extra: object) =>
+      parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, ...extra }));
+    expect(parse({})).toMatchObject({ resumable: false });
+    expect(parse({ resumable: true })).toMatchObject({ resumable: true });
+    expect(parse({ resume: { id: "0123456789abcdef", token: "0".repeat(32) } })).toMatchObject({ resumable: true });
+    expect(parse({ resumable: "sim" })).toBeNull();
+  });
+
+  it("lê o resume do join e recusa um fora do formato", () => {
+    const resume = { id: "0123456789abcdef", token: "0123456789abcdef0123456789abcdef" };
+    expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, resume }))).toMatchObject({
+      resume,
+    });
+    for (const bad of [{ id: resume.id }, { ...resume, token: "curto" }, { ...resume, id: "x" }, "texto"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "join", name: "Ana", protocol: 1, resume: bad }))).toBeNull();
+    }
+  });
+
   it("lê join, status, signal e leave válidos", () => {
     expect(parseClientMessage('{"type":"join","name":" Ana ","protocol":1}')).toEqual({
       type: "join",
@@ -69,6 +97,9 @@ describe("mensagens do cliente", () => {
       room: null,
       discord: null,
       session: null,
+      resume: null,
+      resumable: false,
+      create: null,
     });
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":" Galera do LoL "}')).toEqual({
       type: "join",
@@ -77,6 +108,9 @@ describe("mensagens do cliente", () => {
       room: "Galera do LoL",
       discord: null,
       session: null,
+      resume: null,
+      resumable: false,
+      create: null,
     });
     expect(parseClientMessage('{"type":"room","name":"Squad"}')).toEqual({ type: "room", name: "Squad" });
     expect(parseClientMessage('{"type":"rename","name":"K.A"}')).toEqual({ type: "rename", name: "K.A" });
@@ -89,6 +123,7 @@ describe("mensagens do cliente", () => {
       watching: null,
       watchingAll: [],
       effect: null,
+      arcade: null,
     });
     expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
       type: "status",
@@ -98,6 +133,7 @@ describe("mensagens do cliente", () => {
       watching: null,
       watchingAll: [],
       effect: null,
+      arcade: null,
     });
     // Quem estamos assistindo (para quem transmite ver quem assiste).
     expect(parseClientMessage(`{"type":"status","live":false,"watching":"${PEER}"}`)).toMatchObject({
@@ -143,6 +179,30 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();
+  });
+
+  it("lê o fliperama do status e troca o fora do formato por fechado", () => {
+    const status = (arcade: unknown) => parseClientMessage(JSON.stringify({ type: "status", live: true, arcade }));
+    const id = "0123456789abcdef";
+    expect(status({ game: "  Bomberman  ", slots: 3, players: [id, id] })).toMatchObject({
+      arcade: { game: "Bomberman", slots: 3, players: [id] },
+    });
+    expect(status({ slots: 1, players: [] })).toMatchObject({ arcade: { game: null, slots: 1, players: [] } });
+    expect(status({ game: "x".repeat(100), slots: 2, players: [] })).toMatchObject({
+      arcade: { game: "x".repeat(64) },
+    });
+    for (const bad of [
+      null,
+      "aberto",
+      { slots: 0, players: [] },
+      { slots: 4, players: [] },
+      { slots: 2.5, players: [] },
+      { slots: 2, players: ["não-é-id"] },
+      { slots: 3, players: [id, "1123456789abcdef", "2123456789abcdef", "3123456789abcdef"] },
+    ]) {
+      expect(status(bad)).toMatchObject({ arcade: null });
+    }
+    expect(status({ game: "a\u0007b", slots: 1, players: [] })).toMatchObject({ arcade: { game: null } });
   });
 
   it("lê o efeito de fala do status e troca o inválido ou desconhecido pelo anel padrão", () => {

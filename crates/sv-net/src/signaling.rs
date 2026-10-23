@@ -94,6 +94,32 @@ pub struct Member {
     /// Efeito de fala escolhido (`None`: o anel padrão). Ausente no Worker antigo e em apps até o 0.5.0.
     #[serde(default)]
     pub effect: Option<SpeakingEffect>,
+    /// Fliperama aberto por este membro (ADR 0023). Ausente no Worker antigo e em apps até a 0.10.
+    #[serde(default)]
+    pub arcade: Option<Arcade>,
+}
+
+/// Fliperama aberto (ADR 0023): o jogo, quantas vagas e quem já joga (ids dos membros).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Arcade {
+    pub game: Option<String>,
+    pub slots: u8,
+    pub players: Vec<String>,
+}
+
+/// Vaga para voltar à sala com o mesmo id depois de uma queda (ADR 0022): o nosso id e o token
+/// que veio no `welcome`.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct Resume {
+    pub id: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for Resume {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // O token não vai para o registro.
+        f.debug_struct("Resume").field("id", &self.id).finish_non_exhaustive()
+    }
 }
 
 /// Mensagens que mandamos.
@@ -111,6 +137,14 @@ enum Outgoing<'a> {
         /// Sessão do SquadView (ADR 0011): o Worker confere e o membro conta como conferido.
         #[serde(skip_serializing_if = "Option::is_none")]
         session: Option<&'a str>,
+        /// Voltando de uma queda: pede a mesma vaga (ADR 0022).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resume: Option<&'a Resume>,
+        /// Sabemos voltar para a vaga: só assim a sala a guarda quando a conexão cai (ADR 0022).
+        resumable: bool,
+        /// `false`: só entrar; se a sala não existe, o Worker responde `room-not-found` em vez de
+        /// criar uma vazia.
+        create: bool,
     },
     Status {
         live: bool,
@@ -123,6 +157,8 @@ enum Outgoing<'a> {
         watching_all: &'a [String],
         /// O efeito de fala que escolhemos (`None`: o anel padrão).
         effect: Option<&'a SpeakingEffect>,
+        /// O fliperama que abrimos (`None`: fechado).
+        arcade: Option<&'a Arcade>,
     },
     /// Renomeia a sala.
     Room {
@@ -160,6 +196,9 @@ enum Incoming {
         /// Ausente no Worker antigo.
         #[serde(default)]
         room: Option<String>,
+        /// Token para voltar com o mesmo id (ADR 0022). Ausente no Worker antigo.
+        #[serde(default)]
+        resume: Option<String>,
     },
     RoomUpdated {
         name: String,
@@ -224,6 +263,8 @@ pub enum RoomEvent {
         members: Vec<Member>,
         /// Nome da sala (`None`: sem nome, mostra o código).
         room: Option<String>,
+        /// Token para voltar com o mesmo `you` se a conexão cair (`None`: Worker antigo).
+        resume: Option<String>,
     },
     /// Alguém renomeou a sala.
     RoomRenamed(String),
@@ -245,14 +286,24 @@ pub enum RoomEvent {
     Turn(TurnCredentials),
     /// Erro vindo do Worker (ex.: `room-full`, `version-mismatch`).
     Error(String),
-    /// A conexão com a sinalização caiu ou foi fechada.
-    Disconnected,
+    /// A conexão com a sinalização caiu ou foi fechada. O texto diz o motivo, para o registro.
+    Disconnected(String),
 }
 
 impl RoomEvent {
     fn from_incoming(msg: Incoming) -> Option<Self> {
         Some(match msg {
-            Incoming::Welcome { you, members, room } => Self::Joined { you, members, room },
+            Incoming::Welcome {
+                you,
+                members,
+                room,
+                resume,
+            } => Self::Joined {
+                you,
+                members,
+                room,
+                resume,
+            },
             Incoming::RoomUpdated { name } => Self::RoomRenamed(name),
             Incoming::MemberJoined { member } => Self::MemberJoined(member),
             Incoming::MemberUpdated { member } => Self::MemberUpdated(member),
@@ -278,6 +329,7 @@ pub fn error_message(code: &str) -> &'static str {
         "version-mismatch" => "Alguém na sala está com outra versão do SquadView. Atualizem o app.",
         "rate-limited" => "Muitas mensagens em pouco tempo. Tente entrar de novo.",
         "unknown-peer" => "Esse membro já saiu da sala.",
+        "room-not-found" => "Código inválido: essa sala não existe.",
         _ => "A sala recusou a conexão.",
     }
 }
@@ -286,12 +338,17 @@ pub fn error_message(code: &str) -> &'static str {
 #[derive(Debug)]
 pub struct RoomClient {
     outgoing: mpsc::UnboundedSender<Message>,
+    /// Avisa (ou fecha) quando a tarefa que escreve na conexão termina: o `leave` já foi.
+    flushed: std::sync::mpsc::Receiver<()>,
 }
 
 impl RoomClient {
     /// Entra na sala `code` em `base_url` (ex.: `wss://squadview-signaling.exemplo.workers.dev`).
-    /// `room` dá nome à sala, se formos os primeiros a entrar. Os eventos chegam por `events`.
-    /// Precisa rodar dentro de um runtime tokio.
+    /// `room` dá nome à sala, se formos os primeiros a entrar; `resume` pede a vaga de antes de uma
+    /// queda (ADR 0022); sem `create`, a sala precisa já existir (senão vem o erro `room-not-found`).
+    /// Os eventos chegam por `events`. Precisa rodar dentro de um runtime tokio.
+    // Cada argumento é um campo do `join` do contrato (PROTOCOL.md), na mesma ordem.
+    #[allow(clippy::too_many_arguments)]
     pub async fn join(
         base_url: &str,
         code: &str,
@@ -299,6 +356,8 @@ impl RoomClient {
         discord: Option<&DiscordUser>,
         session: Option<&str>,
         room: Option<&str>,
+        resume: Option<&Resume>,
+        create: bool,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>), String> {
         if !is_valid_room_code(code) {
             return Err("Código de sala inválido.".into());
@@ -309,6 +368,7 @@ impl RoomClient {
             .map_err(|e| format!("não deu para alcançar o serviço de salas: {e}"))?;
         let (mut write, mut read) = ws.split();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+        let (flushed_tx, flushed) = std::sync::mpsc::channel();
         let (ev_tx, ev_rx) = mpsc::unbounded_channel::<RoomEvent>();
 
         let join = serde_json::to_string(&Outgoing::Join {
@@ -317,6 +377,9 @@ impl RoomClient {
             room,
             discord,
             session,
+            resume,
+            resumable: true,
+            create,
         })
         .expect("json");
         write
@@ -341,11 +404,20 @@ impl RoomClient {
                 }
             }
             let _ = write.close().await;
+            let _ = flushed_tx.send(());
         });
         tokio::spawn(async move {
             // Qualquer coisa que chega (mensagem ou pong) prova que a conexão está viva.
-            while let Ok(Some(Ok(msg))) = tokio::time::timeout(SILENCE_LIMIT, read.next()).await {
-                let Message::Text(text) = msg else { continue };
+            let reason = loop {
+                let msg = match tokio::time::timeout(SILENCE_LIMIT, read.next()).await {
+                    Ok(Some(Ok(msg))) => msg,
+                    other => break disconnect_reason(other),
+                };
+                let text = match msg {
+                    Message::Text(text) => text,
+                    Message::Close(frame) => break close_reason(frame.as_ref()),
+                    _ => continue,
+                };
                 let Ok(incoming) = serde_json::from_str::<Incoming>(&text) else {
                     continue;
                 };
@@ -354,15 +426,21 @@ impl RoomClient {
                 {
                     return;
                 }
-            }
-            let _ = ev_tx.send(RoomEvent::Disconnected);
+            };
+            let _ = ev_tx.send(RoomEvent::Disconnected(reason));
         });
-        Ok((Self { outgoing: out_tx }, ev_rx))
+        Ok((
+            Self {
+                outgoing: out_tx,
+                flushed,
+            },
+            ev_rx,
+        ))
     }
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.set_status(live, false, false, &[], None);
+        self.set_status(live, false, false, &[], None, None);
     }
 
     /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido, quem assistimos e
@@ -374,6 +452,7 @@ impl RoomClient {
         deafened: bool,
         watching: &[String],
         effect: Option<&SpeakingEffect>,
+        arcade: Option<&Arcade>,
     ) {
         self.send(&Outgoing::Status {
             live,
@@ -382,6 +461,7 @@ impl RoomClient {
             watching: watching.first().map(String::as_str),
             watching_all: watching,
             effect,
+            arcade,
         });
     }
 
@@ -424,10 +504,42 @@ impl RoomClient {
     }
 }
 
+impl RoomClient {
+    /// Sai da sala e espera (até `wait`) o `leave` sair, para a sala tirar a gente na hora em vez
+    /// de guardar a vaga (ADR 0022). Bloqueia: chamar fora das tarefas do runtime, antes de pará-lo
+    /// (com o runtime parado, a conexão só fecha, sem `leave`).
+    pub fn leave(&self, wait: std::time::Duration) {
+        self.send(&Outgoing::Leave);
+        let _ = self.outgoing.send(Message::Close(None));
+        let _ = self.flushed.recv_timeout(wait);
+    }
+}
+
 impl Drop for RoomClient {
     fn drop(&mut self) {
         self.send(&Outgoing::Leave);
         let _ = self.outgoing.send(Message::Close(None));
+    }
+}
+
+/// Por que a leitura parou: silêncio, fim da conexão sem aviso ou erro.
+fn disconnect_reason<T>(
+    read: Result<Option<Result<T, tokio_tungstenite::tungstenite::Error>>, tokio::time::error::Elapsed>,
+) -> String {
+    match read {
+        Err(_) => format!("sem resposta da sala por {} s", SILENCE_LIMIT.as_secs()),
+        Ok(None) => "a conexão terminou sem aviso".into(),
+        Ok(Some(Err(e))) => format!("erro na conexão: {e}"),
+        Ok(Some(Ok(_))) => unreachable!("mensagem não é motivo de queda"),
+    }
+}
+
+/// O motivo que a sala (ou a Cloudflare no caminho) deu ao fechar.
+fn close_reason(frame: Option<&tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> String {
+    match frame {
+        Some(f) if f.reason.is_empty() => format!("a sala fechou a conexão ({})", u16::from(f.code)),
+        Some(f) => format!("a sala fechou a conexão ({}: {})", u16::from(f.code), f.reason),
+        None => "a sala fechou a conexão".into(),
     }
 }
 
@@ -469,19 +581,51 @@ mod tests {
             room: None,
             discord: None,
             session: None,
+            resume: None,
+            resumable: true,
+            create: true,
         })
         .unwrap();
         // Sem nome de sala, igual ao app 0.1.0 (o Worker antigo também aceita).
-        assert_eq!(join, r#"{"type":"join","name":"Ana","protocol":1}"#);
+        assert_eq!(
+            join,
+            r#"{"type":"join","name":"Ana","protocol":1,"resumable":true,"create":true}"#
+        );
         let creating = serde_json::to_string(&Outgoing::Join {
             name: "Ana",
             protocol: 1,
             room: Some("Galera"),
             discord: None,
             session: None,
+            resume: None,
+            resumable: true,
+            create: true,
         })
         .unwrap();
-        assert_eq!(creating, r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera"}"#);
+        assert_eq!(
+            creating,
+            r#"{"type":"join","name":"Ana","protocol":1,"room":"Galera","resumable":true,"create":true}"#
+        );
+        let back = Resume {
+            id: "aa".into(),
+            token: "ff".into(),
+        };
+        let resuming = serde_json::to_string(&Outgoing::Join {
+            name: "Ana",
+            protocol: 1,
+            room: None,
+            discord: None,
+            session: None,
+            resume: Some(&back),
+            resumable: true,
+            create: true,
+        })
+        .unwrap();
+        assert_eq!(
+            resuming,
+            r#"{"type":"join","name":"Ana","protocol":1,"resume":{"id":"aa","token":"ff"},"resumable":true,"create":true}"#
+        );
+        assert!(!format!("{back:?}").contains("ff"), "o token não vai para o registro");
         assert_eq!(
             serde_json::to_string(&Outgoing::Room { name: "Squad" }).unwrap(),
             r#"{"type":"room","name":"Squad"}"#
@@ -522,11 +666,12 @@ mod tests {
             watching: None,
             watching_all: &[],
             effect: None,
+            arcade: None,
         })
         .unwrap();
         assert_eq!(
             status,
-            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"watchingAll":[],"effect":null}"#
+            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"watchingAll":[],"effect":null,"arcade":null}"#
         );
         let watching = serde_json::to_string(&Outgoing::Status {
             live: false,
@@ -535,6 +680,7 @@ mod tests {
             watching: Some("0123456789abcdef"),
             watching_all: &["0123456789abcdef".to_owned(), "fedcba9876543210".to_owned()],
             effect: None,
+            arcade: None,
         })
         .unwrap();
         assert!(watching.contains(r#""watching":"0123456789abcdef""#), "{watching}");
@@ -550,11 +696,31 @@ mod tests {
             watching: None,
             watching_all: &[],
             effect: Some(&ondas),
+            arcade: None,
         })
         .unwrap();
         assert!(
-            effect.ends_with(r##""effect":{"kind":"waves","color":"#ff8800"}}"##),
+            effect.ends_with(r##""effect":{"kind":"waves","color":"#ff8800"},"arcade":null}"##),
             "{effect}"
+        );
+        let fliperama = Arcade {
+            game: Some("Bomberman".into()),
+            slots: 3,
+            players: vec!["0123456789abcdef".into()],
+        };
+        let arcade = serde_json::to_string(&Outgoing::Status {
+            live: true,
+            muted: false,
+            deafened: false,
+            watching: None,
+            watching_all: &[],
+            effect: None,
+            arcade: Some(&fliperama),
+        })
+        .unwrap();
+        assert!(
+            arcade.ends_with(r#""arcade":{"game":"Bomberman","slots":3,"players":["0123456789abcdef"]}}"#),
+            "{arcade}"
         );
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
@@ -614,16 +780,19 @@ mod tests {
                     watching: None,
                     watching_all: Vec::new(),
                     effect: None,
+                    arcade: None,
                 }],
                 room: None,
+                resume: None,
             })
         );
         assert_eq!(
-            parse(r#"{"type":"welcome","you":"aa","members":[],"room":"Galera"}"#),
+            parse(r#"{"type":"welcome","you":"aa","members":[],"room":"Galera","resume":"ff"}"#),
             Some(RoomEvent::Joined {
                 you: "aa".into(),
                 members: vec![],
                 room: Some("Galera".into()),
+                resume: Some("ff".into()),
             })
         );
         assert_eq!(
@@ -697,6 +866,10 @@ mod tests {
     #[test]
     fn erros_tem_mensagem_para_o_usuario() {
         assert!(error_message("room-full").contains("cheia"));
+        assert_eq!(
+            error_message("room-not-found"),
+            "Código inválido: essa sala não existe."
+        );
         assert!(error_message("qualquer").contains("recusou"));
     }
 }

@@ -4,6 +4,7 @@ import { useDmStore } from "./dm/dm-store";
 import { FriendNotices } from "./friends/FriendNotices";
 import { FriendsPage } from "./friends/FriendsPage";
 import { useFriendsStore } from "./friends/friends-store";
+import { ArcadeHostDialog } from "./arcade/ArcadeHostDialog";
 import { RoomDialog } from "./room/RoomDialog";
 import { RoomSidebar, UserDock } from "./room/RoomSidebar";
 import { ServerHome } from "./servers/ServerHome";
@@ -51,6 +52,7 @@ export function App() {
           página (ADR 0021). */}
       <Backdrop className={fullscreen ? "bg-surface-2" : "bg-glass-0"} />
       <InvitePrompt />
+      <ArcadeHostDialog />
       <Dissolve />
       <FriendNotices />
       <Toaster anchor={(watching || live) && !fullscreen ? "sidebar" : "center"} />

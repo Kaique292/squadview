@@ -6,6 +6,7 @@
 | [Captura](captura.md)                         | Qualquer modo de tela, seguindo o jogo entre janelas      |
 | [Protocolo da malha](protocolo-malha.md)      | Como a sala distribui o vídeo entre os membros            |
 | [Roadmap](roadmap.md)                         | Fases do projeto, entregas e critérios de saída           |
+| [Fliperama](fliperama.md)                     | Plano do modo Lan House Fliperama (controles remotos)     |
 | [Decisões (ADRs)](adr/)                       | Por que escolhemos cada tecnologia                        |
 | [Desenvolvimento](desenvolvimento.md)         | Preparar o PC, rodar, testar e gerar o instalador         |
 | [Git e versionamento](git-e-versionamento.md) | Branches, commits semânticos, SemVer e changelog          |
@@ -38,3 +39,6 @@
 | [0019](adr/0019-varias-lives-ao-mesmo-tempo.md)           | Várias lives ao mesmo tempo, cada uma num quadro da sala                            |
 | [0020](adr/0020-voz-repassada-pela-sala.md)               | Voz repassada por um membro da sala quando dois membros não se alcançam             |
 | [0021](adr/0021-video-por-baixo-da-interface.md)          | Vídeo desenhado por baixo da interface (DirectComposition)                          |
+| [0022](adr/0022-retomada-da-vaga-na-sala.md)              | Retomada da vaga na sala depois de uma queda da sinalização                         |
+| [0023](adr/0023-modo-fliperama.md)                        | Modo Lan House Fliperama: jogo local com controles remotos (ViGEmBus)               |
+| [0024](adr/0024-fliperama-teclado-e-mouse.md)             | Fliperama: mouse no analógico e "controle total" de teclado e mouse (com permissão) |

@@ -3,7 +3,15 @@ import { act } from "react";
 import { App } from "../App";
 import { DEFAULT_QUALITY, type StreamStats, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
-import { listenToRoomEvents, MAX_WATCHING, type Member, savedName, useRoomStore, type Watch } from "./room-store";
+import {
+  listenToRoomEvents,
+  MAX_WATCHING,
+  type Member,
+  RECONNECT_NOTICE_MS,
+  savedName,
+  useRoomStore,
+  type Watch,
+} from "./room-store";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -117,6 +125,51 @@ describe("criar e entrar em sala", () => {
     fireEvent.change(screen.getByPlaceholderText("B8RJ2Q"), { target: { value: "B8RJ2Q" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
     expect(await screen.findByText(/sala está cheia/)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  // Regressão: o amigo mandou "SE7C27Z" (uma letra a mais) e o botão só ficava apagado, sem dizer
+  // por quê.
+  it("código com caractere a mais ou inválido explica por que não libera", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Beto" } });
+    const code = screen.getByPlaceholderText("B8RJ2Q");
+    expect(screen.queryByText(/O código tem 6 letras/)).not.toBeInTheDocument();
+    for (const wrong of ["SE7C27Z", "SE7C2O"]) {
+      fireEvent.change(code, { target: { value: wrong } });
+      expect(screen.getByRole("button", { name: "Entrar" })).toBeDisabled();
+      expect(screen.getByText(/O código tem 6 letras ou números/)).toBeInTheDocument();
+      expect(code).toHaveAttribute("aria-invalid", "true");
+    }
+    fireEvent.change(code, { target: { value: "SE7C27" } });
+    expect(screen.getByRole("button", { name: "Entrar" })).toBeEnabled();
+    expect(screen.queryByText(/O código tem 6 letras/)).not.toBeInTheDocument();
+  });
+
+  it("colar o link do convite preenche só o código", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    const code = screen.getByPlaceholderText("B8RJ2Q");
+    fireEvent.change(code, { target: { value: "https://kaique292.github.io/squadview/convite/?sala=se7c27" } });
+    expect(code).toHaveValue("SE7C27");
+  });
+
+  // Regressão: um código que não é de sala nenhuma criava uma sala vazia; agora vem o erro do app.
+  it("código de sala que não existe mostra código inválido e não entra", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "room_join" ? Promise.reject("Código inválido: essa sala não existe.") : Promise.resolve(undefined),
+    );
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Entrar com código" }));
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("Como a galera te chama"), { target: { value: "Beto" } });
+    fireEvent.change(screen.getByPlaceholderText("B8RJ2Q"), { target: { value: "ZZZZZZ" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(await screen.findByText("Código inválido: essa sala não existe.")).toBeInTheDocument();
+    expect(useRoomStore.getState().code).toBeNull();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
@@ -451,15 +504,32 @@ describe("nome da sala e apelido", () => {
 describe("queda da conexão com a sala", () => {
   beforeEach(() => useRoomStore.setState({ code: "B8RJ2Q", joinedAt: Date.now() }));
 
-  it("avisa que está reconectando e quando volta", async () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("avisa que está reconectando e quando volta, se a volta demora", async () => {
+    vi.useFakeTimers();
     render(<App />);
     emit("room-members", [ME, ANA]);
     emit("room-connection", "reconnecting");
-    expect(await screen.findByText("Reconectando…")).toBeInTheDocument();
+    expect(screen.getByText("Reconectando…")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(RECONNECT_NOTICE_MS));
     expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "warning", title: "Reconectando" });
     emit("room-connection", "connected");
     expect(screen.queryByText("Reconectando…")).not.toBeInTheDocument();
     expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: "De volta à sala." });
+  });
+
+  // Regressão: cada queda de ~1 s da sinalização virava um aviso de "caiu" e outro de "voltou".
+  it("queda que volta logo não mostra aviso nenhum", () => {
+    vi.useFakeTimers();
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const before = useToastStore.getState().toasts.length;
+    emit("room-connection", "reconnecting");
+    act(() => vi.advanceTimersByTime(1_400));
+    emit("room-connection", "connected");
+    act(() => vi.advanceTimersByTime(RECONNECT_NOTICE_MS));
+    expect(useToastStore.getState().toasts).toHaveLength(before);
   });
 
   it("se não der para voltar, sai da sala e explica", () => {

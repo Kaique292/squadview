@@ -93,7 +93,16 @@ export class Room extends DurableObject<Env> {
     },
     getRequests: () => this.ctx.storage.kv.get("requests") ?? {},
     putRequests: (requests) => this.ctx.storage.kv.put("requests", requests),
+    // Vagas de quem pode voltar depois de uma queda (ADR 0022): sobrevivem ao reinício da sala.
+    getSeats: () => this.ctx.storage.kv.get("seats") ?? {},
+    putSeats: (seats) => this.ctx.storage.kv.put("seats", seats),
+    wakeAt: (at) => this.ctx.waitUntil(this.ctx.storage.setAlarm(at)),
   });
+
+  /** Fim do prazo de alguém que caiu: sai da sala se não voltou. */
+  async alarm(): Promise<void> {
+    this.state.expire();
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {

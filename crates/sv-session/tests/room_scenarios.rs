@@ -93,7 +93,7 @@ struct Friend {
 
 fn friend(rt: &Runtime, url: &str, code: &str, name: &str) -> Friend {
     rt.block_on(async {
-        let (client, mut events) = RoomClient::join(url, code, name, None, None, None)
+        let (client, mut events) = RoomClient::join(url, code, name, None, None, None, None, true)
             .await
             .unwrap_or_else(|e| panic!("{name} não entrou: {e}"));
         match tokio::time::timeout(WAIT, events.recv()).await {
@@ -242,7 +242,7 @@ fn apelido_perfil_mudo_e_surdo_chegam_aos_outros() {
     });
 
     // O Beto fica ao vivo: a Ana vê.
-    beto.client.set_status(true, false, false, &[], None);
+    beto.client.set_status(true, false, false, &[], None, None);
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.name == "Beto" && x.live));
 
     // O Beto sai: some da lista e a voz é atualizada.
@@ -276,13 +276,64 @@ fn pedir_para_assistir_quem_nao_esta_ao_vivo_e_recusado() {
         (beto_id.clone(), "Não está transmitindo agora.".to_owned())
     );
 
-    // Ao vivo, mas o encoder ainda não começou (sem formato do vídeo): também recusa.
+    // Ao vivo, mas o encoder nunca mandou o primeiro quadro: espera um pouco e recusa dizendo que
+    // a transmissão ainda está começando (não que ela não existe).
     beto.room.stream_started(KeyframeHandle::detached());
     ana.members("o Beto ao vivo", |m| m.iter().any(|x| x.id == beto_id && x.live));
     ana.room.watch(&beto_id);
-    assert_eq!(refused(&ana).1, "Não está transmitindo agora.");
+    assert_eq!(
+        refused(&ana).1,
+        "A transmissão ainda está começando. Tente de novo em instantes."
+    );
     beto.room.stream_stopped();
     ana.members("o Beto fora do ar", |m| m.iter().any(|x| x.id == beto_id && !x.live));
+}
+
+/// Regressão: o DK aparecia "AO VIVO" e quem clicava para assistir logo depois recebia "Não está
+/// transmitindo agora.", porque o encoder ainda não tinha mandado o primeiro quadro (uma janela
+/// parada demora a mandar um). Agora o pedido espera esse quadro e entra quando ele sai.
+#[test]
+fn pedido_antes_do_primeiro_quadro_espera_e_entra_quando_ele_sai() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let mut beto = friend(&rt, &url, &code, "Beto");
+    let beto_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let ana_id = ana.members("o Beto", |m| m.iter().any(|x| x.name == "Beto"))[0]
+        .id
+        .clone();
+
+    ana.room.stream_started(KeyframeHandle::detached());
+    beto.client.signal(
+        &ana_id,
+        &Signal::WatchRequest {
+            candidates: beto_peer.candidates().to_vec(),
+            fingerprint: beto_peer.fingerprint().to_owned(),
+        },
+    );
+    // Sem o primeiro quadro, a Ana não responde nada (nem recusa).
+    rt.block_on(async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while let Ok(Some(event)) = tokio::time::timeout_at(deadline, beto.events.recv()).await {
+            if let RoomEvent::Signal { from, signal } = event
+                && from == ana_id
+            {
+                panic!("a Ana respondeu antes do primeiro quadro: {signal:?}");
+            }
+        }
+    });
+
+    ana.room.tap().started(&StreamInfo {
+        size: Size::new(1280, 720),
+        fps: 30,
+        encoder: "teste".into(),
+    });
+    let Signal::WatchAccept { stream, .. } = beto.signal_from(&rt, &ana_id) else {
+        panic!("a Ana devia aceitar quando o primeiro quadro saísse")
+    };
+    assert_eq!((stream.width, stream.height), (1280, 720));
+    ana.room.stream_stopped();
 }
 
 #[test]
@@ -319,7 +370,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
         beto.client.signal(&ana_id, &signal);
     }
     // Um marcador depois dos sinais: até ele chegar, nada de assistir nem de voz.
-    beto.client.set_status(true, false, false, &[], None);
+    beto.client.set_status(true, false, false, &[], None, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchReady { .. } | RoomUpdate::WatchFailed { .. } | RoomUpdate::VoiceFailed { .. } => {
@@ -420,7 +471,7 @@ fn ana_pede_repasse_ao_caio(rt: &Runtime, url: &str) -> (Someone, Friend, Friend
     let ana_id = ana.id_of("Ana");
     // O Caio conta para a sala que assiste o Beto.
     caio.client
-        .set_status(false, false, false, std::slice::from_ref(&beto.id), None);
+        .set_status(false, false, false, std::slice::from_ref(&beto.id), None, None);
     let beto_id = beto.id.clone();
     ana.members("o Caio assistindo o Beto", |m| {
         m.iter()
@@ -688,7 +739,7 @@ fn pedido_para_assistir_sem_resposta_desiste_sozinho() {
     // Resposta atrasada, depois de desistir: ignorada.
     beto.client
         .signal(&ana_id, &Signal::WatchDeny { reason: "tarde".into() });
-    beto.client.set_status(true, false, false, &[], None);
+    beto.client.set_status(true, false, false, &[], None, None);
     ana.wait("o marcador", |u| match u {
         RoomUpdate::Members(m) if m.iter().any(|x| x.name == "Beto" && x.live) => Some(()),
         RoomUpdate::WatchFailed { member_id, .. } if member_id == beto.id => {
@@ -721,7 +772,7 @@ fn sinalizacao_cai_e_a_sala_volta_sozinha() {
     });
     assert_eq!(error, error_message("rate-limited"));
     ana.wait("tentando voltar", |u| {
-        matches!(u, RoomUpdate::Reconnecting).then_some(())
+        matches!(u, RoomUpdate::Reconnecting { .. }).then_some(())
     });
     let mut seen: Option<Vec<Member>> = None;
     let mut renamed = false;
@@ -734,7 +785,11 @@ fn sinalizacao_cai_e_a_sala_volta_sozinha() {
             renamed = true;
             None
         }
-        RoomUpdate::Reconnected => Some(()),
+        // Quem é derrubado por erro perde a vaga: volta como membro novo (ADR 0022).
+        RoomUpdate::Reconnected { resumed } => {
+            assert!(!resumed, "derrubado por erro não guarda a vaga");
+            Some(())
+        }
         RoomUpdate::Disconnected => panic!("desistiu de voltar"),
         _ => None,
     });
@@ -1139,4 +1194,123 @@ fn a_ana_repassa_a_voz_entre_o_hugo_e_o_beto_sem_mexer_na_assinatura() {
         }
     });
     assert_eq!(ended, hugo_b);
+}
+
+/// Regressão: um código digitado que não é de sala nenhuma criava uma sala vazia (e o app entrava
+/// nela). Agora a entrada falha com "Código inválido", e o código continua livre para quem criar.
+#[test]
+fn entrar_por_um_codigo_que_nao_existe_e_codigo_invalido() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let only_join = JoinAs {
+        create: false,
+        ..JoinAs::named("Ana")
+    };
+    let err = Room::join(&url, &code, only_join.clone(), None, None, |_| {}).unwrap_err();
+    assert_eq!(err, "Código inválido: essa sala não existe.");
+
+    // Quem cria a sala entra; depois, quem entra pelo código encontra a sala.
+    let beto = join(&url, &code, "Beto", None);
+    let ana = Room::join(&url, &code, only_join, None, None, |_| {}).expect("a sala agora existe");
+    beto.members("a Ana", |m| m.iter().any(|x| x.name == "Ana"));
+    drop(ana);
+}
+
+/// Fliperama (ADR 0023): quem abre precisa estar ao vivo e ter o driver de controle; fechado, o
+/// pedido de vaga é recusado com o motivo.
+#[test]
+fn fliperama_fechado_recusa_a_vaga_e_abrir_pede_live_e_driver() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let mut beto = friend(&rt, &url, &code, "Beto");
+    let ana_id = ana.members("o Beto", |m| m.iter().any(|x| x.name == "Beto"))[0]
+        .id
+        .clone();
+    let peer = rt.block_on(Peer::bind(&[])).unwrap();
+    beto.client.signal(
+        &ana_id,
+        &Signal::ArcadeJoin {
+            candidates: peer.candidates().to_vec(),
+            fingerprint: peer.fingerprint().to_owned(),
+        },
+    );
+    assert_eq!(
+        beto.signal_from(&rt, &ana_id),
+        Signal::ArcadeDeny {
+            reason: "O fliperama está fechado.".into()
+        }
+    );
+
+    let err = ana.room.arcade_open(Some("Bomberman".into()), 3, None).unwrap_err();
+    assert!(err.contains("Comece a transmitir"), "{err}");
+    ana.room.stream_started(KeyframeHandle::detached());
+    match ana.room.arcade_open(Some("Bomberman".into()), 3, None) {
+        // Na CI não há o ViGEmBus: a mensagem leva às Configurações.
+        Err(e) => assert!(e.contains("ViGEmBus"), "{e}"),
+        Ok(()) => {
+            // Com o driver: o fliperama aparece para os outros no status.
+            beto.wait(&rt, "o fliperama no status da Ana", |e| match e {
+                RoomEvent::MemberUpdated(m) if m.id == ana_id => m.arcade.filter(|a| a.slots == 3).map(|_| ()),
+                _ => None,
+            });
+            let no_window = ana.room.arcade_grant_kbm(Some(&beto.id)).unwrap_err();
+            assert!(no_window.contains("não está jogando"), "{no_window}");
+            ana.room.arcade_close();
+        }
+    }
+    ana.room.stream_stopped();
+}
+
+/// O fliperama de ponta a ponta no mesmo PC: o Beto ganha a vaga, aperta J no teclado e o controle
+/// virtual da Ana aperta A (o Windows vê pelo XInput). Tirar o Beto solta a vaga e o controle.
+#[test]
+#[ignore = "precisa do ViGEmBus instalado e do Worker local (SQUADVIEW_SIGNALING_URL)"]
+fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let beto = join(&url, &code, "Beto", None);
+    let ana_id = beto.id_of("Ana");
+    let beto_id = ana.id_of("Beto");
+    ana.room.stream_started(KeyframeHandle::detached());
+    ana.room
+        .arcade_open(Some("Teste".into()), 2, None)
+        .expect("ViGEmBus instalado");
+
+    beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
+    let slot = beto.wait("a vaga", |u| match u {
+        RoomUpdate::ArcadeSeat { host, slot } if host == ana_id => Some(slot),
+        RoomUpdate::ArcadeLeft { reason, .. } => panic!("recusado: {reason}"),
+        _ => None,
+    });
+    ana.wait("o Beto conectado", |u| match u {
+        RoomUpdate::ArcadePlayers(seats) => seats
+            .iter()
+            .any(|s| s.member_id == beto_id && s.connected && s.slot == slot)
+            .then_some(()),
+        _ => None,
+    });
+
+    let xinput = u32::from(slot) - 1;
+    beto.room.arcade_key("KeyJ", true);
+    let pressed = (0..100).find_map(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        sv_input::xinput::read(xinput).filter(|p| p.pressed(sv_input::pad::buttons::A))
+    });
+    assert!(pressed.is_some(), "o A do controle virtual do P{slot} apertou");
+    beto.room.arcade_key("KeyJ", false);
+
+    ana.room.arcade_kick(&beto_id);
+    beto.wait("tirado do fliperama", |u| match u {
+        RoomUpdate::ArcadeLeft { host, reason } if host == ana_id && !reason.is_empty() => Some(()),
+        _ => None,
+    });
+    let gone = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        sv_input::xinput::read(xinput).is_none()
+    });
+    assert!(gone, "o controle virtual saiu do PC");
+    ana.room.stream_stopped();
 }
