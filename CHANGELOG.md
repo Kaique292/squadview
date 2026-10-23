@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.0](https://github.com/Kaique292/squadview/compare/v0.10.0...v0.11.0) (2026-10-23)
+
+
+### ✨ Novidades
+
+* **app:** fliperama com controle, teclado e mouse dos jogadores ([#94](https://github.com/Kaique292/squadview/issues/94)) ([a686626](https://github.com/Kaique292/squadview/commit/a686626f96b15af7d0e909f59ec1b8c8c26a0031))
+* **input:** cria o sv-input com controles virtuais e a prova do fliperama ([#90](https://github.com/Kaique292/squadview/issues/90)) ([191da6c](https://github.com/Kaique292/squadview/commit/191da6cc1e0cb160f3f68658e21c2ea53069d2a9))
+* **net:** volta para a sala com o mesmo id depois de uma queda ([#86](https://github.com/Kaique292/squadview/issues/86)) ([6d4022c](https://github.com/Kaique292/squadview/commit/6d4022cc1f4457c32be2eb581d6eae1cbc3a6b26))
+
+
+### 🐛 Correções
+
+* **ci:** faz o -Coverage do clean-build apagar a cobertura inteira ([#88](https://github.com/Kaique292/squadview/issues/88)) ([58d7fd9](https://github.com/Kaique292/squadview/commit/58d7fd981e282d83df944f51de0201589ed1d4a8))
+* **net:** conversa não para quando os dois amigos chamam ao mesmo tempo ([#92](https://github.com/Kaique292/squadview/issues/92)) ([bcffdb1](https://github.com/Kaique292/squadview/commit/bcffdb10ac4ba7288b86cb5d7fdabba691a851ca))
+* **signal:** acaba com o clone na sala e espera o primeiro quadro para assistir ([#91](https://github.com/Kaique292/squadview/issues/91)) ([24f41b4](https://github.com/Kaique292/squadview/commit/24f41b40a8efcd031d13f1825e42e32d0971a647))
+* **signal:** código de sala que não existe dá código inválido em vez de criar sala ([#93](https://github.com/Kaique292/squadview/issues/93)) ([3b2d186](https://github.com/Kaique292/squadview/commit/3b2d18682cf90f13241c5436d07c5b0bbf4e4102))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e as capturas para a versão 0.11 ([#97](https://github.com/Kaique292/squadview/issues/97)) ([cc62a44](https://github.com/Kaique292/squadview/commit/cc62a44f7c55efb8544677c009a1caf9e902efe7))
+* **docs:** registra a ADR 0023 e o plano do modo Lan House Fliperama ([#89](https://github.com/Kaique292/squadview/issues/89)) ([57b11f7](https://github.com/Kaique292/squadview/commit/57b11f77d42ece1127c7f75d6c7ae9165ba74971))
+
 ## [0.10.0](https://github.com/Kaique292/squadview/compare/v0.9.0...v0.10.0) (2026-10-22)
 
 
