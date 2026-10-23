@@ -108,6 +108,15 @@ impl PadState {
         }
     }
 
+    /// Sem os botões do sistema: o Guide (o "X" do meio) abre a Xbox Game Bar e o Big Picture da
+    /// Steam no PC do host, fora do jogo. O host aplica isto a todo estado que chega de um jogador.
+    pub fn without_system_buttons(self) -> Self {
+        Self {
+            buttons: self.buttons & !buttons::GUIDE,
+            ..self
+        }
+    }
+
     /// O mesmo estado no relatório do controle virtual de Xbox 360.
     pub fn to_x360(self) -> vigem_rust::X360Report {
         vigem_rust::X360Report {
@@ -153,6 +162,19 @@ mod tests {
             (report.thumb_lx, report.thumb_ly, report.thumb_rx, report.thumb_ry),
             (-32768, 32767, -1, 1234)
         );
+    }
+
+    #[test]
+    fn o_guide_do_jogador_nunca_chega_ao_host() {
+        let pad = PadState {
+            buttons: buttons::GUIDE | buttons::A | buttons::START,
+            thumb_lx: 100,
+            ..PadState::default()
+        };
+        let clean = pad.without_system_buttons();
+        assert!(!clean.pressed(buttons::GUIDE));
+        assert!(clean.pressed(buttons::A) && clean.pressed(buttons::START));
+        assert_eq!(clean.thumb_lx, 100);
     }
 
     #[test]

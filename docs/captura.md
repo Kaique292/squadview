@@ -60,7 +60,7 @@ A cada checagem, nesta ordem:
 1. **A janela atual sumiu ou foi escondida** (o cliente do LoL ao começar a partida) → segue, **na hora**, a janela da família que está em primeiro plano; senão, a maior janela visível da família. Minimizada não conta como sumida: o jogador volta para ela.
 2. **Outra janela da família ficou em primeiro plano por 2 checagens seguidas (1 s)** → segue ela. Cobre os launchers que continuam visíveis atrás do jogo. As 2 checagens evitam trocar por uma tela de carregamento que aparece por um instante.
 3. Janelas pequenas (menos de 1/8 do monitor: avisos, notificações) nunca viram a fonte.
-4. **O jogo fechou e não há janela visível da família** → captura uma janela da família que ainda existe escondida (de preferência a escolhida, como o cliente do LoL que reaparece no fim da partida). Se não houver nenhuma, espera ("“…” sumiu. Esperando a janela do jogo voltar…").
+4. **O jogo fechou e não há janela visível da família** → captura uma janela da família que ainda existe escondida (de preferência a escolhida, como o cliente do LoL que reaparece no fim da partida). Se não houver nenhuma, espera ("“…” sumiu. Esperando a janela do jogo voltar…") por até 5 s, o tempo de um launcher que fecha antes de a janela do jogo abrir. Passado isso, o programa fechou de vez e a transmissão **para** (com o fliperama, se estiver aberto). Vale para qualquer programa transmitido, não só jogos.
 
 ### Tela cheia
 

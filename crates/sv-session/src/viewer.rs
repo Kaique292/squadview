@@ -123,6 +123,8 @@ fn run(
     let mut gate = KeyframeGate::new();
     // O último quadro mostrado: só uma referência à textura (AddRef), sem cópia por frame.
     let mut last: Option<GpuFrame> = None;
+    // O próximo frame, se ele já chegou enquanto decodificávamos o atual.
+    let mut queued: Option<EncodedFrame> = None;
 
     loop {
         while let Ok((max, reply)) = snapshots.try_recv() {
@@ -133,10 +135,13 @@ fn run(
             on_event(ViewerEvent::Closed);
             return Ok(());
         }
-        let frame = match frames.recv_timeout(Duration::from_millis(100)) {
-            Ok(f) => f,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+        let frame = match queued.take() {
+            Some(f) => f,
+            None => match frames.recv_timeout(Duration::from_millis(100)) {
+                Ok(f) => f,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
         };
         match gate.admit(frame.keyframe) {
             Admit::Decode => {}
@@ -147,13 +152,21 @@ fn run(
             }
         }
 
+        // Atrasados (uma rajada da rede): se o próximo frame já chegou, este é decodificado (o
+        // próximo depende dele) mas não mostrado, e a tela pula direto para o mais novo. Antes, cada
+        // frame atrasado era mostrado na ordem, e o atraso de uma rajada ficava na tela.
+        queued = frames.try_recv().ok();
+        let show = queued.is_none();
         let offset = clock_offset.load(Ordering::Relaxed);
         let mut present_error = None;
         let decoded = decoder.decode(&frame.data, frame.timestamp_us, |image| {
+            last = Some(image.clone());
+            if !show {
+                return;
+            }
             if let Err(e) = renderer.present(image) {
                 present_error = Some(e);
             }
-            last = Some(image.clone());
             on_event(ViewerEvent::Presented {
                 latency_us: latency_us(frame.timestamp_us, offset, clock::now_us()),
             });

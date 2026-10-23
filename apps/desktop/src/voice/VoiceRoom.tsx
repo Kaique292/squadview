@@ -37,7 +37,7 @@ import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { tileGlows, tileGradient } from "./tile-background";
 import { useVoiceStore } from "./voice-store";
-import { LiveBadge } from "../ui/LiveBadge";
+import { ArcadeBadge, LiveBadge } from "../ui/LiveBadge";
 
 /** Quantas colunas para `n` pessoas (como a grade de um canal de voz do Discord). */
 export function gridColumns(n: number): number {
@@ -476,7 +476,12 @@ function Tile({
     >
       <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} effect={effect} src={photo} />
 
-      {member.live && <LiveBadge size={strip ? "sm" : "md"} className="absolute top-2 right-2" />}
+      {(member.live || member.arcade) && (
+        <span className="absolute top-2 right-2 flex items-center gap-1.5">
+          {member.arcade && <ArcadeBadge arcade={member.arcade} size={strip ? "sm" : "md"} compact={strip} />}
+          {member.live && <LiveBadge size={strip ? "sm" : "md"} />}
+        </span>
+      )}
       {member.live && !isMe && !strip && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <button

@@ -22,9 +22,12 @@ A [ADR 0023](0023-modo-fliperama.md) leva o controle (ou o teclado convertido em
    - **Começa desligado.** Só o host liga, por jogador, no painel do fliperama. Ligar para outro jogador desliga o anterior.
    - **Só com a janela do jogo em primeiro plano.** O host só injeta enquanto a janela capturada pelo fliperama é a janela em primeiro plano do Windows. Se o host trocar de janela (Alt+Tab, outro app), nada passa e todas as teclas e botões são soltos.
    - **Exige captura de janela.** Com a tela inteira capturada não há "janela do jogo" para conferir, e o controle total não liga.
+   - **Ponteiro preso no jogo.** Enquanto o jogador mexe o mouse, o ponteiro fica preso na área da janela do jogo, e um clique com o ponteiro fora dela não passa. Sem isso, num jogo em janela, o primeiro clique na barra de tarefas ou na área de trabalho acontecia de verdade, e só depois o jogo deixava de estar na frente. O ponteiro do host também fica preso enquanto o controle total está ligado; cortar solta.
    - **Teclas do sistema bloqueadas:** Windows (esquerda e direita), menu de contexto, Alt+Tab, Alt+F4, Alt+Esc, Ctrl+Esc e Ctrl+Shift+Esc. O Ctrl+Alt+Del nem é injetável no Windows.
    - **Corte na hora.** O host desliga pelo painel ou pelo atalho global **Ctrl+Alt+F12**, que funciona com o jogo em tela cheia. Ao desligar, cair ou sair, o host solta tudo que estava apertado.
    - **Nada fica gravado:** a permissão vale só para aquele fliperama aberto.
+
+Também vale para todo jogador, com ou sem controle total: o botão **Guide** (o "X" do meio do controle) nunca chega ao controle virtual do host, porque ele abre a Xbox Game Bar e o Big Picture da Steam, fora do jogo.
 
 ## Consequências
 

@@ -11,7 +11,8 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
@@ -21,7 +22,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_F12,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetMessageW, MSG, PostThreadMessageW, WM_HOTKEY, WM_QUIT,
+    ClipCursor, GA_ROOT, GetAncestor, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageW, MSG,
+    PostThreadMessageW, WM_HOTKEY, WM_QUIT, WindowFromPoint,
 };
 
 use crate::wire::{KbmEvent, MouseButton};
@@ -217,10 +219,20 @@ impl Injector {
 
     /// Repassa um evento do jogador. Com o jogo fora do primeiro plano, não passa nada e o que
     /// estava apertado é solto (ADR 0024). Devolve se o evento foi ao Windows.
+    ///
+    /// O mouse fica preso na janela do jogo enquanto o jogador mexe nele, e um clique com o ponteiro
+    /// fora dela (na barra de tarefas, na área de trabalho, em outro programa) não passa: antes, o
+    /// primeiro clique fora acontecia de verdade, e só depois o jogo deixava de estar na frente.
     pub fn handle(&mut self, event: KbmEvent) -> bool {
         if !self.game_in_front() {
             self.release_all();
             return false;
+        }
+        if matches!(event, KbmEvent::Move { .. } | KbmEvent::Button { down: true, .. }) {
+            self.confine();
+            if matches!(event, KbmEvent::Button { .. }) && !self.cursor_over_game() {
+                return false;
+            }
         }
         match self.guard.filter(event) {
             Some(event) => {
@@ -231,11 +243,59 @@ impl Injector {
         }
     }
 
-    /// Solta tudo que o jogador estava apertando (corte, queda ou troca de janela).
+    /// Prende o ponteiro na área da janela do jogo. O Windows solta a trava quando outra janela vem
+    /// para frente, então ela é refeita a cada movimento.
+    fn confine(&self) {
+        let hwnd = HWND(self.game as *mut _);
+        let mut client = RECT::default();
+        // SAFETY: `hwnd` é a janela do jogo (pode ter fechado: aí as chamadas só falham).
+        unsafe {
+            if GetClientRect(hwnd, &mut client).is_err() {
+                return;
+            }
+            let mut top_left = POINT {
+                x: client.left,
+                y: client.top,
+            };
+            let mut bottom_right = POINT {
+                x: client.right,
+                y: client.bottom,
+            };
+            if !ClientToScreen(hwnd, &mut top_left).as_bool() || !ClientToScreen(hwnd, &mut bottom_right).as_bool() {
+                return;
+            }
+            let area = RECT {
+                left: top_left.x,
+                top: top_left.y,
+                right: bottom_right.x,
+                bottom: bottom_right.y,
+            };
+            let _ = ClipCursor(Some(&area));
+        }
+    }
+
+    /// O ponteiro está em cima da janela do jogo (ou de algo dentro dela)?
+    fn cursor_over_game(&self) -> bool {
+        let mut point = POINT::default();
+        // SAFETY: só leituras da posição do ponteiro e da janela embaixo dele.
+        unsafe {
+            if GetCursorPos(&mut point).is_err() {
+                return false;
+            }
+            let under = WindowFromPoint(point);
+            GetAncestor(under, GA_ROOT).0 as isize == self.game
+        }
+    }
+
+    /// Solta tudo que o jogador estava apertando (corte, queda ou troca de janela) e o ponteiro.
     pub fn release_all(&mut self) {
         let events = self.guard.release_all();
         if !events.is_empty() {
             send(&events);
+        }
+        // SAFETY: sem área: tira a trava do ponteiro.
+        unsafe {
+            let _ = ClipCursor(None);
         }
     }
 }
@@ -467,6 +527,18 @@ mod tests {
         );
         assert!(guard.is_idle());
         assert!(guard.release_all().is_empty());
+    }
+
+    #[test]
+    fn clique_fora_do_jogo_nao_passa() {
+        // A "janela do jogo" que não existe nunca está embaixo do ponteiro, nem na frente.
+        let mut injector = Injector::new(0x7fff_0003);
+        assert!(!injector.cursor_over_game());
+        assert!(!injector.handle(KbmEvent::Button {
+            button: MouseButton::Left,
+            down: true
+        }));
+        injector.release_all();
     }
 
     #[test]

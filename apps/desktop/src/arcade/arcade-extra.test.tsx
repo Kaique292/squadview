@@ -3,7 +3,9 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { type Member, useRoomStore, type Watch } from "../room/room-store";
 import { ArcadeSection, keyLabel } from "../settings/ArcadeSection";
 import { StreamMenuItems } from "../stream/StreamMenu";
+import { useStreamStore } from "../stream/stream-store";
 import { WatchTile } from "../stream/WatchTile";
+import { ArcadeBadge } from "../ui/LiveBadge";
 import { useToastStore } from "../ui/toast-store";
 import { ArcadeHostDialog } from "./ArcadeHostDialog";
 import { freeSlots, listenToArcadeEvents, useArcadeStore } from "./arcade-store";
@@ -223,8 +225,12 @@ describe("jogando: o mouse preso no jogo", () => {
     fireEvent.click(area);
     expect(area.requestPointerLock).toHaveBeenCalled();
     expect(screen.getByText(/Teclado e mouse viram controle/)).toBeInTheDocument();
-    mouse(area, "mousemove", { movementX: 6, movementY: -2 });
+    // O movimento cru (`pointerrawupdate`) vai na hora, sem esperar o quadro da página.
+    mouse(area, "pointerrawupdate", { movementX: 6, movementY: -2 });
     expect(invoke).toHaveBeenCalledWith("arcade_mouse", { dx: 6, dy: -2 });
+    // O mousemove não manda de novo o mesmo movimento.
+    mouse(area, "mousemove", { movementX: 50, movementY: 50 });
+    expect(invoke).not.toHaveBeenCalledWith("arcade_mouse", { dx: 50, dy: 50 });
     mouse(area, "mousedown", { button: 0 });
     mouse(area, "mouseup", { button: 2 });
     mouse(area, "mousedown", { button: 7 });
@@ -239,6 +245,21 @@ describe("jogando: o mouse preso no jogo", () => {
     act(() => document.exitPointerLock());
     expect(invoke).toHaveBeenCalledWith("arcade_release");
     expect(screen.getByText(/Clique no jogo para jogar/)).toBeInTheDocument();
+  });
+
+  it("enquanto uma chamada não volta, o movimento se junta e vai logo depois", async () => {
+    let answer: () => void = () => {};
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "arcade_mouse" ? new Promise<void>((r) => (answer = r)) : Promise.resolve(),
+    );
+    const { area } = renderTile();
+    fireEvent.click(area);
+    mouse(area, "pointerrawupdate", { movementX: 1, movementY: 0 });
+    mouse(area, "pointerrawupdate", { movementX: 2, movementY: 3 });
+    mouse(area, "pointerrawupdate", { movementX: 4, movementY: -1 });
+    expect(invoke.mock.calls.filter(([c]) => c === "arcade_mouse")).toEqual([["arcade_mouse", { dx: 1, dy: 0 }]]);
+    await act(async () => answer());
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("arcade_mouse", { dx: 6, dy: 2 }));
   });
 
   it("com o controle total, a rolagem vai e o selo avisa", () => {
@@ -356,5 +377,58 @@ describe("menu da nossa live", () => {
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "Fliperama" }));
     expect(useArcadeStore.getState().hostDialog).toBe(true);
+  });
+});
+
+describe("selo do fliperama", () => {
+  it("mostra que o fliperama está aberto e quantos jogam, para todos", () => {
+    const { rerender } = render(<ArcadeBadge arcade={{ slots: 3, players: ["a"] }} />);
+    expect(screen.getByRole("img", { name: "Fliperama aberto: 1 de 3 vagas ocupadas" })).toHaveTextContent(
+      "Fliperama 1/3",
+    );
+    rerender(<ArcadeBadge arcade={{ slots: 1, players: [] }} compact size="sm" />);
+    expect(screen.getByRole("img", { name: "Fliperama aberto: 0 de 1 vaga ocupada" })).toHaveTextContent("0/1");
+    // Na lista da sala, só o controle (a conta fica na dica).
+    rerender(<ArcadeBadge arcade={{ slots: 2, players: ["a"] }} iconOnly size="sm" />);
+    const icon = screen.getByRole("img", { name: "Fliperama aberto: 1 de 2 vagas ocupadas" });
+    expect(icon).toHaveTextContent("");
+    expect(icon).toHaveAttribute("title", "Fliperama: 1/2");
+  });
+
+  it("aparece na live de quem hospeda", () => {
+    const watch: Watch = { member: ANA, stats: null, history: [], listening: true, volume: 100 };
+    useRoomStore.setState({ watching: { [ANA.id]: watch } });
+    render(<WatchTile memberId={ANA.id} variant="grid" focused={false} onActivate={() => {}} onDetails={() => {}} />);
+    expect(screen.getByRole("img", { name: /Fliperama aberto/ })).toHaveTextContent("Fliperama 0/3");
+  });
+});
+
+describe("fluidez do fliperama", () => {
+  it("abaixo de 60 fps, o painel avisa e troca a qualidade com um clique", async () => {
+    const source = { Window: 7 } as never;
+    useStreamStore.setState({
+      quality: { resolution: "1080", fps: 30 },
+      current: { source, audioPid: null, lastAudioPid: null },
+    });
+    useRoomStore.setState({ members: [{ ...ME, arcade: { game: null, slots: 2, players: [] } }] });
+    useArcadeStore.setState({ hostDialog: true });
+    render(<ArcadeHostDialog />);
+    expect(screen.getByText(/Sua live está a 30 fps/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mudar para 60 fps" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_preview", {
+        source,
+        quality: { resolution: "1080", fps: 60 },
+        audioPid: null,
+      }),
+    );
+  });
+
+  it("a 60 fps, nada de aviso", () => {
+    useStreamStore.setState({ quality: { resolution: "1080", fps: 60 } });
+    useRoomStore.setState({ members: [{ ...ME, arcade: { game: null, slots: 2, players: [] } }] });
+    useArcadeStore.setState({ hostDialog: true });
+    render(<ArcadeHostDialog />);
+    expect(screen.queryByText(/Sua live está a/)).not.toBeInTheDocument();
   });
 });

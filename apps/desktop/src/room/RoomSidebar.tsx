@@ -38,7 +38,7 @@ import { MemberMenu } from "./MemberMenu";
 import { NameDialog } from "./NameDialog";
 import { type Member, memberPhoto, roomTitle, useRoomStore } from "./room-store";
 import { useMemberEffect, useSpeakingEffectStore } from "../voice/speaking-effect";
-import { LiveBadge } from "../ui/LiveBadge";
+import { ArcadeBadge, LiveBadge } from "../ui/LiveBadge";
 
 /**
  * Barra lateral no estilo da lista de canais do Discord: cabeçalho da sala com menu e a sala como
@@ -355,6 +355,7 @@ function MemberRow(props: {
         )}
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && <LiveBadge size="sm" />}
+        {member.arcade && <ArcadeBadge arcade={member.arcade} size="sm" iconOnly />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">
             <button

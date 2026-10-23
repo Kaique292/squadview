@@ -418,7 +418,7 @@ fn watch<R: Runtime>(
                     running.generation += 1;
                     let stopped = running.preview.take();
                     drop(running);
-                    end_preview(&app, stopped, "o jogo fechou enquanto o monitor dele era transmitido");
+                    end_preview(&app, stopped, "o programa transmitido fechou");
                     return;
                 }
             };

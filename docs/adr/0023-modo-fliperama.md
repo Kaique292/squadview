@@ -27,7 +27,7 @@ Pontos principais:
   - O jogador manda quando o estado muda e, parado, a cada 100 ms.
   - O host descarta pacotes fora de ordem.
 - **Leitura no jogador:**
-  - controle de Xbox pelo **XInput** (`Win32_UI_Input_XboxController`), num thread que lê a 250 Hz;
+  - controle de Xbox pelo **XInput** (`Win32_UI_Input_XboxController`), num thread que lê a 1000 Hz (acima da prioridade normal);
   - **teclado** convertido em controle (mapeamento padrão editável), lido na página da janela do fliperama enquanto ela tem foco.
 - **Vagas:** o host decide. Sinais novos pela sinalização (`ArcadeJoin`, `ArcadeSeat { slot }`, `ArcadeDeny { reason }`, `ArcadeLeave`). O status do host ganha o campo opcional `arcade: { game, slots, players }`, para a sala mostrar "Fliperama: 2 vagas".
   - O número do jogador mostrado é a vaga real do XInput que o Windows deu ao controle virtual, mais 1. Com o controle do host ligado, os jogadores ficam como P2 a P4; sem ele, o primeiro jogador é o P1, que é como o jogo vai numerá-lo.
