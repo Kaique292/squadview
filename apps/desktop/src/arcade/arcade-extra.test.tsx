@@ -388,6 +388,11 @@ describe("selo do fliperama", () => {
     );
     rerender(<ArcadeBadge arcade={{ slots: 1, players: [] }} compact size="sm" />);
     expect(screen.getByRole("img", { name: "Fliperama aberto: 0 de 1 vaga ocupada" })).toHaveTextContent("0/1");
+    // Na lista da sala, só o controle (a conta fica na dica).
+    rerender(<ArcadeBadge arcade={{ slots: 2, players: ["a"] }} iconOnly size="sm" />);
+    const icon = screen.getByRole("img", { name: "Fliperama aberto: 1 de 2 vagas ocupadas" });
+    expect(icon).toHaveTextContent("");
+    expect(icon).toHaveAttribute("title", "Fliperama: 1/2");
   });
 
   it("aparece na live de quem hospeda", () => {

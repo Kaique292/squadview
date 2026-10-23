@@ -355,7 +355,7 @@ function MemberRow(props: {
         )}
         {deafened && <HeadphoneOff size={14} aria-label="Ensurdecido" className="shrink-0 text-text-faint" />}
         {member.live && <LiveBadge size="sm" />}
-        {member.arcade && <ArcadeBadge arcade={member.arcade} size="sm" compact />}
+        {member.arcade && <ArcadeBadge arcade={member.arcade} size="sm" iconOnly />}
         {canWatch && !props.watching && (
           <Tooltip label={`Assistir ${member.name}`} side="top">
             <button

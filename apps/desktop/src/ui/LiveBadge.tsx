@@ -32,17 +32,20 @@ export function InfoBadge({ children, className, ...rest }: { children: string }
 
 /**
  * O selo do fliperama aberto (ADR 0023): roxo da marca, com o controle e quantos jogam. Para todos
- * da sala saberem que dá para entrar como jogador. `compact`: só o controle e a conta (na lista).
+ * da sala saberem que dá para entrar como jogador. `compact`: só o controle e a conta; `iconOnly`:
+ * só o controle (na lista da sala, ao lado do AO VIVO, não cabe mais nada; a conta vai na dica).
  */
 export function ArcadeBadge({
   arcade,
   compact,
+  iconOnly,
   size,
   className,
   ...rest
 }: {
   arcade: { slots: number; players: string[] };
   compact?: boolean;
+  iconOnly?: boolean;
   size?: "sm" | "md";
 } & HTMLAttributes<HTMLSpanElement>) {
   const count = `${arcade.players.length}/${arcade.slots}`;
@@ -51,12 +54,13 @@ export function ArcadeBadge({
       {...rest}
       role="img"
       aria-label={`Fliperama aberto: ${arcade.players.length} de ${arcade.slots} ${arcade.slots === 1 ? "vaga ocupada" : "vagas ocupadas"}`}
+      title={iconOnly ? `Fliperama: ${count}` : undefined}
       className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-brand font-bold tracking-wide text-white uppercase ${
         size === "sm" ? "px-1.5 py-px text-[9px]" : "px-2 py-0.5 text-[11px]"
       } ${className ?? ""}`}
     >
       <Gamepad2 aria-hidden size={size === "sm" ? 10 : 12} />
-      {compact ? count : `Fliperama ${count}`}
+      {iconOnly ? null : compact ? count : `Fliperama ${count}`}
     </span>
   );
 }
