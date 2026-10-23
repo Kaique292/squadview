@@ -443,6 +443,37 @@ describe("posição do vídeo nativo", () => {
     delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   });
 
+  // Regressão: a faixa abrindo (e o quadro entrando animado) muda o lugar sem mudar o tamanho, e
+  // o vídeo da nossa live ficava fora do quadro; com a faixa recolhida, continuava aparecendo.
+  it("segue o quadro quando ele anda numa animação e some com a faixa recolhida", () => {
+    invoke.mockResolvedValue(undefined);
+    useStreamStore.setState({ status: "live", stats: STATS });
+    const rect = { left: 100, top: 400, width: 200, height: 112 };
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ ...rect, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect,
+    );
+    const tile = (hidden: boolean) => (
+      <StreamTile
+        variant="strip"
+        hidden={hidden}
+        focused={false}
+        onActivate={() => {}}
+        onChange={() => {}}
+        onDetails={() => {}}
+      />
+    );
+    const { rerender } = render(tile(false));
+    expect(invoke).toHaveBeenLastCalledWith("set_video_bounds", expect.objectContaining({ x: 150, y: 600 }));
+
+    // A faixa terminou de abrir: o quadro subiu sem mudar de tamanho.
+    rect.top = 300;
+    act(() => document.body.dispatchEvent(new Event("transitionend", { bubbles: true })));
+    expect(invoke).toHaveBeenLastCalledWith("set_video_bounds", expect.objectContaining({ x: 150, y: 450 }));
+
+    rerender(tile(true));
+    expect(invoke).toHaveBeenLastCalledWith("set_video_bounds", { x: 0, y: 0, width: 0, height: 0, radius: 0 });
+  });
+
   it("manda a área do vídeo em pixels físicos, só quando muda, e esconde ao sair", () => {
     invoke.mockResolvedValue(undefined);
     useStreamStore.setState({ status: "live", stats: STATS });

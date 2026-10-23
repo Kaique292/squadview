@@ -22,6 +22,8 @@ export type StreamTileVariant = "grid" | "focus" | "strip" | "fullscreen";
  */
 export function StreamTile(props: {
   variant: StreamTileVariant;
+  /** Está na faixa recolhida: o vídeo some junto. */
+  hidden?: boolean;
   focused: boolean;
   onActivate: () => void;
   onChange: () => void;
@@ -32,7 +34,8 @@ export function StreamTile(props: {
   const arcade = useRoomStore((s) => s.members[0]?.arcade);
   // Com imagem chegando, o quadro fica transparente e o vídeo, desenhado por baixo, aparece.
   const showing = (stats?.fps ?? 0) > 0;
-  const slot = useVideoSlot(undefined, false, showing);
+  // Na faixa recolhida, o vídeo some junto com o quadro (antes ficava aparecendo por cima).
+  const slot = useVideoSlot(undefined, !!props.hidden, showing);
   const [pointerIn, setPointerIn] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const strip = props.variant === "strip";
