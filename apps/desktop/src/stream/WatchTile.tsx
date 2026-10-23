@@ -2,6 +2,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ImageOff, Loader2, Monitor, MoreHorizontal, PictureInPicture2, VolumeX } from "lucide-react";
 import { type KeyboardEvent, useEffect, useState } from "react";
+import { ArcadePlayOverlay } from "../arcade/ArcadePlayOverlay";
 import { useRoomStore } from "../room/room-store";
 import { InfoBadge, LiveBadge } from "../ui/LiveBadge";
 import { stopInsideMenu } from "../ui/overlay";
@@ -145,6 +146,9 @@ export function WatchTile(props: {
               )}
             </div>
           </div>
+
+          {/* Jogando no fliperama de quem transmite: o selo do P e o teclado e o mouse. */}
+          {!strip && !inPip && <ArcadePlayOverlay hostId={props.memberId} compact={props.variant === "grid"} />}
 
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>
             {!strip && stats && stats.height > 0 && (

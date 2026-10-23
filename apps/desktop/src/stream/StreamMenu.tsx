@@ -1,7 +1,8 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChartNoAxesColumn, ChevronRight, Maximize2, MonitorUp, MonitorX } from "lucide-react";
+import { ChartNoAxesColumn, ChevronRight, Gamepad2, Maximize2, MonitorUp, MonitorX } from "lucide-react";
 import type { ReactNode } from "react";
+import { useArcadeStore } from "../arcade/arcade-store";
 import { CheckMark } from "../ui/Checkbox";
 import { type Resolution, type StreamQuality, useStreamStore } from "./stream-store";
 
@@ -103,6 +104,10 @@ export function StreamMenuItems(props: { kind: "context" | "dropdown"; onChange:
         </span>
         <CheckMark checked={sharing} />
       </M.CheckboxItem>
+      <M.Item onSelect={() => useArcadeStore.getState().setHostDialog(true)} className={ITEM}>
+        Fliperama
+        <Gamepad2 size={18} />
+      </M.Item>
       <M.Separator className="my-1 h-px bg-surface-3" />
       <M.Item onSelect={props.onDetails} className={ITEM}>
         Detalhes da transmissão

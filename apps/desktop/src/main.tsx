@@ -5,6 +5,7 @@ import "./styles/index.css";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
 import { useAccountStore } from "./account/account-store";
+import { listenToArcadeEvents } from "./arcade/arcade-store";
 import { listenToDmEvents } from "./dm/dm-store";
 import { listenToFriendsEvents, useFriendsStore } from "./friends/friends-store";
 import { listenToRoomEvents, rejoinAfterUpdate, useRoomStore } from "./room/room-store";
@@ -60,6 +61,7 @@ function startApp() {
               listenToRoomEvents(),
               listenToFriendsEvents(),
               listenToDmEvents(),
+              listenToArcadeEvents(),
               listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name),
             ]),
         },

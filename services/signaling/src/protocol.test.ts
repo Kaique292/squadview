@@ -123,6 +123,7 @@ describe("mensagens do cliente", () => {
       watching: null,
       watchingAll: [],
       effect: null,
+      arcade: null,
     });
     expect(parseClientMessage('{"type":"status","live":false,"muted":true,"deafened":true}')).toEqual({
       type: "status",
@@ -132,6 +133,7 @@ describe("mensagens do cliente", () => {
       watching: null,
       watchingAll: [],
       effect: null,
+      arcade: null,
     });
     // Quem estamos assistindo (para quem transmite ver quem assiste).
     expect(parseClientMessage(`{"type":"status","live":false,"watching":"${PEER}"}`)).toMatchObject({
@@ -177,6 +179,30 @@ describe("mensagens do cliente", () => {
     expect(parseClientMessage('{"type":"join","name":"Ana","protocol":1,"room":""}')).toBeNull();
     expect(parseClientMessage('{"type":"room","name":"   "}')).toBeNull();
     expect(parseClientMessage('{"type":"rename"}')).toBeNull();
+  });
+
+  it("lê o fliperama do status e troca o fora do formato por fechado", () => {
+    const status = (arcade: unknown) => parseClientMessage(JSON.stringify({ type: "status", live: true, arcade }));
+    const id = "0123456789abcdef";
+    expect(status({ game: "  Bomberman  ", slots: 3, players: [id, id] })).toMatchObject({
+      arcade: { game: "Bomberman", slots: 3, players: [id] },
+    });
+    expect(status({ slots: 1, players: [] })).toMatchObject({ arcade: { game: null, slots: 1, players: [] } });
+    expect(status({ game: "x".repeat(100), slots: 2, players: [] })).toMatchObject({
+      arcade: { game: "x".repeat(64) },
+    });
+    for (const bad of [
+      null,
+      "aberto",
+      { slots: 0, players: [] },
+      { slots: 4, players: [] },
+      { slots: 2.5, players: [] },
+      { slots: 2, players: ["não-é-id"] },
+      { slots: 3, players: [id, "1123456789abcdef", "2123456789abcdef", "3123456789abcdef"] },
+    ]) {
+      expect(status(bad)).toMatchObject({ arcade: null });
+    }
+    expect(status({ game: "a\u0007b", slots: 1, players: [] })).toMatchObject({ arcade: { game: null } });
   });
 
   it("lê o efeito de fala do status e troca o inválido ou desconhecido pelo anel padrão", () => {

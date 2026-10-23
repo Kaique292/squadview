@@ -4099,6 +4099,7 @@ dependencies = [
  "sv-core",
  "sv-encode",
  "sv-gpu",
+ "sv-input",
  "sv-media",
  "sv-net",
  "sv-session",
@@ -4208,6 +4209,8 @@ dependencies = [
 name = "sv-input"
 version = "0.10.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "vigem-rust",
  "windows",
  "windows-core",
@@ -4266,6 +4269,7 @@ dependencies = [
  "sv-core",
  "sv-encode",
  "sv-gpu",
+ "sv-input",
  "sv-media",
  "sv-net",
  "tokio",

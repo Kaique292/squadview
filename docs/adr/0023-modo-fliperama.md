@@ -30,7 +30,7 @@ Pontos principais:
   - controle de Xbox pelo **XInput** (`Win32_UI_Input_XboxController`), num thread que lê a 250 Hz;
   - **teclado** convertido em controle (mapeamento padrão editável), lido na página da janela do fliperama enquanto ela tem foco.
 - **Vagas:** o host decide. Sinais novos pela sinalização (`ArcadeJoin`, `ArcadeSeat { slot }`, `ArcadeDeny { reason }`, `ArcadeLeave`). O status do host ganha o campo opcional `arcade: { game, slots, players }`, para a sala mostrar "Fliperama: 2 vagas".
-  - O número do jogador mostrado é o índice real do XInput que o Windows deu ao controle virtual (o `user index` do ViGEm).
+  - O número do jogador mostrado é a vaga real do XInput que o Windows deu ao controle virtual, mais 1. Com o controle do host ligado, os jogadores ficam como P2 a P4; sem ele, o primeiro jogador é o P1, que é como o jogo vai numerá-lo.
   - O host pode tirar alguém ou trocar a ordem.
 - **ViGEmBus:** só o host precisa. O app **não embute o instalador**: ao abrir o fliperama, ele verifica se o driver existe e, se não existir, leva ao instalador oficial (precisa de administrador uma vez). O cliente é uma crate Rust pura (`vigem-rust`), sem DLL: usa o mesmo `windows` 0.62 do projeto e distingue "driver não instalado" de outros erros. A `vigem-client` foi descartada por puxar o `winapi` antigo.
 - **Desinstalar a qualquer momento:** em Configurações, a seção "Fliperama" mostra se o driver está instalado e tem um botão **"Remover o driver de controle"**.

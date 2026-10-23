@@ -94,6 +94,17 @@ pub struct Member {
     /// Efeito de fala escolhido (`None`: o anel padrão). Ausente no Worker antigo e em apps até o 0.5.0.
     #[serde(default)]
     pub effect: Option<SpeakingEffect>,
+    /// Fliperama aberto por este membro (ADR 0023). Ausente no Worker antigo e em apps até a 0.10.
+    #[serde(default)]
+    pub arcade: Option<Arcade>,
+}
+
+/// Fliperama aberto (ADR 0023): o jogo, quantas vagas e quem já joga (ids dos membros).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Arcade {
+    pub game: Option<String>,
+    pub slots: u8,
+    pub players: Vec<String>,
 }
 
 /// Vaga para voltar à sala com o mesmo id depois de uma queda (ADR 0022): o nosso id e o token
@@ -146,6 +157,8 @@ enum Outgoing<'a> {
         watching_all: &'a [String],
         /// O efeito de fala que escolhemos (`None`: o anel padrão).
         effect: Option<&'a SpeakingEffect>,
+        /// O fliperama que abrimos (`None`: fechado).
+        arcade: Option<&'a Arcade>,
     },
     /// Renomeia a sala.
     Room {
@@ -427,7 +440,7 @@ impl RoomClient {
 
     /// Avisa a sala que começamos ou paramos de transmitir.
     pub fn set_live(&self, live: bool) {
-        self.set_status(live, false, false, &[], None);
+        self.set_status(live, false, false, &[], None, None);
     }
 
     /// Avisa a sala do nosso estado: ao vivo, microfone silenciado, ensurdecido, quem assistimos e
@@ -439,6 +452,7 @@ impl RoomClient {
         deafened: bool,
         watching: &[String],
         effect: Option<&SpeakingEffect>,
+        arcade: Option<&Arcade>,
     ) {
         self.send(&Outgoing::Status {
             live,
@@ -447,6 +461,7 @@ impl RoomClient {
             watching: watching.first().map(String::as_str),
             watching_all: watching,
             effect,
+            arcade,
         });
     }
 
@@ -651,11 +666,12 @@ mod tests {
             watching: None,
             watching_all: &[],
             effect: None,
+            arcade: None,
         })
         .unwrap();
         assert_eq!(
             status,
-            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"watchingAll":[],"effect":null}"#
+            r#"{"type":"status","live":true,"muted":false,"deafened":true,"watching":null,"watchingAll":[],"effect":null,"arcade":null}"#
         );
         let watching = serde_json::to_string(&Outgoing::Status {
             live: false,
@@ -664,6 +680,7 @@ mod tests {
             watching: Some("0123456789abcdef"),
             watching_all: &["0123456789abcdef".to_owned(), "fedcba9876543210".to_owned()],
             effect: None,
+            arcade: None,
         })
         .unwrap();
         assert!(watching.contains(r#""watching":"0123456789abcdef""#), "{watching}");
@@ -679,11 +696,31 @@ mod tests {
             watching: None,
             watching_all: &[],
             effect: Some(&ondas),
+            arcade: None,
         })
         .unwrap();
         assert!(
-            effect.ends_with(r##""effect":{"kind":"waves","color":"#ff8800"}}"##),
+            effect.ends_with(r##""effect":{"kind":"waves","color":"#ff8800"},"arcade":null}"##),
             "{effect}"
+        );
+        let fliperama = Arcade {
+            game: Some("Bomberman".into()),
+            slots: 3,
+            players: vec!["0123456789abcdef".into()],
+        };
+        let arcade = serde_json::to_string(&Outgoing::Status {
+            live: true,
+            muted: false,
+            deafened: false,
+            watching: None,
+            watching_all: &[],
+            effect: None,
+            arcade: Some(&fliperama),
+        })
+        .unwrap();
+        assert!(
+            arcade.ends_with(r#""arcade":{"game":"Bomberman","slots":3,"players":["0123456789abcdef"]}}"#),
+            "{arcade}"
         );
         let sig = Signal::WatchDeny {
             reason: "não está ao vivo".into(),
@@ -743,6 +780,7 @@ mod tests {
                     watching: None,
                     watching_all: Vec::new(),
                     effect: None,
+                    arcade: None,
                 }],
                 room: None,
                 resume: None,
