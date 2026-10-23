@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.1](https://github.com/Kaique292/squadview/compare/v0.11.0...v0.11.1) (2026-10-23)
+
+
+### 🐛 Correções
+
+* **app:** fliperama mais seguro e com menos atraso, e a live fecha com o programa ([#100](https://github.com/Kaique292/squadview/issues/100)) ([bd2d93a](https://github.com/Kaique292/squadview/commit/bd2d93a0502f7a5a26a26e674dc010758968853e))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e a captura do fliperama para a versão 0.11.1 ([#101](https://github.com/Kaique292/squadview/issues/101)) ([26276d0](https://github.com/Kaique292/squadview/commit/26276d0abbfda4fc7bc835d5912a6ccb970cc229))
+
 ## [0.11.0](https://github.com/Kaique292/squadview/compare/v0.10.0...v0.11.0) (2026-10-23)
 
 
