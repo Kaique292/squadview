@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.0](https://github.com/Kaique292/squadview/compare/v0.11.1...v0.12.0) (2026-10-23)
+
+
+### ✨ Novidades
+
+* **app:** entra no fliperama pelos "..." da live ([#108](https://github.com/Kaique292/squadview/issues/108)) ([1bb618b](https://github.com/Kaique292/squadview/commit/1bb618bb61af211bee930cbe6f6c6d0bbdf3d63b))
+* **ui:** usa a Noto Sans no padrão de tipografia do Discord ([#112](https://github.com/Kaique292/squadview/issues/112)) ([0e15303](https://github.com/Kaique292/squadview/commit/0e15303e4070cfa04cbb1ef28a635eb6db4275ac))
+
+
+### 🐛 Correções
+
+* **app:** no fliperama o amigo é o P2 e vê as teclas do controle ([#109](https://github.com/Kaique292/squadview/issues/109)) ([832dacc](https://github.com/Kaique292/squadview/commit/832dacc671c6bbc2e8079bc912caeeb08ff356fd))
+* **app:** procura atualização ao voltar o foco e tira o "Fechar" do fliperama ([#105](https://github.com/Kaique292/squadview/issues/105)) ([2d3546d](https://github.com/Kaique292/squadview/commit/2d3546d7e1a1ec4ef21451e87b45662b6cf5bce2))
+* **app:** tempo da sala, mudo visto de fora e live que acaba ao sair ([#107](https://github.com/Kaique292/squadview/issues/107)) ([aed43d2](https://github.com/Kaique292/squadview/commit/aed43d2c1be53fde926204e363a068ef79b5e497))
+* **ui:** o vídeo da nossa live acompanha o quadro na faixa ([#111](https://github.com/Kaique292/squadview/issues/111)) ([4eb1ba3](https://github.com/Kaique292/squadview/commit/4eb1ba364a1a0f561ea46f54a109942596afb2e9))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e a captura do fliperama para a versão 0.12.0 ([#106](https://github.com/Kaique292/squadview/issues/106)) ([8b94dbc](https://github.com/Kaique292/squadview/commit/8b94dbcd80437f6c9c62e42f0b7de4b89022e930))
+* **docs:** cita no README o P2 e a legenda das teclas do fliperama ([#110](https://github.com/Kaique292/squadview/issues/110)) ([4da83aa](https://github.com/Kaique292/squadview/commit/4da83aa24782519362514ddadf851fd15a6e8d85))
+* **docs:** refaz as capturas do README com a fonte nova da 0.12.0 ([#113](https://github.com/Kaique292/squadview/issues/113)) ([537a8de](https://github.com/Kaique292/squadview/commit/537a8de9965cdf1256e9a956e3336654922d68dc))
+
 ## [0.11.1](https://github.com/Kaique292/squadview/compare/v0.11.0...v0.11.1) (2026-10-23)
 
 
