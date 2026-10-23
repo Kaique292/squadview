@@ -48,7 +48,23 @@ export const NO_VOICE_FLAGS: VoiceFlags = { muted: false, deafened: false };
 /** Onde um membro está: o código da sala, o ao vivo, o mudo e o silenciado. */
 type Here = { code: string; live: boolean } & Partial<VoiceFlags>;
 
-export type ServerPresence = Record<string, ({ id: string; live: boolean } & VoiceFlags)[]>;
+/**
+ * Alguém numa sala, como a própria sala conta ao servidor (ADR 0025): membro ou não. `id` é o do
+ * Discord para quem entrou conferido (o mesmo da lista de membros) e o id da sala para os outros.
+ */
+export interface Occupant extends VoiceFlags {
+  id: string;
+  name: string;
+  /** Conta do Discord que a pessoa mostra na sala (foto); `null` sem Discord. */
+  discord: { id: string; avatar: string | null } | null;
+  live: boolean;
+}
+
+/** Quem está em cada sala. `name`/`discord` só vêm da lista da sala (ADR 0025). */
+export type ServerPresence = Record<
+  string,
+  ({ id: string; live: boolean; name?: string; discord?: Occupant["discord"] } & VoiceFlags)[]
+>;
 
 /** O que alguém pode pedir ao servidor (já conferido quem é pelo registro dele). */
 export type ServerOp =
@@ -179,21 +195,77 @@ export class ServerState {
     return true;
   }
 
+  /** A lista de quem está em cada sala, como as salas mandaram (código → lista). */
+  private occupants(): Record<string, Occupant[]> {
+    return this.store.get<Record<string, Occupant[]>>("occupants") ?? {};
+  }
+
   /**
-   * Quem está em cada sala. Só membros e só salas que ainda existem: quem saiu do servidor (ou cuja
-   * sala foi apagada) some daqui sem precisar limpar nada.
+   * A sala `code` contou quem está nela (ADR 0025): membros e quem entrou só com o código. Código que
+   * não é de uma sala daqui é ignorado. `true` se algo mudou (avisar).
+   */
+  setOccupants(code: string, list: Occupant[]): boolean {
+    if (!this.rooms().some((r) => r.code === code)) return false;
+    const before = this.occupants()[code];
+    if (before && JSON.stringify(before) === JSON.stringify(list)) return false;
+    this.update<Record<string, Occupant[]>>("occupants", {}, (all) => (all[code] = list));
+    return true;
+  }
+
+  /**
+   * Quem está em cada sala, só das salas que ainda existem. A sala que já mandou a lista dela vale
+   * por ela (todo mundo, membro ou não); enquanto não mandou, vale a presença antiga, vinda dos
+   * registros dos membros (só membros).
    */
   presence(): ServerPresence {
     const members = this.members();
+    const occupants = this.occupants();
     const result: ServerPresence = {};
-    for (const room of this.rooms()) result[room.id] = [];
+    for (const room of this.rooms()) {
+      const list = occupants[room.code];
+      result[room.id] = list
+        ? list.map((o) => ({
+            id: o.id,
+            live: o.live,
+            muted: o.muted,
+            deafened: o.deafened,
+            name: o.name,
+            discord: o.discord,
+          }))
+        : [];
+    }
     const byCode = new Map(this.rooms().map((r) => [r.code, r.id]));
     for (const [id, at] of Object.entries(this.here())) {
       const room = byCode.get(at.code);
+      if (!room || occupants[at.code] || !members[id]) continue;
       // A presença guardada por um Worker antigo não tem o mudo: conta como falando.
-      if (room && members[id]) result[room].push({ id, live: at.live, muted: !!at.muted, deafened: !!at.deafened });
+      result[room].push({ id, live: at.live, muted: !!at.muted, deafened: !!at.deafened });
     }
     return result;
+  }
+
+  /**
+   * As salas que precisam saber (ou deixar de saber) que são deste servidor (ADR 0025): as novas e
+   * as que já existiam antes da ligação, e as apagadas (ou todas, se o servidor foi apagado). Marca
+   * como feito; quem chama avisa cada sala.
+   */
+  syncRoomBindings(): { bind: string[]; unbind: string[] } {
+    const codes = this.info() ? this.rooms().map((r) => r.code) : [];
+    const bound = this.store.get<string[]>("bound") ?? [];
+    const bind = codes.filter((c) => !bound.includes(c));
+    const unbind = bound.filter((c) => !codes.includes(c));
+    if (codes.length === 0) {
+      // Servidor apagado: não sobra nada guardado.
+      this.store.delete("bound");
+      this.store.delete("occupants");
+    } else if (bind.length || unbind.length) {
+      this.store.put("bound", codes);
+      if (unbind.length)
+        this.update<Record<string, Occupant[]>>("occupants", {}, (all) => {
+          for (const c of unbind) delete all[c];
+        });
+    }
+    return { bind, unbind };
   }
 
   /** Cria o servidor com o dono e uma sala "Geral" (vazio, ninguém teria onde entrar). */

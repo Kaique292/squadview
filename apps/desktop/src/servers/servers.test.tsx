@@ -330,6 +330,19 @@ describe("servidores na barra de salas", () => {
       presence: { "00000002": [{ id: "123456789012345678", live: false }] },
     });
     expect(within(ranked).queryByText("Beto")).toBeNull();
+
+    // Regressão (ADR 0025): quem entrou só com o código também aparece, com o nome que a sala mandou.
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: {
+        "00000002": [
+          { id: "0123456789abcdef", live: false, muted: true, deafened: false, name: "Lobo", discord: null },
+        ],
+      },
+    });
+    expect(within(ranked).getByText("Lobo")).toBeInTheDocument();
+    expect(within(ranked).getByLabelText("Microfone silenciado")).toBeInTheDocument();
     act(() => clearServers());
     expect(useServersStore.getState().presence).toEqual({});
   });
