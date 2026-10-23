@@ -125,7 +125,7 @@ function RoomOccupants(props: { server: Server; roomId: string }) {
         return (
           <li key={p.id} className="flex items-center gap-2 rounded-md px-2 py-1 text-text-muted">
             <Avatar name={member.name} size={24} src={member.avatar ? avatarUrl(member, 64) : undefined} />
-            <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{member.name}</span>
             {(p.muted || p.deafened) && (
               <MicOff size={14} aria-label="Microfone silenciado" className="shrink-0 text-text-faint" />
             )}

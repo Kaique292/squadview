@@ -1,4 +1,4 @@
-import "@fontsource-variable/figtree";
+import "@fontsource-variable/noto-sans";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, type SplashProgress, type SplashUpdate } from "./boot";

@@ -336,7 +336,7 @@ function MemberRow(props: {
           src={memberPhoto(member, !!props.isMe, profile, 64)}
         />
         <span
-          className={`min-w-0 flex-1 truncate text-sm ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
+          className={`min-w-0 flex-1 truncate text-sm font-medium ${props.watching || member.live ? "text-text" : "text-text-muted group-hover:text-text"}`}
         >
           {member.name}
           {props.isMe && <span className="text-text-faint"> (você)</span>}
