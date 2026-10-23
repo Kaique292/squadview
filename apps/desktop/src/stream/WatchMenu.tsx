@@ -1,7 +1,17 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChartNoAxesColumn, EyeOff, Maximize2, PictureInPicture2, Volume2, VolumeX } from "lucide-react";
+import {
+  ChartNoAxesColumn,
+  EyeOff,
+  Gamepad2,
+  LogOut,
+  Maximize2,
+  PictureInPicture2,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import type { CSSProperties } from "react";
+import { freeSlots, useArcadeStore } from "../arcade/arcade-store";
 import { MAX_WATCH_VOLUME, useRoomStore, type Watch } from "../room/room-store";
 import { CheckMark } from "../ui/Checkbox";
 import { useStreamStore } from "./stream-store";
@@ -18,7 +28,8 @@ const ITEM =
 
 /**
  * O menu da live de quem assistimos, como o do Discord: o volume dela, silenciar, soltar em picture
- * in picture, tela cheia, os detalhes e parar de assistir. Igual no botão direito e nos "...".
+ * in picture, tela cheia, os detalhes, entrar no fliperama e parar de assistir. Igual no botão
+ * direito e nos "...".
  */
 export function WatchMenuItems(props: { kind: "context" | "dropdown"; watch: Watch; onDetails: () => void }) {
   const M = KITS[props.kind];
@@ -82,6 +93,7 @@ export function WatchMenuItems(props: { kind: "context" | "dropdown"; watch: Wat
         Detalhes da transmissão
         <ChartNoAxesColumn size={18} />
       </M.Item>
+      <ArcadeItem kit={M} memberId={memberId} />
       <M.Separator className="my-1 h-px bg-surface-3" />
       <M.Item
         onSelect={() => void stopWatching(memberId)}
@@ -91,5 +103,33 @@ export function WatchMenuItems(props: { kind: "context" | "dropdown"; watch: Wat
         <EyeOff size={18} />
       </M.Item>
     </>
+  );
+}
+
+/**
+ * O fliperama aberto nessa live (ADR 0023): entrar como jogador ou sair, como no botão direito no
+ * nome de quem transmite. Sem fliperama, não aparece.
+ */
+function ArcadeItem(props: { kit: Kit; memberId: string }) {
+  const M = props.kit;
+  // O membro atualizado da sala: o fliperama abre e enche depois de começarmos a assistir.
+  const member = useRoomStore((s) => s.members.find((m) => m.id === props.memberId));
+  const playing = useArcadeStore((s) => s.playing);
+  const { join, leave } = useArcadeStore();
+  if (!member?.arcade) return null;
+  if (playing?.hostId === member.id) {
+    return (
+      <M.Item onSelect={() => void leave()} className={ITEM}>
+        Sair do fliperama
+        <LogOut size={18} />
+      </M.Item>
+    );
+  }
+  const free = freeSlots(member);
+  return (
+    <M.Item disabled={free === 0} onSelect={() => void join(member)} className={ITEM}>
+      {free === 0 ? "Fliperama cheio" : `Entrar no fliperama (${free} ${free === 1 ? "vaga" : "vagas"})`}
+      <Gamepad2 size={18} />
+    </M.Item>
   );
 }
