@@ -1,10 +1,11 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
  * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`,
- * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes` ou `#demo=assistindo`.
+ * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes`, `#demo=assistindo` ou `#demo=fliperama`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
 import { useAccountStore } from "../account/account-store";
+import { useArcadeStore } from "../arcade/arcade-store";
 import { type DmMessage, useDmStore } from "../dm/dm-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { useAppearanceStore } from "../settings/appearance-store";
@@ -223,6 +224,21 @@ function goLive() {
   }, 250);
 }
 
+/** O nosso fliperama aberto sobre a live (ADR 0023): Lobo é o P2, Yondaime o P3 e com o controle total. */
+function openArcade() {
+  const arcade = { game: "Super Bomberman R", slots: 3, players: ["b", "c"] };
+  useRoomStore.setState({
+    members: useRoomStore.getState().members.map((m) => (m.id === "eu" ? { ...m, arcade } : m)),
+  });
+  useArcadeStore.setState({
+    hostDialog: true,
+    seats: [
+      { memberId: "b", slot: 2, connected: true, kbm: false },
+      { memberId: "c", slot: 3, connected: true, kbm: true },
+    ],
+  });
+}
+
 /** Assistindo duas lives ao mesmo tempo (Minato e Yondaime), cada uma como um quadro da sala. */
 function watchTwo() {
   const history = liveHistory();
@@ -324,7 +340,8 @@ export function runDemo(scene: string) {
         },
       },
     });
-  if (scene === "transmitindo" || scene === "detalhes") goLive();
+  if (scene === "transmitindo" || scene === "detalhes" || scene === "fliperama") goLive();
+  if (scene === "fliperama") openArcade();
   if (scene === "assistindo") watchTwo();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
