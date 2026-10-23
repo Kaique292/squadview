@@ -140,8 +140,11 @@ export interface Resume {
 }
 
 export type ServerMessage =
-  /** `resume`: token para voltar com o mesmo `you` se a conexão cair (ADR 0022). */
-  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null; resume: string }
+  /**
+   * `resume`: token para voltar com o mesmo `you` se a conexão cair (ADR 0022). `elapsed`: há
+   * quantos ms a sala deixou de estar vazia (o tempo do canal de voz), igual para todos.
+   */
+  | { type: "welcome"; you: PeerId; members: Member[]; room: string | null; resume: string; elapsed: number }
   | { type: "room-updated"; name: string }
   | { type: "member-joined"; member: Member }
   | { type: "member-updated"; member: Member }

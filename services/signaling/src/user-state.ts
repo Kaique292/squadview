@@ -13,10 +13,15 @@ import {
   SERVER_ID,
   type ServerError,
   type ServerOp,
+  NO_VOICE_FLAGS,
   type ServerPresence,
   type ServerResult,
   type ServerSnapshot,
+  type VoiceFlags,
 } from "./server-state";
+
+/** O que avisamos ao servidor da nossa sala (para comparar e avisar a saída depois). */
+type Reported = { server: string; code: string; live: boolean } & Partial<VoiceFlags>;
 import { cleanAvatar, cleanProfileName, type Profile } from "./session";
 import type { TurnCredentials } from "./turn";
 
@@ -57,7 +62,14 @@ export type JoinResult =
 
 export type UserClientMessage =
   | { type: "profile"; name: string; avatar: string | null }
-  | { type: "status"; room: { code: string; name: string | null } | null; live: boolean }
+  /** `muted`/`deafened`: ausentes no app até a 0.11.1 (contam como falso). */
+  | {
+      type: "status";
+      room: { code: string; name: string | null } | null;
+      live: boolean;
+      muted?: boolean;
+      deafened?: boolean;
+    }
   | { type: "friend-request"; id: string }
   | { type: "friend-accept"; id: string }
   | { type: "friend-decline"; id: string }
@@ -111,7 +123,7 @@ export type UserServerMessage =
     };
 
 export interface UserAttachment {
-  status: { room: { code: string; name: string | null } | null; live: boolean };
+  status: { room: { code: string; name: string | null } | null; live: boolean; muted?: boolean; deafened?: boolean };
   rateWindowStart: number;
   rateCount: number;
 }
@@ -148,8 +160,17 @@ export interface Peers {
   /** Um pedido ao servidor; ele mesmo avisa os outros membros (não quem pediu). */
   serverAct(server: string, actor: Profile, op: ServerOp): Promise<ServerResult>;
   serverSnapshot(server: string): Promise<ServerSnapshot | null>;
-  /** Avisa o servidor que entramos numa sala dele (`code`), saímos (`null`) ou mudou o ao vivo. */
-  serverSetPresence(server: string, member: string, code: string | null, live: boolean): Promise<void>;
+  /**
+   * Avisa o servidor que entramos numa sala dele (`code`), saímos (`null`) ou mudou o ao vivo, o
+   * mudo ou o silenciado.
+   */
+  serverSetPresence(
+    server: string,
+    member: string,
+    code: string | null,
+    live: boolean,
+    voice: VoiceFlags,
+  ): Promise<void>;
   /** Quem está em cada sala do servidor agora. */
   serverPresence(server: string): Promise<ServerPresence>;
   /** Nome ou foto mudou: o servidor atualiza e avisa os outros. */
@@ -233,11 +254,16 @@ export function parseUserMessage(raw: string): UserClientMessage | null {
     }
     case "status": {
       if (typeof data.live !== "boolean") return null;
-      if (data.room === null) return { type: "status", room: null, live: data.live };
+      // Só vêm do app a partir da 0.11.2; sem eles, a mensagem fica como antes.
+      const voice = {
+        ...(typeof data.muted === "boolean" ? { muted: data.muted } : {}),
+        ...(typeof data.deafened === "boolean" ? { deafened: data.deafened } : {}),
+      };
+      if (data.room === null) return { type: "status", room: null, live: data.live, ...voice };
       if (!isPlainObject(data.room) || typeof data.room.code !== "string" || !isValidRoomCode(data.room.code))
         return null;
       const name = data.room.name === null || data.room.name === undefined ? null : cleanProfileName(data.room.name);
-      return { type: "status", room: { code: data.room.code, name }, live: data.live };
+      return { type: "status", room: { code: data.room.code, name }, live: data.live, ...voice };
     }
     case "friend-request":
     case "friend-accept":
@@ -317,8 +343,8 @@ export class UserState {
     return this.store.get<Record<string, string>>("serverRooms") ?? {};
   }
   /** Onde avisamos o servidor que estamos (para avisar a saída depois). */
-  private reported(): { server: string; code: string; live: boolean } | null {
-    return this.store.get<{ server: string; code: string; live: boolean } | null>("reported") ?? null;
+  private reported(): Reported | null {
+    return this.store.get<Reported | null>("reported") ?? null;
   }
 
   /** Guarda (ou tira, com `rooms` vazio) as salas de um servidor no índice código → servidor. */
@@ -336,17 +362,32 @@ export class UserState {
   private async reportServerPresence(gone?: UserConnection): Promise<void> {
     // A conexão que acabou de fechar (`gone`) ainda pode aparecer na lista: não conta.
     const conns = this.connections().filter((c) => c.key !== gone?.key);
-    const room = conns.map((c) => c.getAttachment()?.status.room).find((r) => r) ?? null;
+    const inRoom = conns.map((c) => c.getAttachment()?.status).find((s) => s?.room);
+    const room = inRoom?.room ?? null;
     const live = conns.some((c) => c.getAttachment()?.status.live);
     const server = room ? this.serverRooms()[room.code] : undefined;
-    const now = server && room ? { server, code: room.code, live } : null;
+    const now: Reported | null =
+      server && room ? { server, code: room.code, live, muted: !!inRoom?.muted, deafened: !!inRoom?.deafened } : null;
     const before = this.reported();
-    if (before?.server === now?.server && before?.code === now?.code && before?.live === now?.live) return;
+    if (
+      before?.server === now?.server &&
+      before?.code === now?.code &&
+      before?.live === now?.live &&
+      !!before?.muted === !!now?.muted &&
+      !!before?.deafened === !!now?.deafened
+    )
+      return;
     this.store.put("reported", now);
     const calls: Promise<void>[] = [];
     if (before && before.server !== now?.server)
-      calls.push(this.peers.serverSetPresence(before.server, this.id, null, false));
-    if (now) calls.push(this.peers.serverSetPresence(now.server, this.id, now.code, now.live));
+      calls.push(this.peers.serverSetPresence(before.server, this.id, null, false, NO_VOICE_FLAGS));
+    if (now)
+      calls.push(
+        this.peers.serverSetPresence(now.server, this.id, now.code, now.live, {
+          muted: !!now.muted,
+          deafened: !!now.deafened,
+        }),
+      );
     await Promise.all(calls.map((c) => c.catch(() => {})));
   }
 
@@ -403,7 +444,10 @@ export class UserState {
         return;
       }
       case "status": {
-        conn.setAttachment({ ...attachment, status: { room: msg.room, live: msg.live } });
+        conn.setAttachment({
+          ...attachment,
+          status: { room: msg.room, live: msg.live, muted: !!msg.muted, deafened: !!msg.deafened },
+        });
         await Promise.all([this.announce(), this.reportServerPresence()]);
         return;
       }

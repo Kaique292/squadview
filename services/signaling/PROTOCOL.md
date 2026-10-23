@@ -32,15 +32,15 @@ Todas as mensagens são texto JSON. Mensagens binárias são recusadas.
 
 ### Servidor → cliente
 
-| Mensagem                                                                                                  | Quando                                                                                                        |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live","muted","deafened"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. |
-| `{"type":"room-updated","name":"Squad"}`                                                                  | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                             |
-| `{"type":"member-joined","member":{...}}`                                                                 | Alguém entrou (não é enviado para quem entrou).                                                               |
-| `{"type":"member-updated","member":{...}}`                                                                | Alguém mudou o `live`, o apelido ou o estado de voz.                                                          |
-| `{"type":"member-left","id":"<peerId>"}`                                                                  | Alguém saiu, foi desconectado por erro ou caiu e não voltou em 60 s.                                          |
-| `{"type":"signal","from":"<peerId>","payload":{...}}`                                                     | Mensagem de outro membro.                                                                                     |
-| `{"type":"error","code":"..."}`                                                                           | Ver abaixo.                                                                                                   |
+| Mensagem                                                                                                  | Quando                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"welcome","you":"<peerId>","members":[{"id","name","live","muted","deafened"}],"room":"Galera"}` | Resposta ao `join`. `members` são os **outros** membros. `room`: nome da sala, ou `null` se ela não tem nome. `elapsed`: há quantos ms a sala deixou de estar vazia (o tempo do canal de voz); só recomeça do zero quando a sala fica vazia, sem contar quem caiu e ainda pode voltar. |
+| `{"type":"room-updated","name":"Squad"}`                                                                  | Alguém renomeou a sala (vai para todos, inclusive quem renomeou).                                                                                                                                                                                                                      |
+| `{"type":"member-joined","member":{...}}`                                                                 | Alguém entrou (não é enviado para quem entrou).                                                                                                                                                                                                                                        |
+| `{"type":"member-updated","member":{...}}`                                                                | Alguém mudou o `live`, o apelido ou o estado de voz.                                                                                                                                                                                                                                   |
+| `{"type":"member-left","id":"<peerId>"}`                                                                  | Alguém saiu, foi desconectado por erro ou caiu e não voltou em 60 s.                                                                                                                                                                                                                   |
+| `{"type":"signal","from":"<peerId>","payload":{...}}`                                                     | Mensagem de outro membro.                                                                                                                                                                                                                                                              |
+| `{"type":"error","code":"..."}`                                                                           | Ver abaixo.                                                                                                                                                                                                                                                                            |
 
 `peerId` são 16 caracteres hexadecimais aleatórios, gerados pelo servidor a cada `join` (menos na retomada, abaixo).
 
@@ -103,15 +103,15 @@ O token do Discord é usado uma vez (para ler `/users/@me`) e não é guardado. 
 
 App → registro:
 
-| Mensagem                                                                              | O que faz                                                               |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `{"type":"profile","name":"K.A","avatar":"<hash>"}`                                   | Nome e foto que os amigos veem                                          |
-| `{"type":"status","room":{"code":"B8RJ2Q","name":"Galera"},"live":false}`             | Em que sala está (`room: null` fora de sala). O código fica no servidor |
-| `{"type":"friend-request","id":"<discord id>"}`                                       | Pede amizade (só a quem está nos recentes)                              |
-| `{"type":"friend-accept"}` / `friend-decline` / `friend-cancel` / `unfriend` com `id` | Responde, cancela ou desfaz                                             |
-| `{"type":"set-direct","id":"...","direct":true}`                                      | Esse amigo entra direto nas minhas salas                                |
-| `{"type":"join","id":"..."}`                                                          | Quero entrar na sala desse amigo                                        |
-| `{"type":"invite","id":"..."}`                                                        | Chama esse amigo para a minha sala                                      |
+| Mensagem                                                                                                 | O que faz                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"profile","name":"K.A","avatar":"<hash>"}`                                                      | Nome e foto que os amigos veem                                                                                                                                        |
+| `{"type":"status","room":{"code":"B8RJ2Q","name":"Galera"},"live":false,"muted":false,"deafened":false}` | Em que sala está (`room: null` fora de sala). O código fica no servidor. `muted`/`deafened` (opcionais, falsos se faltarem) vão para a presença das salas de servidor |
+| `{"type":"friend-request","id":"<discord id>"}`                                                          | Pede amizade (só a quem está nos recentes)                                                                                                                            |
+| `{"type":"friend-accept"}` / `friend-decline` / `friend-cancel` / `unfriend` com `id`                    | Responde, cancela ou desfaz                                                                                                                                           |
+| `{"type":"set-direct","id":"...","direct":true}`                                                         | Esse amigo entra direto nas minhas salas                                                                                                                              |
+| `{"type":"join","id":"..."}`                                                                             | Quero entrar na sala desse amigo                                                                                                                                      |
+| `{"type":"invite","id":"..."}`                                                                           | Chama esse amigo para a minha sala                                                                                                                                    |
 
 Registro → app:
 

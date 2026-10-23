@@ -145,9 +145,9 @@ class World {
       },
       dmSignal: async (to, from, payload) => this.person(to).state.onDmSignal(from, payload),
       turn: async () => this.turnCredentials,
-      serverSetPresence: async (id, member, code, live) => {
+      serverSetPresence: async (id, member, code, live, voice) => {
         const srv = this.server(id);
-        if (!srv.setPresence(member, code, live)) return;
+        if (!srv.setPresence(member, code, live, voice)) return;
         const presence = srv.presence();
         for (const m of srv.memberIds()) this.person(m).state.onServerPresence(id, presence);
       },
@@ -586,14 +586,27 @@ describe("presença nas salas do servidor (ADR 0018)", () => {
     const { ana, beto, geral } = await servidorComAmigos();
     await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
     // A Ana está fora da sala e mesmo assim vê o Beto lá dentro.
-    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false }] });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false, muted: false, deafened: false }] });
     await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: true });
-    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: true }] });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: true, muted: false, deafened: false }] });
     // Ao conectar de novo, já chega quem está em cada sala.
     const outra = await world.connect(ANA, "Ana");
-    expect(presence(outra)).toEqual({ [geral.id]: [{ id: BETO, live: true }] });
+    expect(presence(outra)).toEqual({ [geral.id]: [{ id: BETO, live: true, muted: false, deafened: false }] });
     await send(world, BETO, beto, { type: "status", room: null, live: false });
     expect(presence(ana)).toEqual({ [geral.id]: [] });
+  });
+
+  // Regressão: quem via a sala de fora não sabia que o amigo estava mudo ou silenciado.
+  it("o mudo e o silenciado de quem está na sala aparecem para quem está fora", async () => {
+    const { ana, beto, geral } = await servidorComAmigos();
+    const room = { code: geral.code, name: "Geral" };
+    await send(world, BETO, beto, { type: "status", room, live: false, muted: true, deafened: true });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false, muted: true, deafened: true }] });
+    await send(world, BETO, beto, { type: "status", room, live: false, muted: true, deafened: false });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false, muted: true, deafened: false }] });
+    // App até a 0.11.1 (sem os campos): conta como falando.
+    await send(world, BETO, beto, { type: "status", room, live: false });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false, muted: false, deafened: false }] });
   });
 
   it("quem entra pelo convite já vê quem está nas salas, sem reconectar", async () => {
@@ -608,7 +621,7 @@ describe("presença nas salas do servidor (ADR 0018)", () => {
     // O retrato chega antes da presença (a lateral precisa do Beto na lista para mostrá-lo).
     const types = beto.sent.map((m) => m.type);
     expect(types.lastIndexOf("server")).toBeLessThan(types.lastIndexOf("server-presence"));
-    expect(presence(beto)).toEqual({ [geral.id]: [{ id: ANA, live: true }] });
+    expect(presence(beto)).toEqual({ [geral.id]: [{ id: ANA, live: true, muted: false, deafened: false }] });
   });
 
   it("fechar o app tira a pessoa da sala; sala que não é do servidor não aparece", async () => {
@@ -616,7 +629,7 @@ describe("presença nas salas do servidor (ADR 0018)", () => {
     await send(world, BETO, beto, { type: "status", room: { code: "ABCDEF", name: "Outra" }, live: false });
     expect(ana.last("server-presence")).toBeUndefined();
     await send(world, BETO, beto, { type: "status", room: { code: geral.code, name: "Geral" }, live: false });
-    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false }] });
+    expect(presence(ana)).toEqual({ [geral.id]: [{ id: BETO, live: false, muted: false, deafened: false }] });
     await world.disconnect(BETO, beto);
     expect(presence(ana)).toEqual({ [geral.id]: [] });
   });
@@ -630,7 +643,7 @@ describe("presença nas salas do servidor (ADR 0018)", () => {
     expect(s.setPresence(ANA, geral.code, false)).toBe(true);
     // Repetir o mesmo não avisa de novo.
     expect(s.setPresence(ANA, geral.code, false)).toBe(false);
-    expect(s.presence()).toEqual({ [geral.id]: [{ id: ANA, live: false }] });
+    expect(s.presence()).toEqual({ [geral.id]: [{ id: ANA, live: false, muted: false, deafened: false }] });
     expect(s.setPresence(ANA, null, false)).toBe(true);
     expect(s.setPresence(ANA, null, false)).toBe(false);
   });

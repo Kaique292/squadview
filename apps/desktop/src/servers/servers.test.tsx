@@ -312,6 +312,16 @@ describe("servidores na barra de salas", () => {
     expect(within(quem).getByText("Ao vivo")).toHaveClass("uppercase");
     const geral = within(salas).getByRole("button", { name: "Geral" }).closest("li")!;
     expect(within(geral).queryByRole("list", { name: "Quem está na sala" })).toBeNull();
+    expect(within(quem).queryByLabelText("Microfone silenciado")).toBeNull();
+
+    // Regressão: de fora, não aparecia que o amigo estava mudo e silenciado.
+    emit("friends-event", {
+      type: "server-presence",
+      server: "0000000000000001",
+      presence: { "00000002": [{ id: BETO, live: false, muted: true, deafened: true }] },
+    });
+    expect(within(ranked).getByLabelText("Microfone silenciado")).toBeInTheDocument();
+    expect(within(ranked).getByLabelText("Ensurdecido")).toBeInTheDocument();
 
     // Quem não é (mais) membro não aparece; sair da conta limpa tudo.
     emit("friends-event", {

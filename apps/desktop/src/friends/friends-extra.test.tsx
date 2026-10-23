@@ -205,7 +205,9 @@ describe("respostas do registro", () => {
   it("começar a transmitir avisa os amigos", () => {
     emit("friends-status", "online");
     act(() => useStreamStore.setState({ status: "live" }));
-    expect(invoke).toHaveBeenCalledWith("friends_action", { action: { type: "status", room: null, live: true } });
+    expect(invoke).toHaveBeenCalledWith("friends_action", {
+      action: { type: "status", room: null, live: true, muted: false, deafened: false },
+    });
   });
 
   it("entrar com o Discord avisa os amigos do nome e da foto", () => {

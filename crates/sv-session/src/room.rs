@@ -207,6 +207,8 @@ struct Inner {
     peer: Peer,
     me: Mutex<Member>,
     room_name: Mutex<Option<String>>,
+    /// Desde quando a sala está ocupada (ms desde 1970, no relógio deste PC).
+    occupied_since: u64,
     members: Mutex<BTreeMap<String, Member>>,
     broadcaster: Broadcaster,
     /// Formato do que estamos transmitindo (None: não estamos ao vivo ou o encoder ainda não começou).
@@ -320,11 +322,12 @@ impl Room {
                     members,
                     room,
                     resume,
-                }) => (you, members, room, resume),
+                    elapsed,
+                }) => (you, members, room, resume, occupied_since(elapsed)),
                 Some(WireEvent::Error(code)) => return Err(error_message(&code).to_owned()),
                 _ => return Err("o serviço de salas não respondeu".to_owned()),
             };
-            let (you, members, room, resume) = me;
+            let (you, members, room, resume, occupied_since) = me;
             let inner = Arc::new(Inner {
                 client: Mutex::new(client),
                 signaling_url: signaling_url.to_owned(),
@@ -346,6 +349,7 @@ impl Room {
                     arcade: None,
                 }),
                 room_name: Mutex::new(room),
+                occupied_since,
                 members: Mutex::new(members.into_iter().map(|m| (m.id.clone(), m)).collect()),
                 broadcaster: Broadcaster::new(),
                 stream: Mutex::new(None),
@@ -391,6 +395,12 @@ impl Room {
     /// Nome da sala, se ela tiver um.
     pub fn room_name(&self) -> Option<String> {
         lock(&self.inner.room_name).clone()
+    }
+
+    /// Desde quando a sala está ocupada (ms desde 1970, no relógio deste PC): o tempo do canal de
+    /// voz, que só zera quando a sala fica vazia. Sair e voltar não zera.
+    pub fn occupied_since(&self) -> u64 {
+        self.inner.occupied_since
     }
 
     /// Renomeia a sala para todos. A confirmação volta como [`RoomUpdate::RoomName`].
@@ -639,6 +649,16 @@ impl Drop for Room {
         self.inner.voice.close();
         self.inner.peer.close();
     }
+}
+
+/// Converte o `elapsed` do Worker (há quantos ms a sala deixou de estar vazia) num instante no
+/// relógio deste PC, para não depender de os relógios do Worker e do PC baterem. Sem ele (Worker
+/// antigo), conta de agora, como antes.
+fn occupied_since(elapsed: Option<u64>) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    now.saturating_sub(elapsed.unwrap_or(0))
 }
 
 /// `member` assiste `streamer`: pela lista nova (ADR 0019) ou pelo campo antigo (apps até o 0.8.0).
@@ -1287,6 +1307,7 @@ async fn reconnect(inner: &Arc<Inner>, reason: String) -> Option<tokio::sync::mp
                 members,
                 room,
                 resume: token,
+                ..
             }) => {
                 let resumed = resume.as_ref().is_some_and(|r| r.id == you);
                 *lock(&inner.client) = client;

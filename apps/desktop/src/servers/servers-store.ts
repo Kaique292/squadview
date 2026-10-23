@@ -34,7 +34,8 @@ export interface Server {
 }
 
 /** Quem está em cada sala do servidor (id da sala → membros), espelha o Worker (ADR 0018). */
-export type ServerPresence = Record<string, { id: string; live: boolean }[]>;
+/** Quem está em cada sala. `muted`/`deafened` faltam num Worker antigo. */
+export type ServerPresence = Record<string, { id: string; live: boolean; muted?: boolean; deafened?: boolean }[]>;
 
 /** Pedido a um servidor (espelha `sv_net::friends::ServerOp`). */
 export type ServerOp =

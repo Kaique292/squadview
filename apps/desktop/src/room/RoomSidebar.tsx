@@ -285,7 +285,7 @@ export function RoomMemberList() {
   );
 }
 
-/** Tempo desde que entramos na sala, como o "2:15:06" do canal de voz. */
+/** Tempo desde que a sala deixou de estar vazia, como o "2:15:06" do canal de voz. */
 export function Elapsed(props: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
