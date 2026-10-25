@@ -310,6 +310,7 @@ fn pedido_antes_do_primeiro_quadro_espera_e_entra_quando_ele_sai() {
         &Signal::WatchRequest {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: false,
         },
     );
     // Sem o primeiro quadro, a Ana não responde nada (nem recusa).
@@ -610,6 +611,7 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         &Signal::WatchRequest {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: false,
         },
     );
     let Signal::WatchAccept {
@@ -677,6 +679,90 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         .expect("o aperto de mão passa");
     let reason = rt.block_on(late.closed());
     assert!(reason.to_string().contains("nao esta transmitindo"), "{reason}");
+}
+
+/// Simulcast (ADR 0026) pela sala de verdade: quem avisa no pedido que aceita trocar de camada e
+/// não dá conta da principal faz a sala pedir a camada baixa, e recebe ela.
+#[test]
+fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let mut beto = friend(&rt, &url, &code, "Beto");
+    let beto_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let ana_id = ana.members("o Beto", |m| m.iter().any(|x| x.name == "Beto"))[0]
+        .id
+        .clone();
+
+    let tap = ana.room.tap();
+    tap.started(&StreamInfo {
+        size: Size::new(1920, 1080),
+        fps: 60,
+        encoder: "teste".into(),
+    });
+    ana.room.stream_started(KeyframeHandle::detached());
+    beto.client.signal(
+        &ana_id,
+        &Signal::WatchRequest {
+            candidates: beto_peer.candidates().to_vec(),
+            fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: true,
+        },
+    );
+    let Signal::WatchAccept {
+        candidates,
+        fingerprint,
+        ..
+    } = beto.signal_from(&rt, &ana_id)
+    else {
+        panic!("a Ana devia aceitar")
+    };
+    let conn = rt
+        .block_on(beto_peer.connect(&candidates, None, &fingerprint))
+        .expect("conectar na Ana");
+    let (tx, got) = mpsc::channel();
+    let _receiver = {
+        let _guard = rt.enter();
+        Receiver::start(conn, Sink(tx))
+    };
+    for _ in 0..100 {
+        if ana.room.viewer_count() == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!tap.wants_low(), "ninguém precisa da camada baixa ainda");
+
+    // Uma rajada maior que a fila do Beto, no mesmo segundo.
+    for seq in 0..60 {
+        tap.video(
+            seq,
+            &EncodedFrame {
+                data: vec![1; 400_000],
+                keyframe: seq == 0,
+                timestamp_us: 1_000 + u64::from(seq),
+                encode_us: 1,
+            },
+        );
+    }
+    assert!(tap.wants_low(), "a sala pede a camada baixa ao encoder");
+
+    std::thread::sleep(Duration::from_millis(500));
+    tap.low_video(
+        1_000,
+        &EncodedFrame {
+            data: vec![2; 1_000],
+            keyframe: true,
+            timestamp_us: 2_000,
+            encode_us: 1,
+        },
+    );
+    loop {
+        if let Got::Video(1_000) = got.recv_timeout(WAIT).expect("a camada baixa não chegou ao Beto") {
+            break;
+        }
+    }
 }
 
 #[test]
@@ -891,6 +977,7 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
             encode_us: 1,
         },
         data: std::sync::Arc::from(vec![7u8; 2000]),
+        layer: sv_net::Layer::Main,
     });
     let first = got.recv_timeout(WAIT).expect("o frame repassado não chegou");
     assert!(matches!(first, Got::Video(5)));

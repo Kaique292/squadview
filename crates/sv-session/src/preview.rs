@@ -10,6 +10,7 @@ use sv_gpu::{Gpu, clock};
 use sv_media::{Bounds, WindowTarget};
 
 use sv_encode::EncodedFrame;
+use sv_net::Layer;
 
 use crate::surface::{Surface, lock};
 use crate::{
@@ -46,6 +47,10 @@ struct Shared {
     tap: Option<Arc<dyn StreamTap>>,
     /// Número de sequência dos frames entregues ao `tap`.
     seq: std::sync::atomic::AtomicU32,
+    /// O mesmo, para a camada baixa do simulcast (cada camada tem a sua sequência).
+    low_seq: std::sync::atomic::AtomicU32,
+    /// Liga a camada baixa no encoder: segue o que o `tap` pede a cada frame.
+    want_low: Arc<AtomicBool>,
 }
 
 impl Shared {
@@ -65,6 +70,8 @@ impl Shared {
             surface: Mutex::new(Surface::default()),
             tap,
             seq: std::sync::atomic::AtomicU32::new(0),
+            low_seq: std::sync::atomic::AtomicU32::new(0),
+            want_low: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -111,6 +118,8 @@ impl Shared {
             ViewerEvent::Presented { latency_us } => lock(&self.meter).record_presented(latency_us),
             ViewerEvent::NeedKeyframe => KeyframeHandle(sender.clone()).request(),
             ViewerEvent::Closed | ViewerEvent::Failed(_) => self.closed.store(true, Ordering::Relaxed),
+            // A prévia mostra sempre a camada principal, do tamanho do encoder.
+            ViewerEvent::Resized(_) => {}
         }
     }
 }
@@ -121,6 +130,12 @@ pub trait StreamTap: Send + Sync + 'static {
     fn started(&self, info: &StreamInfo);
     /// Um frame codificado, com número de sequência.
     fn video(&self, seq: u32, frame: &EncodedFrame);
+    /// Um frame da camada baixa do simulcast (ADR 0026), com a sequência dela.
+    fn low_video(&self, _seq: u32, _frame: &EncodedFrame) {}
+    /// Alguém precisa da camada baixa: enquanto for verdade, o segundo encoder fica ligado.
+    fn wants_low(&self) -> bool {
+        false
+    }
     fn audio(&self, packet: &AudioPacket);
 }
 
@@ -141,10 +156,15 @@ impl KeyframeHandle {
     }
 
     pub fn request(&self) {
+        self.request_of(Layer::Main);
+    }
+
+    /// Pede um keyframe a uma camada do simulcast.
+    pub fn request_of(&self, layer: Layer) {
         if let Some(slot) = self.0.upgrade()
             && let Some(s) = lock(&slot).as_ref()
         {
-            s.request_keyframe();
+            s.request_keyframe_of(layer);
         }
     }
 }
@@ -167,7 +187,7 @@ impl LocalPreview {
         let events_state = state.clone();
         // Fraco: o callback vive dentro do próprio sender, então um Arc forte criaria um ciclo.
         let keyframe_sender: Weak<Mutex<Option<VideoSender>>> = Arc::downgrade(&sender_slot);
-        let sender = VideoSender::start(&gpu, source, quality, move |event| {
+        let sender = VideoSender::start(&gpu, source, quality, state.want_low.clone(), move |event| {
             on_sender_event(&events_state, &keyframe_sender, event);
         })?;
         *lock(&sender_slot) = Some(sender);
@@ -289,6 +309,7 @@ fn on_sender_event(state: &Arc<Shared>, sender: &Weak<Mutex<Option<VideoSender>>
         SenderEvent::Frame(frame) => {
             if let Some(tap) = &state.tap {
                 tap.video(state.seq.fetch_add(1, Ordering::Relaxed), &frame);
+                state.want_low.store(tap.wants_low(), Ordering::Relaxed);
             }
             lock(&state.meter).record_encoded(frame.data.len(), frame.encode_us);
             if let Some(viewer) = lock(&state.viewer).as_ref() {
@@ -299,6 +320,18 @@ fn on_sender_event(state: &Arc<Shared>, sender: &Weak<Mutex<Option<VideoSender>>
             if let Some(stats) = ready {
                 (lock(&state.on_stats))(stats);
             }
+        }
+        // A camada baixa só vai para a sala: a prévia mostra a principal.
+        SenderEvent::LowFrame(frame) => {
+            if let Some(tap) = &state.tap {
+                tap.low_video(state.low_seq.fetch_add(1, Ordering::Relaxed), &frame);
+            }
+        }
+        SenderEvent::LowLayer(size) => {
+            lock(&state.base).low_layer_height = size.map_or(0, |s| s.height);
+        }
+        SenderEvent::LowFailed(e) => {
+            lock(&state.base).low_layer_error = Some(format!("a camada de 720p não abriu: {e}"));
         }
         SenderEvent::Captured => lock(&state.meter).record_source_frame(),
         SenderEvent::Dropped => lock(&state.meter).record_dropped(),

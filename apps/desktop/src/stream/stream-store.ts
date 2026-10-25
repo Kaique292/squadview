@@ -62,6 +62,10 @@ export interface StreamStats {
   width: number;
   height: number;
   encoder: string;
+  /** Altura da camada baixa do simulcast, ligada para quem tem internet fraca (0: desligada). */
+  lowLayerHeight: number;
+  /** Por que a camada baixa não abriu (quem assiste fica na principal). */
+  lowLayerError: string | null;
 }
 
 /** Espelha `sv_session::SystemLoad` (porcentagens). */

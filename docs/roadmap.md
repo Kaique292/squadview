@@ -50,7 +50,7 @@ Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
 
 - [x] `sv-mesh`: planejador em enxame (4 faixas + paridade, faixa da casa, NAT, camadas)
 - [x] Simulador de sala (população do Brasil, CGNAT, saída de membros) com os números na ADR
-- [ ] Simulcast com 2 camadas no encoder (1080p60 e 720p30)
+- [x] Simulcast com 2 camadas no encoder (a principal e 720p30), a baixa só quando alguém precisa e escolhida por quem transmite para cada espectador ([ADR 0026](adr/0026-simulcast-com-2-camadas.md)); falta medir com o `perf-check`
 - [ ] Faixas e paridade no envio (`sv-net`) e remontagem na recepção
 - [ ] Repasse pela faixa da casa e troca de pai sem congelar
 - [x] Repassador na nuvem de reserva (TURN da Cloudflare), só quando o direto não fecha ([ADR 0014](adr/0014-conexao-em-camadas.md)); por enquanto entre dois membros, a malha usa depois

@@ -17,6 +17,10 @@ pub enum Signal {
     WatchRequest {
         candidates: Vec<SocketAddr>,
         fingerprint: String,
+        /// Quem assiste aceita trocar de camada no meio do stream (simulcast, ADR 0026). Ausente
+        /// em apps antigos: esses ficam sempre na camada principal.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        simulcast: bool,
     },
     /// Quem transmite aceita e manda os dele (e já começa a "furar" o NAT na direção do outro).
     WatchAccept {
@@ -290,6 +294,7 @@ mod tests {
         let s = Signal::WatchRequest {
             candidates: vec!["1.2.3.4:5000".parse().unwrap()],
             fingerprint: "ab".into(),
+            simulcast: false,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(
@@ -297,6 +302,25 @@ mod tests {
             r#"{"kind":"watch-request","candidates":["1.2.3.4:5000"],"fingerprint":"ab"}"#
         );
         assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn pedido_para_assistir_diz_se_aceita_trocar_de_camada() {
+        // Simulcast (ADR 0026): o app novo avisa; o pedido de um app antigo, sem o campo, vale
+        // como "não aceita" e ele fica na camada principal.
+        let s = Signal::WatchRequest {
+            candidates: vec![],
+            fingerprint: "ab".into(),
+            simulcast: true,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""simulcast":true"#), "{json}");
+        assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), s);
+        let old = r#"{"kind":"watch-request","candidates":[],"fingerprint":"ab"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Signal>(old).unwrap(),
+            Signal::WatchRequest { simulcast: false, .. }
+        ));
     }
 
     #[test]

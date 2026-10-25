@@ -17,12 +17,14 @@ pub mod friends;
 pub mod media;
 pub mod protocol;
 pub mod signaling;
+pub mod simulcast;
 pub mod stun;
 pub mod turn;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
-pub use media::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
+pub use media::{Broadcaster, KeyframeRequester, OnKeyframe, Receiver, ReceiverSink, VideoFrame};
 pub use signaling::{Arcade, DiscordUser, JoinRequester, Member, Resume, RoomClient, RoomEvent, SpeakingEffect};
+pub use simulcast::Layer;
 pub use turn::{TurnError, TurnServer};
 
 /// Versão do protocolo de rede. Membros com versões diferentes não entram na mesma sala.

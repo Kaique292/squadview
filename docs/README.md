@@ -42,3 +42,4 @@
 | [0022](adr/0022-retomada-da-vaga-na-sala.md)              | Retomada da vaga na sala depois de uma queda da sinalização                         |
 | [0023](adr/0023-modo-fliperama.md)                        | Modo Lan House Fliperama: jogo local com controles remotos (ViGEmBus)               |
 | [0024](adr/0024-fliperama-teclado-e-mouse.md)             | Fliperama: mouse no analógico e "controle total" de teclado e mouse (com permissão) |
+| [0026](adr/0026-simulcast-com-2-camadas.md)               | Simulcast com 2 camadas, escolhidas por quem transmite para cada espectador         |

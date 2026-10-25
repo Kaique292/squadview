@@ -49,6 +49,8 @@ const STATS: StreamStats = {
   width: 1920,
   height: 1080,
   encoder: "NVIDIA H.264 Encoder MFT",
+  lowLayerHeight: 0,
+  lowLayerError: null,
 };
 
 beforeEach(() => {
@@ -280,6 +282,18 @@ describe("detalhes da transmissão", () => {
     fireEvent.click(within(dialog).getByRole("switch", { name: "Ouvir o som da prévia" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_preview_listening", { listening: true }));
     expect(useStreamStore.getState().listening).toBe(true);
+  });
+
+  it("diz quando a camada de 720p está ligada para quem tem internet fraca", () => {
+    useStreamStore.setState({ status: "live", stats: STATS });
+    const dialog = details();
+    expect(within(dialog).queryByText(/Camada de 720p/)).not.toBeInTheDocument();
+    act(() => useStreamStore.setState({ stats: { ...STATS, lowLayerHeight: 720 } }));
+    expect(within(dialog).getByText(/Camada de 720p ligada para quem tem internet fraca/)).toBeInTheDocument();
+    act(() =>
+      useStreamStore.setState({ stats: { ...STATS, lowLayerError: "a camada de 720p não abriu: sem encoder" } }),
+    );
+    expect(within(dialog).getByText(/a camada de 720p não abriu: sem encoder/)).toBeInTheDocument();
   });
 
   it("volta a chave se o Rust recusar ligar o som", async () => {

@@ -3,7 +3,7 @@
 //! - [`Broadcaster`]: quem transmite manda cada frame para todos os espectadores conectados.
 //! - [`Receiver`]: quem assiste recebe frames, áudio e mantém a estimativa do relógio.
 
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,13 +15,19 @@ use crate::clock::ClockEstimator;
 use crate::protocol::{
     Control, FrameHeader, MAX_FRAME_BYTES, MAX_HEADER_BYTES, decode_audio, encode_audio, frame_message,
 };
+use crate::simulcast::{BacklogMeter, Layer, LayerChooser};
 
 /// Um frame de vídeo codificado, compartilhado entre os espectadores sem copiar.
 #[derive(Debug, Clone)]
 pub struct VideoFrame {
     pub header: FrameHeader,
     pub data: Arc<[u8]>,
+    /// De qual camada do simulcast ele é (não vai para a rede: cada espectador recebe uma só).
+    pub layer: Layer,
 }
+
+/// Pede um keyframe a uma camada de quem transmite.
+pub type OnKeyframe = Arc<dyn Fn(Layer) + Send + Sync>;
 
 /// Frames na fila de cada espectador. Se ele não der conta (internet fraca), os mais novos são
 /// descartados e pedimos um keyframe quando a fila esvaziar.
@@ -30,6 +36,13 @@ const VIEWER_QUEUE: usize = 6;
 struct ViewerSlot {
     conn: Connection,
     video: mpsc::Sender<VideoFrame>,
+    /// Qual camada este espectador recebe (ADR 0026).
+    chooser: LayerChooser,
+    /// A camada ativa, para o stream de controle pedir o keyframe certo.
+    active: Arc<AtomicU8>,
+    /// A conexão está com vídeo preso (a rede não leva o que escrevemos, ver [`BacklogMeter`]).
+    congested: Arc<AtomicBool>,
+    on_keyframe: OnKeyframe,
 }
 
 /// Distribui o stream para os espectadores conectados.
@@ -37,6 +50,8 @@ struct ViewerSlot {
 pub struct Broadcaster {
     viewers: Arc<Mutex<Vec<ViewerSlot>>>,
     audio_buf: Arc<Mutex<Vec<u8>>>,
+    /// Algum espectador precisa da camada baixa do simulcast.
+    wants_low: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Broadcaster {
@@ -56,39 +71,74 @@ impl Broadcaster {
         self.viewers.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
+    /// Algum espectador recebe a camada baixa ou está indo para ela: quem transmite liga o
+    /// segundo encoder só enquanto isto for verdade.
+    pub fn wants_low(&self) -> bool {
+        self.wants_low.load(Ordering::Relaxed)
+    }
+
     /// Começa a mandar o stream para `conn`. `on_keyframe` é chamado quando alguém precisa de um
-    /// keyframe (ao entrar, ao perder frames). Precisa rodar dentro de um runtime tokio.
-    pub fn add(&self, conn: Connection, on_keyframe: Arc<dyn Fn() + Send + Sync>) {
+    /// keyframe de uma camada (ao entrar, ao perder frames, ao trocar de camada). Com `simulcast`,
+    /// o espectador aceita trocar de camada (ADR 0026); sem, fica sempre na principal. Precisa
+    /// rodar dentro de um runtime tokio.
+    pub fn add(&self, conn: Connection, simulcast: bool, on_keyframe: OnKeyframe) {
         let (tx, rx) = mpsc::channel(VIEWER_QUEUE);
+        let active = Arc::new(AtomicU8::new(Layer::Main as u8));
+        let congested = Arc::new(AtomicBool::new(false));
         self.viewers.lock().unwrap_or_else(|e| e.into_inner()).push(ViewerSlot {
             conn: conn.clone(),
             video: tx,
+            chooser: LayerChooser::new(simulcast),
+            active: active.clone(),
+            congested: congested.clone(),
+            on_keyframe: on_keyframe.clone(),
         });
-        on_keyframe();
+        on_keyframe(Layer::Main);
 
         let viewers = self.viewers.clone();
+        let wants_low = self.wants_low.clone();
         let video_conn = conn.clone();
         let kf = on_keyframe.clone();
         tokio::spawn(async move {
             // Também termina quando a conexão fecha sem nenhum frame na fila (antes o espectador
             // continuava contado até o próximo frame).
             tokio::select! {
-                () = send_video(video_conn.clone(), rx, kf) => {}
+                () = send_video(video_conn.clone(), rx, kf, congested) => {}
                 _ = video_conn.closed() => {}
             }
             // Saiu (fechou a conexão ou caiu): tira da lista.
-            viewers
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .retain(|v| v.conn.stable_id() != video_conn.stable_id());
+            let mut list = viewers.lock().unwrap_or_else(|e| e.into_inner());
+            list.retain(|v| v.conn.stable_id() != video_conn.stable_id());
+            wants_low.store(list.iter().any(|v| v.chooser.needs_low()), Ordering::Relaxed);
         });
-        tokio::spawn(serve_control(conn, on_keyframe));
+        tokio::spawn(serve_control(conn, active, on_keyframe));
     }
 
-    /// Manda um frame para todos. Não bloqueia: quem estiver com a fila cheia perde este frame.
+    /// Manda um frame para todos os que recebem a camada dele. Não bloqueia: quem estiver com a
+    /// fila cheia perde este frame (e, perdendo muitos, desce para a camada baixa).
     pub fn send_video(&self, frame: &VideoFrame) {
-        for v in self.viewers.lock().unwrap_or_else(|e| e.into_inner()).iter() {
-            let _ = v.video.try_send(frame.clone());
+        let now = frame.header.timestamp_us;
+        // Trocas de camada são raras: o Vec só aloca quando alguma acontece.
+        let mut switches: Vec<(OnKeyframe, Layer)> = Vec::new();
+        let mut viewers = self.viewers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut wants_low = false;
+        for v in viewers.iter_mut() {
+            if v.chooser.accepts(frame.layer, frame.header.keyframe, now) {
+                v.active.store(v.chooser.active() as u8, Ordering::Relaxed);
+                // Rede atrasada conta como frame perdido: sem isso, o QUIC guardaria segundos de
+                // vídeo antes de a fila do espectador encher.
+                let delivered = v.video.try_send(frame.clone()).is_ok() && !v.congested.load(Ordering::Relaxed);
+                if let Some(layer) = v.chooser.record(delivered, now) {
+                    switches.push((v.on_keyframe.clone(), layer));
+                }
+            }
+            wants_low |= v.chooser.needs_low();
+        }
+        drop(viewers);
+        self.wants_low.store(wants_low, Ordering::Relaxed);
+        // Fora da trava: pedir o keyframe chega no encoder.
+        for (on_keyframe, layer) in switches {
+            on_keyframe(layer);
         }
     }
 
@@ -110,7 +160,13 @@ impl Broadcaster {
     }
 }
 
-async fn send_video(conn: Connection, mut rx: mpsc::Receiver<VideoFrame>, on_keyframe: Arc<dyn Fn() + Send + Sync>) {
+async fn send_video(
+    conn: Connection,
+    mut rx: mpsc::Receiver<VideoFrame>,
+    on_keyframe: OnKeyframe,
+    congested: Arc<AtomicBool>,
+) {
+    let mut backlog = BacklogMeter::new();
     let mut last_seq: Option<u32> = None;
     let mut waiting_keyframe = false;
     while let Some(frame) = rx.recv().await {
@@ -118,7 +174,7 @@ async fn send_video(conn: Connection, mut rx: mpsc::Receiver<VideoFrame>, on_key
         if last_seq.is_some_and(|s| frame.header.seq != s.wrapping_add(1)) && !frame.header.keyframe {
             if !waiting_keyframe {
                 waiting_keyframe = true;
-                on_keyframe();
+                on_keyframe(frame.layer);
             }
             last_seq = Some(frame.header.seq);
             continue;
@@ -137,16 +193,22 @@ async fn send_video(conn: Connection, mut rx: mpsc::Receiver<VideoFrame>, on_key
             return;
         }
         let _ = stream.finish();
+        let late = backlog.sample(
+            frame.data.len() as u64,
+            conn.stats().udp_tx.bytes,
+            frame.header.timestamp_us,
+        );
+        congested.store(late, Ordering::Relaxed);
     }
 }
 
-async fn serve_control(conn: Connection, on_keyframe: Arc<dyn Fn() + Send + Sync>) {
+async fn serve_control(conn: Connection, active: Arc<AtomicU8>, on_keyframe: OnKeyframe) {
     let Ok((mut send, mut recv)) = conn.accept_bi().await else {
         return;
     };
     while let Some(msg) = read_message::<Control>(&mut recv).await {
         match msg {
-            Control::KeyframeRequest => on_keyframe(),
+            Control::KeyframeRequest => on_keyframe(Layer::from_u8(active.load(Ordering::Relaxed))),
             Control::Ping { sent_us } => {
                 let pong = Control::Pong {
                     sent_us,
