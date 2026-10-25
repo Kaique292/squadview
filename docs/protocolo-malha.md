@@ -54,7 +54,9 @@ Na malha (falta fazer):
 
 ## Recuperação de perda
 
-- **NACK:** o filho pede o pacote perdido ao pai, não ao streamer. O pai guarda os últimos ~500 ms.
+O formato das faixas está na [ADR 0028](adr/0028-faixas-e-paridade-no-envio.md): cada faixa vai num stream unidirecional QUIC próprio, com um `StripeHeader` (cabeçalho do frame, camada, índice da faixa e tamanho do frame) na frente. A paridade é o XOR das 4 faixas de dados.
+
+- **NACK:** o filho recebe de novo o pacote perdido do pai, não do streamer. Isso é a retransmissão do próprio QUIC em cada stream de faixa, salto a salto, sem mensagem `Nack` própria.
 - **Paridade entre faixas:** a quinta faixa cobre a perda de qualquer outra, inclusive a saída de quem repassava.
 - **FEC dentro da faixa:** pacotes de redundância ligados quando a perda passa de 2%.
 - **Keyframe sob demanda:** se a perda tornar o vídeo irrecuperável, o pedido sobe até o streamer.
@@ -80,8 +82,7 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 | `Hello`           | membro ↔ membro   | versão do protocolo, `PeerId`, capacidades de codec |
 | `Stats`           | membro → sala     | medições acima                                      |
 | `Assign`          | streamer → membro | pai, pai reserva, camada                            |
-| `Media`           | pai → filho       | pacote de mídia (camada, sequência, timestamp)      |
-| `Nack`            | filho → pai       | sequências perdidas                                 |
+| `Media`           | pai → filho       | uma faixa: `StripeHeader` + bytes (ADR 0028)        |
 | `KeyframeRequest` | membro → streamer | —                                                   |
 | `Bye`             | membro → sala     | saída limpa                                         |
 

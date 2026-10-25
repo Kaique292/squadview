@@ -16,6 +16,7 @@ use crate::protocol::{
     Control, FrameHeader, MAX_FRAME_BYTES, MAX_HEADER_BYTES, decode_audio, encode_audio, frame_message,
 };
 use crate::simulcast::{BacklogMeter, Layer, LayerChooser};
+use crate::stripes::{Assembled, Reassembler, StripeHeader};
 
 /// Um frame de vídeo codificado, compartilhado entre os espectadores sem copiar.
 #[derive(Debug, Clone)]
@@ -376,6 +377,74 @@ async fn run_control(
         }
     }
     reader.abort();
+}
+
+/// Manda uma faixa (ADR 0028) num stream próprio: o QUIC retransmite o que se perder no caminho até
+/// quem recebe (o "NACK" salto a salto), e a paridade cobre a faixa de quem saiu.
+pub async fn send_stripe(conn: &Connection, header: &StripeHeader, payload: &[u8]) -> Result<(), quinn::WriteError> {
+    let mut stream = conn.open_uni().await.map_err(quinn::WriteError::ConnectionLost)?;
+    stream.write_all(&frame_message(header)).await?;
+    stream.write_all(payload).await?;
+    let _ = stream.finish();
+    Ok(())
+}
+
+/// O que sai da remontagem das faixas.
+pub trait StripeSink: Send + 'static {
+    /// Um frame inteiro, na ordem.
+    fn frame(&mut self, header: FrameHeader, data: Vec<u8>);
+    /// Estes frames não chegaram a tempo: o decoder precisa de um keyframe.
+    fn lost(&mut self, first_seq: u32, count: u32);
+}
+
+/// Recebe as faixas de um stream por várias conexões (uma por pai, em cada árvore da sala) e
+/// entrega os frames remontados. Uma conexão que cai só tira uma faixa: com as outras 4, os frames
+/// continuam chegando.
+#[derive(Clone)]
+pub struct StripeReceiver {
+    inner: Arc<Mutex<(Reassembler, Box<dyn StripeSink>)>>,
+}
+
+impl std::fmt::Debug for StripeReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StripeReceiver").finish_non_exhaustive()
+    }
+}
+
+impl StripeReceiver {
+    pub fn new(sink: impl StripeSink) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new((Reassembler::new(), Box::new(sink)))),
+        }
+    }
+
+    /// Passa a ler faixas de `conn` (até ela fechar). Precisa rodar dentro de um runtime tokio.
+    pub fn attach(&self, conn: Connection) {
+        tokio::spawn(receive_stripes(conn, self.inner.clone()));
+    }
+}
+
+async fn receive_stripes(conn: Connection, inner: Arc<Mutex<(Reassembler, Box<dyn StripeSink>)>>) {
+    while let Ok(mut stream) = conn.accept_uni().await {
+        let Some(header) = read_message::<StripeHeader>(&mut stream).await else {
+            continue;
+        };
+        let len = header.stripe_len();
+        if header.frame_len > crate::stripes::MAX_FRAME_BYTES {
+            continue;
+        }
+        let mut buf = inner.lock().unwrap_or_else(|e| e.into_inner()).0.buffer();
+        buf.resize(len, 0);
+        if stream.read_exact(&mut buf).await.is_err() {
+            continue;
+        }
+        let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+        let (reassembler, sink) = &mut *guard;
+        reassembler.push(header, buf, now_us(), &mut |assembled| match assembled {
+            Assembled::Frame(h, data) => sink.frame(h, data),
+            Assembled::Lost { first_seq, count } => sink.lost(first_seq, count),
+        });
+    }
 }
 
 /// Lê uma mensagem com prefixo de tamanho; `None` se o stream acabou ou veio algo inválido.

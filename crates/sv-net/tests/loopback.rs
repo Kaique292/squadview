@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sv_net::protocol::FrameHeader;
-use sv_net::{Broadcaster, Layer, Peer, Purpose, Receiver, ReceiverSink, VideoFrame};
+use sv_net::stripes::{STRIPES, Splitter, StripeHeader};
+use sv_net::{
+    Broadcaster, Layer, Peer, Purpose, Receiver, ReceiverSink, StripeReceiver, StripeSink, VideoFrame, send_stripe,
+};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -282,6 +285,81 @@ async fn quem_perde_frames_desce_para_a_camada_baixa_e_o_app_antigo_fica_na_prin
             _ => {}
         }
     }
+}
+
+/// O que sai da remontagem das faixas.
+#[derive(Debug, PartialEq)]
+enum Assembled {
+    Frame(u32, Vec<u8>),
+    Lost(u32, u32),
+}
+
+struct Stripes(mpsc::UnboundedSender<Assembled>);
+
+impl StripeSink for Stripes {
+    fn frame(&mut self, header: FrameHeader, data: Vec<u8>) {
+        let _ = self.0.send(Assembled::Frame(header.seq, data));
+    }
+    fn lost(&mut self, first_seq: u32, count: u32) {
+        let _ = self.0.send(Assembled::Lost(first_seq, count));
+    }
+}
+
+// Faixas e paridade (ADR 0028): cada faixa vem por uma conexão (um pai em cada árvore). Uma
+// conexão que cai no meio do stream tira uma faixa, e os frames continuam chegando inteiros.
+#[tokio::test(flavor = "multi_thread")]
+async fn faixas_por_cinco_conexoes_continuam_chegando_quando_uma_cai() {
+    let parent = Peer::bind(&[]).await.unwrap();
+    let child = Peer::bind(&[]).await.unwrap();
+    parent.allowed().allow(child.fingerprint());
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let receiver = StripeReceiver::new(Stripes(tx));
+    let mut paths = Vec::new();
+    let mut child_side = Vec::new();
+    for _ in 0..STRIPES {
+        let accept = parent.accept();
+        let connect = child.connect(parent.candidates(), None, parent.fingerprint());
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let conn = conn.expect("conectar");
+        receiver.attach(conn.clone());
+        child_side.push(conn);
+        paths.push(accepted.expect("aceitar").conn);
+    }
+
+    let mut splitter = Splitter::new();
+    let frame_bytes = |seq: u32| -> Vec<u8> { (0..20_003u32).map(|i| (i ^ seq.wrapping_mul(13)) as u8).collect() };
+    for seq in 0..30u32 {
+        // Depois do frame 10, quem repassava a faixa 2 sai da sala.
+        if seq == 10 {
+            paths[2].close(0u32.into(), b"saiu");
+        }
+        let data = frame_bytes(seq);
+        let stripes = splitter.split(&data).clone();
+        for (i, path) in paths.iter().enumerate() {
+            let header = StripeHeader {
+                frame: FrameHeader {
+                    seq,
+                    timestamp_us: u64::from(seq),
+                    keyframe: seq == 0,
+                    encode_us: 1,
+                },
+                layer: 0,
+                index: i as u8,
+                frame_len: data.len() as u32,
+            };
+            let _ = send_stripe(path, &header, &stripes[i]).await;
+        }
+    }
+
+    for seq in 0..30u32 {
+        let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("frame não chegou em 5 s")
+            .expect("canal fechou");
+        assert_eq!(got, Assembled::Frame(seq, frame_bytes(seq)), "frame {seq}");
+    }
+    drop(child_side);
 }
 
 // Achado na esteira: com vários endereços que respondem (o local e o 127.0.0.1), quem transmite
