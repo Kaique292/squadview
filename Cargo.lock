@@ -4207,7 +4207,7 @@ dependencies = [
 
 [[package]]
 name = "sv-input"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4271,6 +4271,7 @@ dependencies = [
  "sv-gpu",
  "sv-input",
  "sv-media",
+ "sv-mesh",
  "sv-net",
  "tokio",
  "windows",

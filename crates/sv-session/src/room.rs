@@ -23,6 +23,7 @@ use crate::surface::lock;
 use crate::voice_mesh::VoiceMesh;
 
 mod arcade;
+mod mesh;
 use crate::{AudioPacket, KeyframeHandle, RelaySource, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
 pub use arcade::{ArcadeSeatInfo, MAX_SLOTS as MAX_ARCADE_SLOTS};
 
@@ -43,12 +44,14 @@ pub enum RoomUpdate {
     VoiceBridges(BTreeMap<String, String>),
     /// Não deu para ligar a voz com `member_id` (sem conexão direta).
     VoiceFailed { member_id: String, reason: String },
-    /// A conexão com quem pedimos para assistir abriu, pelo caminho `path`.
+    /// A conexão com quem pedimos para assistir abriu, pelo caminho `path`. Com `mesh`, o vídeo
+    /// vem em faixas (ADR 0030): o `RemoteView` abre na malha.
     WatchReady {
         member: Member,
         conn: Connection,
         desc: StreamDescription,
         path: WatchPath,
+        mesh: bool,
     },
     /// O repassador TURN desta sala ficou pronto (`Ok`, com o nosso endereço nele) ou falhou.
     Relay(Result<std::net::SocketAddr, String>),
@@ -233,6 +236,8 @@ struct Inner {
     first_frame_waiters: Mutex<Vec<WatchWaiter>>,
     /// O fliperama que abrimos ou em que jogamos (ADR 0023).
     arcade: arcade::ArcadeState,
+    /// A malha das lives (ADR 0030): a nossa, que coordenamos, e as que assistimos.
+    mesh: mesh::MeshState,
     voice: Arc<VoiceMesh>,
     runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
@@ -365,6 +370,7 @@ impl Room {
                 pending_voice_relay: Mutex::new(HashMap::new()),
                 first_frame_waiters: Mutex::default(),
                 arcade: arcade::ArcadeState::default(),
+                mesh: mesh::MeshState::default(),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
@@ -456,6 +462,7 @@ impl Room {
     /// Começamos a transmitir: a sala fica sabendo e passamos a aceitar quem pedir para assistir.
     pub fn stream_started(&self, keyframes: KeyframeHandle) {
         *lock(&self.inner.keyframes) = Some(keyframes);
+        self.inner.mesh_start();
         lock(&self.inner.me).live = true;
         self.inner.send_status();
         self.inner.publish_members();
@@ -468,6 +475,7 @@ impl Room {
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
         lock(&self.inner.simulcast_viewers).clear();
+        self.inner.mesh_stop();
         self.inner.flush_waiters();
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
@@ -564,6 +572,7 @@ impl Room {
             fingerprint: self.inner.peer.fingerprint().to_owned(),
             // O decoder acompanha a troca de resolução: podemos receber a camada baixa.
             simulcast: true,
+            mesh: Some(self.inner.mesh_hello()),
         };
         lock(&self.inner.client).signal(member_id, &signal);
     }
@@ -627,11 +636,15 @@ impl Room {
     /// Começamos a assistir `source.streamer`: a sala pode repassar esse stream a quem não alcança
     /// quem transmite (ADR 0014).
     pub fn add_relay_source(&self, source: RelaySource) {
+        if let Some(mesh) = source.mesh.clone() {
+            self.inner.mesh_view_opened(&source.streamer, mesh);
+        }
         lock(&self.inner.relay_sources).insert(source.streamer.clone(), source);
     }
 
     /// Paramos de assistir `streamer`: quem ia receber esse stream por nós não recebe mais.
     pub fn remove_relay_source(&self, streamer: &str) {
+        self.inner.mesh_view_closed(streamer);
         lock(&self.inner.relay_sources).remove(streamer);
         lock(&self.inner.relay_viewers).retain(|_, s| s != streamer);
     }
@@ -687,6 +700,16 @@ impl Inner {
                 if request.simulcast {
                     lock(&self.simulcast_viewers).insert(request.fingerprint.clone());
                 }
+                let mesh = request.mesh.is_some_and(|hello| {
+                    self.mesh_offer(
+                        &request.fingerprint,
+                        mesh::MeshRequest {
+                            id: request.from.clone(),
+                            candidates: request.candidates.clone(),
+                            hello,
+                        },
+                    )
+                });
                 self.peer.punch(&request.candidates);
                 // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
                 self.peer.permit_relay(&request.candidates);
@@ -695,6 +718,7 @@ impl Inner {
                     fingerprint: self.peer.fingerprint().to_owned(),
                     stream,
                     relay: self.peer.relay_addr(),
+                    mesh,
                 }
             }
             (true, None) => {
@@ -965,22 +989,29 @@ impl Inner {
             Ok(()) => return,
             Err(other) => other,
         };
+        let signal = match self.mesh_signal(&from, signal) {
+            Ok(()) => return,
+            Err(other) => other,
+        };
         match signal {
             Signal::WatchRequest {
                 candidates,
                 fingerprint,
                 simulcast,
+                mesh,
             } => self.answer_watch(WatchWaiter {
                 from,
                 candidates,
                 fingerprint,
                 simulcast,
+                mesh,
             }),
             Signal::WatchAccept {
                 candidates,
                 fingerprint,
                 stream,
                 relay,
+                mesh,
             } => {
                 let direct = lock(&self.pending_watch).contains(&from);
                 // Ou é quem aceitou repassar um stream que pedimos.
@@ -1017,6 +1048,8 @@ impl Inner {
                                 conn,
                                 desc: stream,
                                 path,
+                                // Só quem transmite coordena a malha (um membro que repassa, não).
+                                mesh: mesh && direct,
                             });
                         }
                         // Sem caminho até quem transmite (nem pelo repassador): pede a quem já
@@ -1054,6 +1087,7 @@ impl Inner {
                             fingerprint: self.peer.fingerprint().to_owned(),
                             stream: source.desc,
                             relay: self.peer.relay_addr(),
+                            mesh: false,
                         }
                     }
                     None => Signal::WatchDeny {
@@ -1167,7 +1201,10 @@ impl Inner {
             | Signal::ArcadeSeat { .. }
             | Signal::ArcadeDeny { .. }
             | Signal::ArcadeLeave
-            | Signal::ArcadeKbm { .. } => {}
+            | Signal::ArcadeKbm { .. }
+            // Tratados antes, em `mesh_signal`.
+            | Signal::MeshAssign { .. }
+            | Signal::MeshLost { .. } => {}
             Signal::WatchDeny { reason } => {
                 if lock(&self.pending_watch).remove(&from) {
                     (self.on_update)(RoomUpdate::WatchFailed {
@@ -1231,6 +1268,7 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
             }
             WireEvent::MemberLeft(id) => {
                 lock(&inner.members).remove(&id);
+                inner.mesh_leave(&id);
                 lock(&inner.pending_voice_relay).remove(&id);
                 inner.voice.unregister(&id);
                 inner.arcade_member_left(&id);
@@ -1367,6 +1405,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
             inner.arcade_accept(accepted.conn, accepted.fingerprint);
             continue;
         }
+        if accepted.purpose == sv_net::Purpose::Mesh {
+            // Malha (ADR 0030): um filho que vem buscar a nossa faixa da casa.
+            inner.mesh_child(accepted.conn, accepted.fingerprint.as_deref());
+            continue;
+        }
         if accepted.purpose == sv_net::Purpose::VoiceRelay {
             // Repasse de voz (ADR 0020): só de quem já está na voz com a gente.
             let member = accepted
@@ -1404,6 +1447,10 @@ async fn accept_viewers(inner: Arc<Inner>) {
             conn.close(quinn::VarInt::from_u32(1), b"nao esta transmitindo");
             continue;
         };
+        // Quem pediu pela malha recebe só as faixas que vão direto (ADR 0030).
+        if inner.mesh_accept(&conn, accepted.fingerprint.as_deref()) {
+            continue;
+        }
         let simulcast = accepted
             .fingerprint
             .as_ref()
@@ -1427,6 +1474,8 @@ struct WatchWaiter {
     fingerprint: String,
     /// Aceita trocar de camada (simulcast, ADR 0026).
     simulcast: bool,
+    /// Pode entrar na malha (ADR 0030).
+    mesh: Option<sv_net::protocol::MeshHello>,
 }
 
 struct BroadcastTap {

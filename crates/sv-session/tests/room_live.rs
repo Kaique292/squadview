@@ -9,7 +9,7 @@ use sv_encode::EncodedFrame;
 use sv_gpu::Size;
 use sv_net::protocol::FrameHeader;
 use sv_net::signaling::new_room_code;
-use sv_net::{Receiver, ReceiverSink};
+use sv_net::{Receiver, ReceiverSink, StripeReceiver, StripeSink};
 use sv_session::{JoinAs, KeyframeHandle, Room, RoomUpdate, StreamInfo, VoiceSettings};
 
 struct Frames(mpsc::Sender<FrameHeader>);
@@ -20,6 +20,13 @@ impl ReceiverSink for Frames {
     }
     fn audio(&mut self, _: u32, _: u64, _: f32, _: &[u8]) {}
     fn closed(&mut self, _: String) {}
+}
+
+impl StripeSink for Frames {
+    fn frame(&mut self, header: FrameHeader, _data: Vec<u8>) {
+        let _ = self.0.send(header);
+    }
+    fn lost(&mut self, _: u32, _: u32) {}
 }
 
 fn url() -> String {
@@ -82,14 +89,20 @@ fn um_amigo_assiste_o_outro_pela_sala() {
         }
     };
     beto.watch(&ana_id);
-    let (conn, desc) = loop {
+    let (conn, desc, mesh) = loop {
         match beto_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("sem resposta ao pedido")
         {
-            RoomUpdate::WatchReady { conn, desc, member, .. } => {
+            RoomUpdate::WatchReady {
+                conn,
+                desc,
+                member,
+                mesh,
+                ..
+            } => {
                 assert_eq!(member.name, "Ana");
-                break (conn, desc);
+                break (conn, desc, mesh);
             }
             RoomUpdate::WatchFailed { reason, .. } => panic!("recusado: {reason}"),
             _ => {}
@@ -97,9 +110,13 @@ fn um_amigo_assiste_o_outro_pela_sala() {
     };
     assert_eq!((desc.width, desc.height, desc.fps), (1280, 720, 30));
 
+    // Os dois têm o app novo: o vídeo vem pela malha (ADR 0030), em faixas, como o app abre.
+    assert!(mesh, "app novo com app novo entra na malha");
     let (frames_tx, frames_rx) = mpsc::channel();
     let _guard = beto.runtime().enter();
-    let _receiver = Receiver::start(conn, Frames(frames_tx));
+    let stripes = StripeReceiver::new(Frames(frames_tx.clone()));
+    stripes.attach(conn.clone());
+    let _receiver = Receiver::start_without_video(conn, Frames(frames_tx));
     // Espera a Ana registrar o espectador antes de mandar.
     for _ in 0..50 {
         if ana.viewer_count() == 1 {

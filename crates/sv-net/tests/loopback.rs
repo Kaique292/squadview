@@ -5,7 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sv_net::protocol::FrameHeader;
-use sv_net::{Broadcaster, Layer, Peer, Purpose, Receiver, ReceiverSink, VideoFrame};
+use sv_net::stripes::{DATA_MASK, STRIPES, Splitter, StripeHeader};
+use sv_net::{
+    Broadcaster, Layer, Peer, Purpose, Receiver, ReceiverSink, StripeReceiver, StripeRelay, StripeSink, VideoFrame,
+    send_stripe,
+};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -217,26 +221,29 @@ async fn quem_perde_frames_desce_para_a_camada_baixa_e_o_app_antigo_fica_na_prin
         };
         let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
         let (_, conn) = tokio::join!(accept, connect);
-        let (tx, rx) = mpsc::unbounded_channel();
-        receivers.push((Receiver::start(conn.expect("conectar"), Sink(tx)), rx));
+        receivers.push(conn.expect("conectar"));
     }
-    // Os `Receiver` ficam vivos até o fim: descartar um fecha a conexão.
-    let (_novo, mut novo_rx) = receivers.remove(0);
-    let (_antigo, mut antigo_rx) = receivers.remove(0);
 
-    // Uma rajada maior que a fila dos dois (6 frames): os dois perdem frames no mesmo segundo.
-    // Os frames já prontos antes, para a rajada sair mais rápido do que qualquer fila esvazia.
-    let burst: Vec<_> = (0..60).map(|seq| frame(seq, seq == 0, 400_000)).collect();
+    // Uma rajada maior que a fila dos dois (6 frames), com ninguém lendo ainda: passa do controle
+    // de fluxo do QUIC (32 MB por conexão), o envio trava e as filas enchem com certeza (antes,
+    // numa máquina carregada, a tarefa de envio às vezes esvaziava a fila no meio da rajada).
+    let burst: Vec<_> = (0..200).map(|seq| frame(seq, seq == 0, 400_000)).collect();
     for f in &burst {
         broadcaster.send_video(f);
     }
+    drop(burst);
+    // Os `Receiver` ficam vivos até o fim: descartar um fecha a conexão.
+    let (novo_tx, mut novo_rx) = mpsc::unbounded_channel();
+    let _novo = Receiver::start(receivers.remove(0), Sink(novo_tx));
+    let (antigo_tx, mut antigo_rx) = mpsc::unbounded_channel();
+    let _antigo = Receiver::start(receivers.remove(0), Sink(antigo_tx));
     let pedidos_agora = pedidos.lock().unwrap().clone();
     assert!(pedidos_agora.contains(&(true, Layer::Low)), "{pedidos_agora:?}");
     assert!(!pedidos_agora.contains(&(false, Layer::Low)), "{pedidos_agora:?}");
     assert!(broadcaster.wants_low(), "o segundo encoder tem que ligar");
 
     // As filas esvaziam; chega o keyframe da camada baixa e depois um da principal.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
     let low = VideoFrame {
         header: FrameHeader {
             seq: 0,
@@ -280,6 +287,253 @@ async fn quem_perde_frames_desce_para_a_camada_baixa_e_o_app_antigo_fica_na_prin
             Got::Video(_, data) if data.iter().all(|b| *b == 0xcc) => break,
             Got::Video(_, data) => assert!(!data.iter().all(|b| *b == 0xbb), "a principal chegou ao novo"),
             _ => {}
+        }
+    }
+}
+
+/// O que sai da remontagem das faixas.
+#[derive(Debug, PartialEq)]
+enum Assembled {
+    Frame(u32, Vec<u8>),
+    Lost(u32, u32),
+}
+
+struct Stripes(mpsc::UnboundedSender<Assembled>);
+
+impl StripeSink for Stripes {
+    fn frame(&mut self, header: FrameHeader, data: Vec<u8>) {
+        let _ = self.0.send(Assembled::Frame(header.seq, data));
+    }
+    fn lost(&mut self, first_seq: u32, count: u32) {
+        let _ = self.0.send(Assembled::Lost(first_seq, count));
+    }
+}
+
+// Faixas e paridade (ADR 0028): cada faixa vem por uma conexão (um pai em cada árvore). Uma
+// conexão que cai no meio do stream tira uma faixa, e os frames continuam chegando inteiros.
+#[tokio::test(flavor = "multi_thread")]
+async fn faixas_por_cinco_conexoes_continuam_chegando_quando_uma_cai() {
+    let parent = Peer::bind(&[]).await.unwrap();
+    let child = Peer::bind(&[]).await.unwrap();
+    parent.allowed().allow(child.fingerprint());
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let receiver = StripeReceiver::new(Stripes(tx));
+    let mut paths = Vec::new();
+    let mut child_side = Vec::new();
+    for _ in 0..STRIPES {
+        let accept = parent.accept();
+        let connect = child.connect(parent.candidates(), None, parent.fingerprint());
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let conn = conn.expect("conectar");
+        receiver.attach(conn.clone());
+        child_side.push(conn);
+        paths.push(accepted.expect("aceitar").conn);
+    }
+
+    let mut splitter = Splitter::new();
+    let frame_bytes = |seq: u32| -> Vec<u8> { (0..20_003u32).map(|i| (i ^ seq.wrapping_mul(13)) as u8).collect() };
+    for seq in 0..30u32 {
+        // Depois do frame 10, quem repassava a faixa 2 sai da sala.
+        if seq == 10 {
+            paths[2].close(0u32.into(), b"saiu");
+        }
+        let data = frame_bytes(seq);
+        let stripes = splitter.split(&data).clone();
+        for (i, path) in paths.iter().enumerate() {
+            let header = StripeHeader {
+                frame: FrameHeader {
+                    seq,
+                    timestamp_us: u64::from(seq),
+                    keyframe: seq == 0,
+                    encode_us: 1,
+                },
+                layer: 0,
+                index: i as u8,
+                frame_len: data.len() as u32,
+            };
+            let _ = send_stripe(path, &header, &stripes[i]).await;
+        }
+    }
+
+    for seq in 0..30u32 {
+        let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("frame não chegou em 5 s")
+            .expect("canal fechou");
+        assert_eq!(got, Assembled::Frame(seq, frame_bytes(seq)), "frame {seq}");
+    }
+    drop(child_side);
+}
+
+// Malha na sala (ADR 0030): quem transmite manda a Ana e ao Beto só parte das faixas, e cada um
+// repassa a sua faixa da casa ao outro. Os dois remontam tudo. O Beto sai: a Ana percebe que
+// perdeu um pai e continua com 4 faixas.
+#[tokio::test(flavor = "multi_thread")]
+async fn malha_de_tres_repassa_a_faixa_da_casa_e_sobrevive_a_saida_de_um_pai() {
+    let streamer = Peer::bind(&[]).await.unwrap();
+    let ana = Peer::bind(&[]).await.unwrap();
+    let beto = Peer::bind(&[]).await.unwrap();
+    streamer.allowed().allow(ana.fingerprint());
+    streamer.allowed().allow(beto.fingerprint());
+    ana.allowed().allow(beto.fingerprint());
+    beto.allowed().allow(ana.fingerprint());
+
+    // Ana: casa na faixa 0, recebe direto 0, 2, 3 e 4. Beto: casa na 1, recebe direto 1, 2, 3, 4.
+    let broadcaster = Broadcaster::new();
+    let mut receivers = Vec::new();
+    let mut direct = Vec::new();
+    for (viewer, mask) in [(&ana, 0b11101u8), (&beto, 0b11110u8)] {
+        let accept = streamer.accept();
+        let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let mask = Arc::new(std::sync::atomic::AtomicU8::new(mask));
+        broadcaster.add_mesh(accepted.expect("aceitar").conn, mask, Arc::new(|_| {}));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let receiver = StripeReceiver::new(Stripes(tx));
+        let conn = conn.expect("conectar");
+        receiver.attach(conn.clone());
+        direct.push(conn);
+        receivers.push((receiver, rx));
+    }
+    let (ana_stripes, mut ana_rx) = receivers.remove(0);
+    let (beto_stripes, mut beto_rx) = receivers.remove(0);
+
+    // Cada um é filho do outro na faixa da casa do outro: o filho conecta no pai.
+    let ana_lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut mesh = Vec::new();
+    for (child, parent, child_stripes, parent_stripes, home, lost) in [
+        (&beto, &ana, &beto_stripes, &ana_stripes, 0u8, None),
+        (&ana, &beto, &ana_stripes, &beto_stripes, 1u8, Some(ana_lost.clone())),
+    ] {
+        let accept = parent.accept();
+        let connect = child.connect_for(parent.candidates(), None, parent.fingerprint(), Purpose::Mesh);
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let accepted = accepted.expect("aceitar");
+        assert_eq!(accepted.purpose, Purpose::Mesh);
+        let relay = StripeRelay::new();
+        relay.add(accepted.conn);
+        parent_stripes.set_home(Some(home), relay);
+        let conn = conn.expect("conectar na malha");
+        child_stripes.attach_parent(conn.clone(), move || {
+            if let Some(l) = lost {
+                l.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        mesh.push(conn);
+    }
+
+    let frame_of = |seq: u32| frame(seq, seq == 0, 30_001);
+    for seq in 0..20 {
+        broadcaster.send_video(&frame_of(seq));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    for rx in [&mut ana_rx, &mut beto_rx] {
+        for seq in 0..20u32 {
+            let got = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("frame não chegou em 5 s")
+                .expect("canal fechou");
+            assert_eq!(got, Assembled::Frame(seq, frame_of(seq).data.to_vec()), "frame {seq}");
+        }
+    }
+
+    // O Beto sai da sala: fecha tudo.
+    for conn in direct.drain(1..).chain(mesh.drain(1..)) {
+        conn.close(0u32.into(), b"saiu");
+    }
+    drop(beto_stripes);
+    for _ in 0..50 {
+        if ana_lost.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        ana_lost.load(std::sync::atomic::Ordering::Relaxed),
+        "a Ana não percebeu que perdeu um pai"
+    );
+    for seq in 20..30 {
+        broadcaster.send_video(&frame_of(seq));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    for seq in 20..30u32 {
+        let got = tokio::time::timeout(Duration::from_secs(5), ana_rx.recv())
+            .await
+            .expect("frame não chegou em 5 s")
+            .expect("canal fechou");
+        assert_eq!(
+            got,
+            Assembled::Frame(seq, frame_of(seq).data.to_vec()),
+            "frame {seq} depois da saída"
+        );
+    }
+}
+
+// Malha e simulcast juntos: quem recebe tudo direto de quem transmite (sala pequena) desce para a
+// camada baixa como qualquer espectador, em faixas; quem tem pais na malha fica na principal.
+#[tokio::test(flavor = "multi_thread")]
+async fn na_malha_quem_recebe_tudo_direto_desce_de_camada_e_quem_tem_pais_nao() {
+    let streamer = Peer::bind(&[]).await.unwrap();
+    let solo = Peer::bind(&[]).await.unwrap();
+    let parented = Peer::bind(&[]).await.unwrap();
+    streamer.allowed().allow(solo.fingerprint());
+    streamer.allowed().allow(parented.fingerprint());
+    let broadcaster = Broadcaster::new();
+    let pedidos = Arc::new(Mutex::new(Vec::new()));
+    let mut receivers = Vec::new();
+    // O primeiro recebe só as faixas de dados (tudo direto); o segundo, parte vem de um pai.
+    for (viewer, mask, who) in [(&solo, DATA_MASK, "solo"), (&parented, 0b10111u8, "com pai")] {
+        let accept = streamer.accept();
+        let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
+        let (accepted, conn) = tokio::join!(accept, connect);
+        let p = pedidos.clone();
+        broadcaster.add_mesh(
+            accepted.expect("aceitar").conn,
+            Arc::new(std::sync::atomic::AtomicU8::new(mask)),
+            Arc::new(move |layer| p.lock().unwrap().push((who, layer))),
+        );
+        receivers.push(conn.expect("conectar"));
+    }
+
+    // Rajada maior que as filas, com ninguém lendo ainda: o controle de fluxo do QUIC trava o
+    // envio e os dois perdem frames com certeza.
+    let burst: Vec<_> = (0..200).map(|seq| frame(seq, seq == 0, 400_000)).collect();
+    for f in &burst {
+        broadcaster.send_video(f);
+    }
+    drop(burst);
+    let (tx, mut solo_rx) = mpsc::unbounded_channel();
+    let solo_stripes = StripeReceiver::new(Stripes(tx));
+    let solo_conn = receivers.remove(0);
+    solo_stripes.attach(solo_conn.clone());
+    let agora = pedidos.lock().unwrap().clone();
+    assert!(agora.contains(&("solo", Layer::Low)), "{agora:?}");
+    assert!(!agora.contains(&("com pai", Layer::Low)), "{agora:?}");
+
+    // Chega o keyframe da camada baixa: o solo remonta as faixas dela.
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let low = VideoFrame {
+        header: FrameHeader {
+            seq: 0,
+            timestamp_us: 2_000,
+            keyframe: true,
+            encode_us: 1,
+        },
+        data: Arc::from(vec![0xaa; 4_001]),
+        layer: Layer::Low,
+    };
+    broadcaster.send_video(&low);
+    loop {
+        let got = tokio::time::timeout(Duration::from_secs(5), solo_rx.recv())
+            .await
+            .expect("a camada baixa não chegou")
+            .expect("canal fechou");
+        if let Assembled::Frame(0, data) = got
+            && data.len() == 4_001
+        {
+            assert!(data.iter().all(|b| *b == 0xaa));
+            break;
         }
     }
 }

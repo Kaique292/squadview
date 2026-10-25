@@ -66,6 +66,9 @@ pub struct Config {
     /// Camada de cima: a qualidade que quem transmite escolheu (1440p60, 1080p60...). As de
     /// baixo existem para quem não aguenta a de cima.
     pub top_layer: QualityLayer,
+    /// A camada mais leve que a malha carrega. Com ela igual à de cima, só existe uma (quem não
+    /// couber fica sem plano, em vez de descer).
+    pub min_layer: QualityLayer,
 }
 
 impl Default for Config {
@@ -79,6 +82,7 @@ impl Default for Config {
             hop_ms: 2,
             relay_kbps: 0,
             top_layer: QualityLayer::High,
+            min_layer: QualityLayer::Low,
         }
     }
 }
@@ -102,7 +106,7 @@ impl Config {
     pub fn layers(&self) -> impl Iterator<Item = QualityLayer> + '_ {
         [QualityLayer::Ultra, QualityLayer::High, QualityLayer::Low]
             .into_iter()
-            .filter(|l| *l <= self.top_layer)
+            .filter(|l| *l <= self.top_layer && *l >= self.min_layer)
     }
 
     /// A camada abaixo de `layer` (`None` abaixo da mais leve).
@@ -172,7 +176,7 @@ pub fn plan(source: &Member, members: &[Member], rtt: &dyn Fn(PeerId, PeerId) ->
             let layer = cfg
                 .layers()
                 .find(|l| m.download_kbps >= cfg.download_needed(*l))
-                .unwrap_or(QualityLayer::Low);
+                .unwrap_or(cfg.min_layer);
             (m.id, Some(layer))
         })
         .collect();
@@ -427,6 +431,251 @@ pub fn impact(plan: &Plan, cfg: &Config, gone: &[PeerId]) -> Impact {
     result
 }
 
+/// Uma ligação que mudou num conserto: na árvore `tree`, `member` passa a receber de `parent`
+/// (`None`: ficou sem quem repasse nesta árvore).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    pub member: PeerId,
+    pub tree: TreeKey,
+    pub parent: Option<PeerId>,
+}
+
+/// As ligações que mudaram de `old` para `new`: é o que precisa ser avisado a cada membro.
+pub fn changes(old: &Plan, new: &Plan) -> Vec<Change> {
+    let mut out = Vec::new();
+    let mut keys: Vec<TreeKey> = old.parents.keys().chain(new.parents.keys()).copied().collect();
+    keys.sort();
+    keys.dedup();
+    for key in keys {
+        let empty = HashMap::new();
+        let before = old.parents.get(&key).unwrap_or(&empty);
+        let after = new.parents.get(&key).unwrap_or(&empty);
+        let mut ids: Vec<PeerId> = after.keys().copied().collect();
+        ids.extend(
+            before
+                .keys()
+                .filter(|id| !after.contains_key(id) && new.layer.contains_key(id)),
+        );
+        ids.sort();
+        for id in ids {
+            let parent = after.get(&id).copied();
+            if before.get(&id).copied() != parent {
+                out.push(Change {
+                    member: id,
+                    tree: key,
+                    parent,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Conserta o plano depois que saíram os membros que não estão em `members` (troca de pai, ADR
+/// 0029). Só quem recebia de alguém que saiu ganha pai novo; o resto da malha fica como estava,
+/// para ninguém que estava bem ter a imagem mexida.
+///
+/// O pai novo vem de quem está no tronco da mesma árvore e tem vaga (ou de quem transmite, se
+/// ainda tem cota), nunca de alguém abaixo do órfão (formaria um ciclo). Quem não acha pai fica sem
+/// aquela faixa; com a paridade, a imagem continua enquanto faltar só uma.
+pub fn repair(
+    old: &Plan,
+    source: &Member,
+    members: &[Member],
+    rtt: &dyn Fn(PeerId, PeerId) -> u32,
+    cfg: &Config,
+) -> Plan {
+    repair_with(old, source, members, rtt, cfg, &[], &|_, _| false)
+}
+
+/// Como [`repair`], com o que a rede real conta além de quem saiu: `broken` são ligações cujo pai
+/// continua na sala mas parou de mandar (o filho avisou), e `avoid(filho, pai)` diz quem não pode
+/// ser pai de quem (a conexão entre os dois não abriu).
+pub fn repair_with(
+    old: &Plan,
+    source: &Member,
+    members: &[Member],
+    rtt: &dyn Fn(PeerId, PeerId) -> u32,
+    cfg: &Config,
+    broken: &[(TreeKey, PeerId)],
+    avoid: &dyn Fn(PeerId, PeerId) -> bool,
+) -> Plan {
+    let staying: HashMap<PeerId, &Member> = members.iter().map(|m| (m.id, m)).collect();
+    let present = |id: PeerId| id == source.id || id == RELAY || staying.contains_key(&id);
+    let nat = |id: PeerId| {
+        if id == source.id {
+            source.nat
+        } else if id == RELAY {
+            Nat::Open
+        } else {
+            staying[&id].nat
+        }
+    };
+
+    let mut plan = Plan::default();
+    for m in members {
+        if let Some(layer) = old.layer.get(&m.id) {
+            plan.layer.insert(m.id, *layer);
+        }
+        if let Some(home) = old.home.get(&m.id) {
+            plan.home.insert(m.id, *home);
+        }
+    }
+    // As ligações que continuam e as órfãs (o pai saiu).
+    let mut orphans: Vec<(TreeKey, PeerId)> = Vec::new();
+    for (&key, parents) in &old.parents {
+        for (&child, &parent) in parents {
+            if !present(child) {
+                continue;
+            }
+            if present(parent) && !broken.contains(&(key, child)) {
+                plan.parents.entry(key).or_default().insert(child, parent);
+            } else {
+                orphans.push((key, child));
+            }
+        }
+    }
+
+    // Quanto cada um ainda pode doar, com as ligações que continuam.
+    let mut left: HashMap<PeerId, u32> = members.iter().map(|m| (m.id, budget(m, cfg))).collect();
+    let trees: Vec<TreeKey> = old.parents.keys().copied().collect();
+    let source_budget =
+        ((source.upload_kbps as f32 * cfg.headroom) as u32).min(cfg.download_needed(cfg.top_layer) * cfg.source_copies);
+    let quota = source_budget / trees.len().max(1) as u32;
+    let mut source_left: HashMap<TreeKey, u32> = trees.iter().map(|&k| (k, quota)).collect();
+    let mut relay_left = old.used_kbps.get(&RELAY).map_or(0, |_| cfg.relay_kbps);
+    for (&key, parents) in &plan.parents {
+        let stripe = cfg.stripe_kbps(key.0);
+        for &parent in parents.values() {
+            if parent == source.id {
+                let q = source_left.entry(key).or_default();
+                *q = q.saturating_sub(stripe);
+            } else if parent == RELAY {
+                relay_left = relay_left.saturating_sub(stripe);
+            } else if let Some(l) = left.get_mut(&parent) {
+                *l = l.saturating_sub(stripe);
+            }
+        }
+    }
+
+    // Primeiro quem é do tronco daquela árvore (os filhos dele dependem do conserto), do maior
+    // upload para o menor; depois as folhas.
+    orphans.sort_by_key(|&(key, id)| {
+        let trunk = plan.home.get(&id) == Some(&key);
+        (!trunk, key, std::cmp::Reverse(budget(staying[&id], cfg)), id.0)
+    });
+    for (key, orphan) in orphans {
+        let stripe = cfg.stripe_kbps(key.0);
+        let parents = plan.parents.entry(key).or_default();
+        // Abaixo do órfão nesta árvore: não servem de pai.
+        let below = |p: PeerId, parents: &HashMap<PeerId, PeerId>| {
+            let mut at = p;
+            let mut steps = 0;
+            while let Some(&up) = parents.get(&at) {
+                if up == orphan {
+                    return true;
+                }
+                at = up;
+                steps += 1;
+                if steps > 10_000 {
+                    return true;
+                }
+            }
+            false
+        };
+        let arrival = |p: PeerId, parents: &HashMap<PeerId, PeerId>| {
+            let mut t = 0;
+            let mut at = p;
+            let mut steps = 0;
+            while let Some(&up) = parents.get(&at) {
+                t += rtt(up, at) / 2 + cfg.hop_ms;
+                at = up;
+                steps += 1;
+                if steps > 10_000 {
+                    break;
+                }
+            }
+            // Só serve quem ainda chega até quem transmite.
+            (at == source.id).then_some(t)
+        };
+        let from_source = (source_left.get(&key).copied().unwrap_or(0) >= stripe
+            && source.nat.connects(nat(orphan))
+            && !avoid(orphan, source.id))
+        .then(|| (rtt(source.id, orphan) / 2 + cfg.hop_ms, source.id));
+        let from_trunk = plan
+            .home
+            .iter()
+            .filter(|&(&p, &home)| {
+                home == key
+                    && p != orphan
+                    && left.get(&p).copied().unwrap_or(0) >= stripe
+                    && nat(p).connects(nat(orphan))
+            })
+            .filter(|&(&p, _)| !below(p, parents) && !avoid(orphan, p))
+            .filter_map(|(&p, _)| arrival(p, parents).map(|t| (t + rtt(p, orphan) / 2 + cfg.hop_ms, p)))
+            .min_by_key(|&(t, p)| (t, p.0));
+        let chosen = match (from_source, from_trunk) {
+            (Some(a), Some(b)) => Some(a.min_by_key_pair(b)),
+            (a, b) => a.or(b),
+        };
+        match chosen {
+            Some((_, p)) if p == source.id => {
+                *source_left.get_mut(&key).expect("árvore em uso") -= stripe;
+                parents.insert(orphan, p);
+            }
+            Some((_, p)) => {
+                *left.get_mut(&p).expect("conhecido") -= stripe;
+                parents.insert(orphan, p);
+            }
+            None if relay_left >= stripe && parents.contains_key(&RELAY) => {
+                relay_left -= stripe;
+                parents.insert(orphan, RELAY);
+            }
+            None => {}
+        }
+    }
+
+    // Atraso e camada de cada um com as ligações novas.
+    for m in members {
+        let Some(Some(layer)) = old.layer.get(&m.id).copied() else {
+            continue;
+        };
+        let mut times: Vec<u32> = (0..cfg.total_stripes())
+            .filter_map(|s| {
+                let parents = plan.parents.get(&(layer, s))?;
+                let mut t = 0;
+                let mut at = m.id;
+                let mut steps = 0;
+                while let Some(&up) = parents.get(&at) {
+                    t += rtt(up, at) / 2 + cfg.hop_ms;
+                    at = up;
+                    steps += 1;
+                    if steps > 10_000 {
+                        return None;
+                    }
+                }
+                (at == source.id && t > 0).then_some(t)
+            })
+            .collect();
+        times.sort_unstable();
+        if times.len() >= usize::from(cfg.data_stripes) {
+            plan.latency_ms.insert(m.id, times[usize::from(cfg.data_stripes) - 1]);
+        } else {
+            plan.layer.insert(m.id, None);
+        }
+    }
+    for m in members {
+        plan.used_kbps.insert(m.id, budget(m, cfg) - left[&m.id]);
+    }
+    let source_unused: u32 = source_left.values().sum();
+    plan.used_kbps
+        .insert(source.id, source_budget.saturating_sub(source_unused));
+    if cfg.relay_kbps > 0 {
+        plan.used_kbps.insert(RELAY, cfg.relay_kbps - relay_left);
+    }
+    plan
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,6 +724,24 @@ mod tests {
         // Com 1080p escolhido, ninguém recebe 1440p.
         let plan = super::plan(&source, &members, &flat, &Config::default());
         assert!(plan.layer.values().all(|l| *l != Some(QualityLayer::Ultra)));
+    }
+
+    #[test]
+    fn com_uma_camada_so_quem_nao_cabe_fica_sem_plano_em_vez_de_descer() {
+        let cfg = Config {
+            min_layer: QualityLayer::High,
+            ..Config::default()
+        };
+        assert_eq!(cfg.layers().collect::<Vec<_>>(), vec![QualityLayer::High]);
+        assert_eq!(cfg.below(QualityLayer::High), None);
+        let members: Vec<_> = (1..=20).map(|i| member(i, 1_000, Nat::Cone)).collect();
+        let plan = plan(&source(), &members, &flat, &cfg);
+        assert!(plan.layer.values().all(|l| *l != Some(QualityLayer::Low)));
+        assert!(plan.layer.values().any(Option::is_none), "alguém não coube");
+        assert!(
+            plan.layer.values().any(Option::is_some),
+            "quem transmite ainda serve alguém"
+        );
     }
 
     #[test]
@@ -600,6 +867,151 @@ mod tests {
         for m in &members {
             let hit = impact(&plan, &cfg, &[m.id]);
             assert_eq!(hit.frozen, 0, "a saída de {:?} congelou alguém", m.id);
+        }
+    }
+
+    /// Uma sala com o plano feito e as ligações de cada um.
+    fn room(n: u64) -> (Vec<Member>, Plan, Config) {
+        let cfg = Config::default();
+        let members: Vec<_> = (1..=n).map(|i| member(i, 20_000, Nat::Cone)).collect();
+        let plan = plan(&source(), &members, &flat, &cfg);
+        (members, plan, cfg)
+    }
+
+    #[test]
+    fn saida_de_uma_folha_nao_muda_ninguem() {
+        let (members, plan, cfg) = room(60);
+        // Alguém que não repassa para ninguém.
+        let leaf = members
+            .iter()
+            .find(|m| plan.parents.values().all(|p| !p.values().any(|v| *v == m.id)))
+            .expect("uma folha")
+            .id;
+        let staying: Vec<_> = members.iter().filter(|m| m.id != leaf).cloned().collect();
+        let fixed = repair(&plan, &source(), &staying, &flat, &cfg);
+        assert!(changes(&plan, &fixed).is_empty(), "{:?}", changes(&plan, &fixed));
+        assert!(!fixed.layer.contains_key(&leaf));
+    }
+
+    #[test]
+    fn saida_de_um_galho_so_troca_o_pai_de_quem_recebia_dele() {
+        let (members, plan, cfg) = room(150);
+        for gone in members.iter().filter(|m| plan.home.contains_key(&m.id)).take(20) {
+            let orphans: Vec<(TreeKey, PeerId)> = plan
+                .parents
+                .iter()
+                .flat_map(|(k, p)| p.iter().filter(|(_, v)| **v == gone.id).map(move |(c, _)| (*k, *c)))
+                .collect();
+            assert!(!orphans.is_empty(), "{:?} repassa para alguém", gone.id);
+            let staying: Vec<_> = members.iter().filter(|m| m.id != gone.id).cloned().collect();
+            let fixed = repair(&plan, &source(), &staying, &flat, &cfg);
+            let moved = changes(&plan, &fixed);
+            // Mudou exatamente quem recebia de quem saiu, e todos acharam pai.
+            let mut got: Vec<(TreeKey, PeerId)> = moved.iter().map(|c| (c.tree, c.member)).collect();
+            got.sort();
+            let mut want = orphans.clone();
+            want.sort();
+            assert_eq!(got, want);
+            assert!(
+                moved.iter().all(|c| c.parent.is_some()),
+                "alguém ficou sem pai: {moved:?}"
+            );
+            // Ninguém perdeu a imagem, ninguém passou do upload e não há ciclos.
+            for m in &staying {
+                assert!(fixed.layer[&m.id].is_some(), "{:?} ficou sem vídeo", m.id);
+                assert!(fixed.used_kbps[&m.id] <= budget(m, &cfg));
+            }
+            for (key, parents) in &fixed.parents {
+                for child in parents.keys() {
+                    assert!(fixed.depth(*key, *child).is_some(), "ciclo na árvore {key:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pai_novo_nunca_e_alguem_abaixo_do_orfao() {
+        // Uma árvore em cadeia: 1 recebe de quem transmite, 2 de 1, 3 de 2. Sai o 1: o 2 não pode
+        // pegar do 3, que está abaixo dele (seria um ciclo e a faixa nunca chegaria).
+        let cfg = Config {
+            data_stripes: 1,
+            parity_stripes: 0,
+            source_copies: 1,
+            ..Config::default()
+        };
+        let members: Vec<_> = (1..=3).map(|i| member(i, 20_000, Nat::Cone)).collect();
+        let key = (QualityLayer::High, 0);
+        let mut plan = Plan::default();
+        plan.parents.insert(
+            key,
+            HashMap::from([(PeerId(1), PeerId(0)), (PeerId(2), PeerId(1)), (PeerId(3), PeerId(2))]),
+        );
+        for m in &members {
+            plan.home.insert(m.id, key);
+            plan.layer.insert(m.id, Some(QualityLayer::High));
+        }
+        let staying = members[1..].to_vec();
+        let fixed = repair(&plan, &source(), &staying, &flat, &cfg);
+        let parents = &fixed.parents[&key];
+        assert_eq!(
+            parents.get(&PeerId(2)),
+            Some(&PeerId(0)),
+            "o 2 sobe para quem transmite"
+        );
+        assert_eq!(parents.get(&PeerId(3)), Some(&PeerId(2)), "o 3 continua no 2");
+        assert!(fixed.depth(key, PeerId(3)).is_some());
+    }
+
+    #[test]
+    fn pai_que_parou_de_mandar_e_trocado_e_par_que_nao_conecta_e_evitado() {
+        let (members, plan, cfg) = room(60);
+        // Um filho de alguém do tronco (não de quem transmite) numa árvore qualquer.
+        let (key, child, parent) = plan
+            .parents
+            .iter()
+            .flat_map(|(k, p)| p.iter().map(move |(c, v)| (*k, *c, *v)))
+            .find(|(_, _, p)| *p != PeerId(0))
+            .expect("alguém recebe de um membro");
+        let fixed = repair_with(&plan, &source(), &members, &flat, &cfg, &[(key, child)], &|c, p| {
+            c == child && p == parent
+        });
+        let moved = changes(&plan, &fixed);
+        assert_eq!(moved.len(), 1, "{moved:?}");
+        assert_eq!((moved[0].member, moved[0].tree), (child, key));
+        let new_parent = moved[0].parent.expect("achou outro pai");
+        assert_ne!(new_parent, parent, "não volta para o pai que parou de mandar");
+    }
+
+    #[test]
+    fn sem_vaga_em_ninguem_o_orfao_fica_sem_a_faixa_e_a_paridade_segura() {
+        let (members, plan, cfg) = room(8);
+        let gone = members.iter().find(|m| plan.home.contains_key(&m.id)).unwrap().id;
+        // Os que ficam perdem todo o upload: ninguém pode virar pai novo.
+        let staying: Vec<_> = members
+            .iter()
+            .filter(|m| m.id != gone)
+            .map(|m| Member {
+                upload_kbps: 0,
+                ..m.clone()
+            })
+            .collect();
+        let poor_source = Member {
+            upload_kbps: 0,
+            ..source()
+        };
+        let fixed = repair(&plan, &poor_source, &staying, &flat, &cfg);
+        let moved = changes(&plan, &fixed);
+        assert!(
+            !moved.is_empty() && moved.iter().all(|c| c.parent.is_none()),
+            "{moved:?}"
+        );
+        // Faltando uma faixa, a imagem continua.
+        for c in &moved {
+            assert!(
+                fixed.layer[&c.member].is_some(),
+                "{:?} perdeu a imagem com uma faixa só",
+                c.member
+            );
         }
     }
 

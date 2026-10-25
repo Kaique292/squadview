@@ -18,9 +18,13 @@ use sv_net::protocol::{
     FrameHeader, RelayKey, Relayed, Signal, StreamDescription, decode_relayed, encode_audio, encode_relayed, relay_peer,
 };
 use sv_net::signaling::{error_message, new_room_code};
-use sv_net::{Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, VideoFrame};
+use sv_net::{
+    Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, StripeReceiver,
+    StripeRelay, StripeSink, VideoFrame,
+};
 use sv_session::{
-    AudioPacket, JoinAs, KeyframeHandle, Member, RelaySource, Room, RoomUpdate, StreamInfo, VoiceSettings, WatchPath,
+    AudioPacket, JoinAs, KeyframeHandle, Member, MeshEndpoint, RelaySource, Room, RoomUpdate, StreamInfo,
+    VoiceSettings, WatchPath,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -311,6 +315,7 @@ fn pedido_antes_do_primeiro_quadro_espera_e_entra_quando_ele_sai() {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
             simulcast: false,
+            mesh: None,
         },
     );
     // Sem o primeiro quadro, a Ana não responde nada (nem recusa).
@@ -355,6 +360,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
         Signal::WatchDeny { reason: "não".into() },
         // A Ana entrou sem voz: convite e resposta de voz não fazem nada.
@@ -412,6 +418,7 @@ fn assiste_um_amigo_que_aceita_pela_conexao_direta() {
             fingerprint: beto_peer.fingerprint().to_owned(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let accepted = rt.spawn(async move {
@@ -451,6 +458,7 @@ fn sem_conexao_direta_quem_pediu_para_assistir_fica_sabendo() {
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let (who, reason) = ana.wait("a falha", |u| match u {
@@ -489,6 +497,7 @@ fn ana_pede_repasse_ao_caio(rt: &Runtime, url: &str) -> (Someone, Friend, Friend
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let request = caio.signal_from(rt, &ana_id);
@@ -518,6 +527,7 @@ fn sem_caminho_ate_quem_transmite_recebe_por_quem_ja_assiste() {
             fingerprint: caio_peer.fingerprint().to_owned(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let accepted = rt.spawn(async move {
@@ -612,6 +622,7 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
             simulcast: false,
+            mesh: None,
         },
     );
     let Signal::WatchAccept {
@@ -708,6 +719,7 @@ fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
             simulcast: true,
+            mesh: None,
         },
     );
     let Signal::WatchAccept {
@@ -762,6 +774,157 @@ fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
         if let Got::Video(1_000) = got.recv_timeout(WAIT).expect("a camada baixa não chegou ao Beto") {
             break;
         }
+    }
+}
+
+/// Os frames remontados das faixas, para quem assiste pela malha.
+struct MeshFrames(mpsc::Sender<u32>);
+
+impl StripeSink for MeshFrames {
+    fn frame(&mut self, header: FrameHeader, _data: Vec<u8>) {
+        let _ = self.0.send(header.seq);
+    }
+    fn lost(&mut self, _first_seq: u32, _count: u32) {}
+}
+
+/// O som e o relógio da conexão direta, que este teste não confere.
+struct Quiet;
+
+impl ReceiverSink for Quiet {
+    fn video(&mut self, _: FrameHeader, _: Vec<u8>) {}
+    fn audio(&mut self, _: u32, _: u64, _: f32, _: &[u8]) {}
+    fn closed(&mut self, _: String) {}
+}
+
+/// Quem assiste pela malha, como o app faz: abre a live e registra a nossa ponta nela.
+struct MeshWatcher {
+    who: Someone,
+    frames: mpsc::Receiver<u32>,
+    endpoint: MeshEndpoint,
+    _receiver: Receiver,
+    seen: Vec<u32>,
+}
+
+impl MeshWatcher {
+    fn open(who: Someone, streamer: &str) -> Self {
+        who.room.watch(streamer);
+        let (conn, mesh) = who.wait("a live da Ana", |u| match u {
+            RoomUpdate::WatchReady { conn, mesh, .. } => Some((conn, mesh)),
+            _ => None,
+        });
+        assert!(mesh, "devia vir pela malha");
+        let (tx, frames) = mpsc::channel();
+        let _guard = who.room.runtime().enter();
+        let stripes = StripeReceiver::new(MeshFrames(tx));
+        stripes.attach(conn.clone());
+        let receiver = Receiver::start_without_video(conn, Quiet);
+        let endpoint = MeshEndpoint {
+            stripes,
+            relay: StripeRelay::new(),
+        };
+        who.room.add_relay_source(RelaySource {
+            streamer: streamer.to_owned(),
+            desc: desc(),
+            broadcaster: Broadcaster::new(),
+            keyframes: receiver.keyframe_requester(),
+            mesh: Some(endpoint.clone()),
+        });
+        Self {
+            who,
+            frames,
+            endpoint,
+            _receiver: receiver,
+            seen: Vec::new(),
+        }
+    }
+
+    /// Junta o que chegou até agora e confere que veio na ordem.
+    fn drain(&mut self) -> usize {
+        self.seen.extend(self.frames.try_iter());
+        assert!(
+            self.seen.windows(2).all(|w| w[0] < w[1]),
+            "fora de ordem: {:?}",
+            self.seen
+        );
+        self.seen.len()
+    }
+}
+
+/// Malha na sala (ADR 0030), pelo caminho de verdade: pedido, aceite, plano pela sinalização,
+/// conexões da malha e repasse da faixa da casa. Com 4 assistindo, quem transmite não dá conta
+/// de mandar tudo a todos (2 cópias), então alguém repassa. Um pai sai e os outros continuam.
+#[test]
+fn malha_na_sala_repassa_a_faixa_da_casa_e_segue_quando_um_pai_sai() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let names = ["Beto", "Caio", "Dani", "Edu"];
+    let people: Vec<Someone> = names.iter().map(|n| join(&url, &code, n, None)).collect();
+    let ana_id = people[0].id_of("Ana");
+
+    let tap = ana.room.tap();
+    tap.started(&StreamInfo {
+        size: Size::new(1920, 1080),
+        fps: 60,
+        encoder: "teste".into(),
+    });
+    ana.room.stream_started(KeyframeHandle::detached());
+    let mut watchers: Vec<MeshWatcher> = people.into_iter().map(|p| MeshWatcher::open(p, &ana_id)).collect();
+
+    // A live: 60 quadros por segundo, um keyframe por segundo.
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let live = running.clone();
+    let sender = std::thread::spawn(move || {
+        let mut seq = 0u32;
+        while live.load(std::sync::atomic::Ordering::Relaxed) {
+            tap.video(
+                seq,
+                &EncodedFrame {
+                    data: vec![(seq % 251) as u8; 20_000],
+                    keyframe: seq.is_multiple_of(60),
+                    timestamp_us: u64::from(seq) * 16_667,
+                    encode_us: 1,
+                },
+            );
+            seq += 1;
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    });
+
+    // Todos recebem, na ordem, e alguém repassa a faixa da casa.
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let counts: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+        let relaying = watchers.iter().any(|w| w.endpoint.relay.count() > 0);
+        if counts.iter().all(|c| *c >= 90) && relaying {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "não chegou: frames {counts:?}, repasse: {relaying}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Um pai sai da sala: os outros continuam recebendo.
+    let parent = watchers
+        .iter()
+        .position(|w| w.endpoint.relay.count() > 0)
+        .expect("alguém repassa");
+    let gone = watchers.remove(parent);
+    drop(gone);
+    let before: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+    std::thread::sleep(Duration::from_millis(2_000));
+    let after: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+    running.store(false, std::sync::atomic::Ordering::Relaxed);
+    sender.join().unwrap();
+    for (i, (b, a)) in before.iter().zip(&after).enumerate() {
+        // 2 s a 60 fps são 120 quadros; uma troca de pai sem congelar perde quase nenhum.
+        assert!(
+            a - b >= 90,
+            "{} parou de receber depois da saída: {b} → {a}",
+            watchers[i].who.room.code()
+        );
     }
 }
 
@@ -927,6 +1090,7 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
         desc: desc(),
         broadcaster: relay.clone(),
         keyframes,
+        mesh: None,
     });
 
     // Pedido de repasse de outro stream: recusa.

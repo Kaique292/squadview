@@ -41,7 +41,7 @@ Onde estamos (v0.10): a Fase 0 fechou. Na Fase 1, o pipeline funciona com NVIDIA
 - [x] `sv-net`: conexão QUIC com TLS e ALPN `squadview/1` (mais `squadview-voice/1` e `squadview-dm/1`)
 - [x] Sinalização por WebSocket no Durable Object da sala
 - [x] Hole punching UDP e fallback por terceiro membro (repasse por quem já assiste e TURN de reserva, [ADR 0014](adr/0014-conexao-em-camadas.md))
-- [ ] Envio de mídia com NACK e pedido de keyframe (o pedido de keyframe já existe; falta o NACK)
+- [x] Envio de mídia com NACK e pedido de keyframe: o NACK é a retransmissão do QUIC em cada stream, salto a salto ([ADR 0028](adr/0028-faixas-e-paridade-no-envio.md))
 - [ ] Teste com um amigo em outra rede, medindo a latência ponta a ponta
 
 ## Fase 3 — Malha da sala ([ADR 0012](adr/0012-malha-em-enxame.md))
@@ -51,8 +51,10 @@ Salas sem limite fixo, com atraso de call: malha em enxame com várias árvores.
 - [x] `sv-mesh`: planejador em enxame (4 faixas + paridade, faixa da casa, NAT, camadas)
 - [x] Simulador de sala (população do Brasil, CGNAT, saída de membros) com os números na ADR
 - [x] Simulcast com 2 camadas no encoder (a principal e 720p30), a baixa só quando alguém precisa e escolhida por quem transmite para cada espectador ([ADR 0026](adr/0026-simulcast-com-2-camadas.md)); falta medir com o `perf-check`
-- [ ] Faixas e paridade no envio (`sv-net`) e remontagem na recepção
-- [ ] Repasse pela faixa da casa e troca de pai sem congelar
+- [x] Faixas e paridade no envio (`sv-net`) e remontagem na recepção ([ADR 0028](adr/0028-faixas-e-paridade-no-envio.md)); a sala passa a usar no item seguinte
+- [x] Repasse pela faixa da casa e troca de pai sem congelar, na sala ([ADR 0029](adr/0029-troca-de-pai-na-malha.md) e [ADR 0030](adr/0030-malha-na-rede-da-sala.md)): quem transmite coordena, cada um repassa a faixa da casa e o conserto troca só o pai que caiu; por enquanto só a camada principal e com upload estimado
+- [ ] Medir o upload de cada membro (hoje é uma estimativa de 10 Mbps) e a latência entre eles para o planejador
+- [ ] Malha com as duas camadas do simulcast (hoje quem tem pais na malha fica na principal; quem recebe tudo direto troca de camada)
 - [x] Repassador na nuvem de reserva (TURN da Cloudflare), só quando o direto não fecha ([ADR 0014](adr/0014-conexao-em-camadas.md)); por enquanto entre dois membros, a malha usa depois
 - [x] Repasse por um membro da sala que já assiste (camada do meio da ADR 0014), um salto, só vídeo e som do jogo
 - [x] Conexão direta também por IPv6 (sem CGNAT)
