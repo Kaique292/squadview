@@ -5,7 +5,7 @@ import { App } from "../App";
 import { listenToRoomEvents, type Member, useRoomStore } from "../room/room-store";
 import { DEFAULT_QUALITY, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
-import { gridColumns } from "./VoiceRoom";
+import { gridColumns, gridLayout } from "./VoiceRoom";
 import { DEFAULT_PREFS, listenToVoiceEvents, useVoiceStore } from "./voice-store";
 
 const { invoke, listen, handlers } = vi.hoisted(() => {
@@ -188,6 +188,26 @@ describe("chat de voz", () => {
 
   it("organiza a grade como o Discord", () => {
     expect([1, 2, 3, 4, 5, 6, 7, 8].map(gridColumns)).toEqual([1, 2, 2, 2, 3, 3, 4, 4]);
+  });
+
+  it("a grade cabe inteira na altura numa janela larga e baixa", () => {
+    // O caso do print: a live e duas pessoas numa área de 1470 × 690; as linhas passavam da altura.
+    for (const [n, width, height] of [
+      [3, 1470, 690],
+      [4, 1470, 500],
+      [6, 900, 400],
+      [2, 600, 900],
+    ]) {
+      const { columns, tileWidth } = gridLayout(n, width, height);
+      const rows = Math.ceil(n / columns);
+      expect(tileWidth).toBeGreaterThan(0);
+      expect(columns * tileWidth + (columns - 1) * 12).toBeLessThanOrEqual(width);
+      expect(rows * ((tileWidth * 9) / 16) + (rows - 1) * 12).toBeLessThanOrEqual(height);
+    }
+    // Com espaço sobrando, a grade continua a do Discord (3 pessoas em 2 colunas).
+    expect(gridLayout(3, 1470, 690).columns).toBe(2);
+    // Sem medida, cai na grade por colunas.
+    expect(gridLayout(3, 0, 0)).toEqual({ columns: 2, tileWidth: 0 });
   });
 
   it("mostra o nível do microfone e os avisos da voz", () => {
