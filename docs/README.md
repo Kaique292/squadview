@@ -45,3 +45,4 @@
 | [0026](adr/0026-simulcast-com-2-camadas.md)               | Simulcast com 2 camadas, escolhidas por quem transmite para cada espectador         |
 | [0028](adr/0028-faixas-e-paridade-no-envio.md)            | Faixas e paridade no envio: um stream QUIC por faixa e remontagem com prazo         |
 | [0029](adr/0029-troca-de-pai-na-malha.md)                 | Troca de pai na malha: conserto local, só para quem perdeu uma faixa                |
+| [0030](adr/0030-malha-na-rede-da-sala.md)                 | Malha na rede da sala: quem transmite coordena, faixas pela conexão direta e pais   |

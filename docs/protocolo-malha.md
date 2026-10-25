@@ -61,13 +61,23 @@ O formato das faixas está na [ADR 0028](adr/0028-faixas-e-paridade-no-envio.md)
 - **FEC dentro da faixa:** pacotes de redundância ligados quando a perda passa de 2%.
 - **Keyframe sob demanda:** se a perda tornar o vídeo irrecuperável, o pedido sobe até o streamer.
 
+## Na rede da sala
+
+Desenho na [ADR 0030](adr/0030-malha-na-rede-da-sala.md). Já funciona para a camada principal:
+
+- Quem pede para assistir com o app novo manda `mesh: { nat, uploadKbps }` no `watch-request`; quem transmite responde `mesh: true` no `watch-accept`. Apps antigos recebem o vídeo inteiro.
+- A conexão direta com quem transmite continua com o som, o relógio e os keyframes. O vídeo dela vem em faixas, só as que o plano manda direto.
+- Quem transmite coordena: a cada mudança, manda a cada membro afetado um `mesh-assign` com de quem vem cada faixa (endereços e fingerprint do pai), a faixa da casa e os filhos.
+- O filho conecta no pai com o ALPN `squadview-mesh/1` e recebe por ela a faixa da casa do pai.
+- O filho manda `mesh-lost { stripe }` quando o pai cai, não conecta ou fica 300 ms sem mandar enquanto as outras faixas chegam.
+
 ## Troca de pai
 
-Desenho na [ADR 0029](adr/0029-troca-de-pai-na-malha.md); o conserto do plano já existe (`sv_mesh::plan::repair` e `changes`), a parte de rede ainda não.
+Desenho na [ADR 0029](adr/0029-troca-de-pai-na-malha.md): `sv_mesh::plan::repair_with` e `changes`, usados pelo coordenador da sala.
 
 - Se o pai de uma faixa some por mais de 300 ms (ou a conexão fecha), a imagem segue pela paridade (4 das 5 faixas) e o membro avisa quem transmite.
 - Quem transmite conserta o plano só onde quebrou: cada órfão ganha um pai do tronco da mesma árvore, com vaga e que não esteja abaixo dele. Quem não foi afetado não muda.
-- Cada membro afetado recebe só a sua mudança (árvore e pai novo) e conecta no pai novo.
+- Cada membro afetado recebe o seu `mesh-assign` novo e conecta no pai novo.
 - Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar (p95 simulado: 370 a 390 ms).
 
 ## Atravessar NAT
@@ -85,7 +95,8 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 | ----------------- | ----------------- | --------------------------------------------------- |
 | `Hello`           | membro ↔ membro   | versão do protocolo, `PeerId`, capacidades de codec |
 | `Stats`           | membro → sala     | medições acima                                      |
-| `Assign`          | streamer → membro | pai, pai reserva, camada                            |
+| `mesh-assign`     | streamer → membro | pai de cada faixa, faixa da casa e filhos           |
+| `mesh-lost`       | membro → streamer | a faixa que parou de chegar                         |
 | `Media`           | pai → filho       | uma faixa: `StripeHeader` + bytes (ADR 0028)        |
 | `KeyframeRequest` | membro → streamer | —                                                   |
 | `Bye`             | membro → sala     | saída limpa                                         |

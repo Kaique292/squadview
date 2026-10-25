@@ -19,6 +19,7 @@ sv-media = { path = "crates/sv-media" }
 sv-session = { path = "crates/sv-session" }
 sv-net = { path = "crates/sv-net" }
 sv-input = { path = "crates/sv-input" }
+sv-mesh = { path = "crates/sv-mesh" }
 
 windows-core = "0.62"
 windows = { version = "0.62", features = [

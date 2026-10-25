@@ -7,6 +7,7 @@
 mod audio;
 pub mod dm;
 mod log;
+mod mesh;
 mod preview;
 mod remote;
 mod room;
@@ -26,7 +27,7 @@ use std::fmt;
 pub use audio::{AudioPacket, AudioReceiver, AudioSender, ReceiverEvent};
 pub use log::{SessionLog, recent_logs};
 pub use preview::{KeyframeHandle, LocalPreview, StreamTap};
-pub use remote::{RelaySource, RemoteView};
+pub use remote::{MeshEndpoint, RelaySource, RemoteView};
 pub use room::{ArcadeSeatInfo, JoinAs, MAX_ARCADE_SLOTS, Room, RoomUpdate, WatchPath};
 pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};

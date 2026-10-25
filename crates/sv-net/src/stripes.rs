@@ -18,6 +18,9 @@ pub const DATA_STRIPES: usize = 4;
 pub const STRIPES: usize = DATA_STRIPES + 1;
 /// Índice da faixa de paridade.
 pub const PARITY: u8 = DATA_STRIPES as u8;
+/// Máscara (um bit por faixa) só das faixas de dados: quem recebe tudo de um caminho só não
+/// precisa da paridade.
+pub const DATA_MASK: u8 = (1 << DATA_STRIPES) - 1;
 /// Maior frame aceito numa faixa (o mesmo limite dos frames inteiros).
 pub const MAX_FRAME_BYTES: u32 = crate::protocol::MAX_FRAME_BYTES as u32;
 

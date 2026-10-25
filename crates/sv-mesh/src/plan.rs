@@ -66,6 +66,9 @@ pub struct Config {
     /// Camada de cima: a qualidade que quem transmite escolheu (1440p60, 1080p60...). As de
     /// baixo existem para quem não aguenta a de cima.
     pub top_layer: QualityLayer,
+    /// A camada mais leve que a malha carrega. Com ela igual à de cima, só existe uma (quem não
+    /// couber fica sem plano, em vez de descer).
+    pub min_layer: QualityLayer,
 }
 
 impl Default for Config {
@@ -79,6 +82,7 @@ impl Default for Config {
             hop_ms: 2,
             relay_kbps: 0,
             top_layer: QualityLayer::High,
+            min_layer: QualityLayer::Low,
         }
     }
 }
@@ -102,7 +106,7 @@ impl Config {
     pub fn layers(&self) -> impl Iterator<Item = QualityLayer> + '_ {
         [QualityLayer::Ultra, QualityLayer::High, QualityLayer::Low]
             .into_iter()
-            .filter(|l| *l <= self.top_layer)
+            .filter(|l| *l <= self.top_layer && *l >= self.min_layer)
     }
 
     /// A camada abaixo de `layer` (`None` abaixo da mais leve).
@@ -172,7 +176,7 @@ pub fn plan(source: &Member, members: &[Member], rtt: &dyn Fn(PeerId, PeerId) ->
             let layer = cfg
                 .layers()
                 .find(|l| m.download_kbps >= cfg.download_needed(*l))
-                .unwrap_or(QualityLayer::Low);
+                .unwrap_or(cfg.min_layer);
             (m.id, Some(layer))
         })
         .collect();
@@ -481,6 +485,21 @@ pub fn repair(
     rtt: &dyn Fn(PeerId, PeerId) -> u32,
     cfg: &Config,
 ) -> Plan {
+    repair_with(old, source, members, rtt, cfg, &[], &|_, _| false)
+}
+
+/// Como [`repair`], com o que a rede real conta além de quem saiu: `broken` são ligações cujo pai
+/// continua na sala mas parou de mandar (o filho avisou), e `avoid(filho, pai)` diz quem não pode
+/// ser pai de quem (a conexão entre os dois não abriu).
+pub fn repair_with(
+    old: &Plan,
+    source: &Member,
+    members: &[Member],
+    rtt: &dyn Fn(PeerId, PeerId) -> u32,
+    cfg: &Config,
+    broken: &[(TreeKey, PeerId)],
+    avoid: &dyn Fn(PeerId, PeerId) -> bool,
+) -> Plan {
     let staying: HashMap<PeerId, &Member> = members.iter().map(|m| (m.id, m)).collect();
     let present = |id: PeerId| id == source.id || id == RELAY || staying.contains_key(&id);
     let nat = |id: PeerId| {
@@ -509,7 +528,7 @@ pub fn repair(
             if !present(child) {
                 continue;
             }
-            if present(parent) {
+            if present(parent) && !broken.contains(&(key, child)) {
                 plan.parents.entry(key).or_default().insert(child, parent);
             } else {
                 orphans.push((key, child));
@@ -579,8 +598,10 @@ pub fn repair(
             // Só serve quem ainda chega até quem transmite.
             (at == source.id).then_some(t)
         };
-        let from_source = (source_left.get(&key).copied().unwrap_or(0) >= stripe && source.nat.connects(nat(orphan)))
-            .then(|| (rtt(source.id, orphan) / 2 + cfg.hop_ms, source.id));
+        let from_source = (source_left.get(&key).copied().unwrap_or(0) >= stripe
+            && source.nat.connects(nat(orphan))
+            && !avoid(orphan, source.id))
+        .then(|| (rtt(source.id, orphan) / 2 + cfg.hop_ms, source.id));
         let from_trunk = plan
             .home
             .iter()
@@ -590,7 +611,7 @@ pub fn repair(
                     && left.get(&p).copied().unwrap_or(0) >= stripe
                     && nat(p).connects(nat(orphan))
             })
-            .filter(|&(&p, _)| !below(p, parents))
+            .filter(|&(&p, _)| !below(p, parents) && !avoid(orphan, p))
             .filter_map(|(&p, _)| arrival(p, parents).map(|t| (t + rtt(p, orphan) / 2 + cfg.hop_ms, p)))
             .min_by_key(|&(t, p)| (t, p.0));
         let chosen = match (from_source, from_trunk) {
@@ -703,6 +724,24 @@ mod tests {
         // Com 1080p escolhido, ninguém recebe 1440p.
         let plan = super::plan(&source, &members, &flat, &Config::default());
         assert!(plan.layer.values().all(|l| *l != Some(QualityLayer::Ultra)));
+    }
+
+    #[test]
+    fn com_uma_camada_so_quem_nao_cabe_fica_sem_plano_em_vez_de_descer() {
+        let cfg = Config {
+            min_layer: QualityLayer::High,
+            ..Config::default()
+        };
+        assert_eq!(cfg.layers().collect::<Vec<_>>(), vec![QualityLayer::High]);
+        assert_eq!(cfg.below(QualityLayer::High), None);
+        let members: Vec<_> = (1..=20).map(|i| member(i, 1_000, Nat::Cone)).collect();
+        let plan = plan(&source(), &members, &flat, &cfg);
+        assert!(plan.layer.values().all(|l| *l != Some(QualityLayer::Low)));
+        assert!(plan.layer.values().any(Option::is_none), "alguém não coube");
+        assert!(
+            plan.layer.values().any(Option::is_some),
+            "quem transmite ainda serve alguém"
+        );
     }
 
     #[test]
@@ -921,6 +960,26 @@ mod tests {
         );
         assert_eq!(parents.get(&PeerId(3)), Some(&PeerId(2)), "o 3 continua no 2");
         assert!(fixed.depth(key, PeerId(3)).is_some());
+    }
+
+    #[test]
+    fn pai_que_parou_de_mandar_e_trocado_e_par_que_nao_conecta_e_evitado() {
+        let (members, plan, cfg) = room(60);
+        // Um filho de alguém do tronco (não de quem transmite) numa árvore qualquer.
+        let (key, child, parent) = plan
+            .parents
+            .iter()
+            .flat_map(|(k, p)| p.iter().map(move |(c, v)| (*k, *c, *v)))
+            .find(|(_, _, p)| *p != PeerId(0))
+            .expect("alguém recebe de um membro");
+        let fixed = repair_with(&plan, &source(), &members, &flat, &cfg, &[(key, child)], &|c, p| {
+            c == child && p == parent
+        });
+        let moved = changes(&plan, &fixed);
+        assert_eq!(moved.len(), 1, "{moved:?}");
+        assert_eq!((moved[0].member, moved[0].tree), (child, key));
+        let new_parent = moved[0].parent.expect("achou outro pai");
+        assert_ne!(new_parent, parent, "não volta para o pai que parou de mandar");
     }
 
     #[test]

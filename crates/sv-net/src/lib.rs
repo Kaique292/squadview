@@ -24,8 +24,8 @@ pub mod turn;
 
 pub use endpoint::{Accepted, ConnectError, NatMapping, Peer, Purpose};
 pub use media::{
-    Broadcaster, KeyframeRequester, OnKeyframe, Receiver, ReceiverSink, StripeReceiver, StripeSink, VideoFrame,
-    send_stripe,
+    Broadcaster, KeyframeRequester, OnKeyframe, Receiver, ReceiverSink, StripeMask, StripeReceiver, StripeRelay,
+    StripeSink, StripedFrame, VideoFrame, send_stripe,
 };
 pub use signaling::{Arcade, DiscordUser, JoinRequester, Member, Resume, RoomClient, RoomEvent, SpeakingEffect};
 pub use simulcast::Layer;
@@ -46,6 +46,9 @@ pub const VOICE_RELAY_ALPN: &[u8] = b"squadview-voice-relay/1";
 /// ALPN da conexão do fliperama (ADR 0023 e 0024): o controle (e, com o controle total, o teclado e
 /// o mouse) de um jogador para quem hospeda.
 pub const ARCADE_ALPN: &[u8] = b"squadview-arcade/1";
+/// ALPN das conexões da malha (ADR 0030): um pai manda por ela as faixas da sua casa a um filho.
+/// Apps antigos não negociam este ALPN e nunca recebem faixas.
+pub const MESH_ALPN: &[u8] = b"squadview-mesh/1";
 
 #[cfg(test)]
 mod tests {

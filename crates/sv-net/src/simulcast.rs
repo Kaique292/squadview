@@ -193,6 +193,16 @@ impl LayerChooser {
         None
     }
 
+    /// Prende o espectador na camada principal (na malha, os pais só repassam ela). Devolve
+    /// `Some(Main)` quando começa a voltar, para pedir o keyframe.
+    pub fn force_main(&mut self, now_us: u64) -> Option<Layer> {
+        if self.target == Layer::Main {
+            return None;
+        }
+        self.upgraded_at_us = None;
+        Some(self.start_switch(Layer::Main, now_us))
+    }
+
     fn start_switch(&mut self, to: Layer, now_us: u64) -> Layer {
         self.target = to;
         self.switch_started_us = now_us;
@@ -313,6 +323,22 @@ mod tests {
         run(&mut c, 1_000_000, 4_500_000, |_| false);
         assert!(!c.needs_low(), "parou de pedir a camada baixa");
         assert_eq!(c.active(), Layer::Main);
+    }
+
+    #[test]
+    fn preso_na_principal_volta_para_ela_no_keyframe() {
+        let mut c = LayerChooser::new(true);
+        run(&mut c, 0, 1_000_000, |_| true);
+        keyframe(&mut c, Layer::Low, 1_000_000);
+        assert_eq!(c.force_main(1_100_000), Some(Layer::Main));
+        assert_eq!(c.force_main(1_200_000), None, "pede o keyframe uma vez só");
+        assert!(
+            c.accepts(Layer::Low, false, 1_300_000),
+            "até o keyframe, a baixa continua"
+        );
+        keyframe(&mut c, Layer::Main, 1_400_000);
+        assert_eq!(c.active(), Layer::Main);
+        assert!(!c.needs_low());
     }
 
     #[test]
