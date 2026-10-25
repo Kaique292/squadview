@@ -44,3 +44,4 @@
 | [0024](adr/0024-fliperama-teclado-e-mouse.md)             | Fliperama: mouse no analógico e "controle total" de teclado e mouse (com permissão) |
 | [0026](adr/0026-simulcast-com-2-camadas.md)               | Simulcast com 2 camadas, escolhidas por quem transmite para cada espectador         |
 | [0028](adr/0028-faixas-e-paridade-no-envio.md)            | Faixas e paridade no envio: um stream QUIC por faixa e remontagem com prazo         |
+| [0029](adr/0029-troca-de-pai-na-malha.md)                 | Troca de pai na malha: conserto local, só para quem perdeu uma faixa                |

@@ -63,8 +63,12 @@ O formato das faixas está na [ADR 0028](adr/0028-faixas-e-paridade-no-envio.md)
 
 ## Troca de pai
 
-- Se o pai de uma faixa some por mais de 300 ms, a imagem segue pela paridade (4 das 5 faixas) e o membro pede um pai novo naquela árvore.
-- Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar.
+Desenho na [ADR 0029](adr/0029-troca-de-pai-na-malha.md); o conserto do plano já existe (`sv_mesh::plan::repair` e `changes`), a parte de rede ainda não.
+
+- Se o pai de uma faixa some por mais de 300 ms (ou a conexão fecha), a imagem segue pela paridade (4 das 5 faixas) e o membro avisa quem transmite.
+- Quem transmite conserta o plano só onde quebrou: cada órfão ganha um pai do tronco da mesma árvore, com vaga e que não esteja abaixo dele. Quem não foi afetado não muda.
+- Cada membro afetado recebe só a sua mudança (árvore e pai novo) e conecta no pai novo.
+- Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar (p95 simulado: 370 a 390 ms).
 
 ## Atravessar NAT
 
