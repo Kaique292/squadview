@@ -14,7 +14,7 @@ use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
 use sv_net::{
-    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, SpeakingEffect,
+    Broadcaster, DiscordUser, JoinRequester, Layer, Member, Peer, RoomClient, RoomEvent as WireEvent, SpeakingEffect,
     VideoFrame, stun,
 };
 use tokio::runtime::Runtime;
@@ -223,6 +223,9 @@ struct Inner {
     relay_sources: Mutex<HashMap<String, RelaySource>>,
     /// Fingerprint de quem vai conectar para receber repassado por nós → de qual streamer.
     relay_viewers: Mutex<HashMap<String, String>>,
+    /// Fingerprint de quem vai conectar para assistir a nossa live e aceita trocar de camada
+    /// (simulcast, ADR 0026).
+    simulcast_viewers: Mutex<std::collections::HashSet<String>>,
     /// A voz com estes membros não abriu: pedindo a alguém para repassar (ADR 0020).
     pending_voice_relay: Mutex<HashMap<String, PendingVoiceRelay>>,
     /// Pedidos para assistir que chegaram com o "AO VIVO" já anunciado, mas antes do primeiro
@@ -358,6 +361,7 @@ impl Room {
                 pending_relay: Mutex::default(),
                 relay_sources: Mutex::default(),
                 relay_viewers: Mutex::default(),
+                simulcast_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
                 first_frame_waiters: Mutex::default(),
                 arcade: arcade::ArcadeState::default(),
@@ -463,6 +467,7 @@ impl Room {
         self.inner.arcade_close();
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
+        lock(&self.inner.simulcast_viewers).clear();
         self.inner.flush_waiters();
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
@@ -557,6 +562,8 @@ impl Room {
         let signal = Signal::WatchRequest {
             candidates: self.inner.peer.candidates().to_vec(),
             fingerprint: self.inner.peer.fingerprint().to_owned(),
+            // O decoder acompanha a troca de resolução: podemos receber a camada baixa.
+            simulcast: true,
         };
         lock(&self.inner.client).signal(member_id, &signal);
     }
@@ -677,6 +684,9 @@ impl Inner {
         let reply = match (live, desc) {
             (true, Some(stream)) => {
                 self.peer.allowed().allow(&request.fingerprint);
+                if request.simulcast {
+                    lock(&self.simulcast_viewers).insert(request.fingerprint.clone());
+                }
                 self.peer.punch(&request.candidates);
                 // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
                 self.peer.permit_relay(&request.candidates);
@@ -959,10 +969,12 @@ impl Inner {
             Signal::WatchRequest {
                 candidates,
                 fingerprint,
+                simulcast,
             } => self.answer_watch(WatchWaiter {
                 from,
                 candidates,
                 fingerprint,
+                simulcast,
             }),
             Signal::WatchAccept {
                 candidates,
@@ -1377,8 +1389,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
             let source = lock(&inner.relay_sources).get(&streamer).cloned();
             match source {
                 Some(source) => {
+                    // O repasse manda os frames como chegam (uma camada só): sem troca.
                     let keyframes = source.keyframes.clone();
-                    source.broadcaster.add(conn, Arc::new(move || keyframes.request()));
+                    source
+                        .broadcaster
+                        .add(conn, false, Arc::new(move |_| keyframes.request()));
                 }
                 None => conn.close(quinn::VarInt::from_u32(1), b"parou de assistir"),
             }
@@ -1389,7 +1404,13 @@ async fn accept_viewers(inner: Arc<Inner>) {
             conn.close(quinn::VarInt::from_u32(1), b"nao esta transmitindo");
             continue;
         };
-        inner.broadcaster.add(conn, Arc::new(move || keyframes.request()));
+        let simulcast = accepted
+            .fingerprint
+            .as_ref()
+            .is_some_and(|f| lock(&inner.simulcast_viewers).remove(f));
+        inner
+            .broadcaster
+            .add(conn, simulcast, Arc::new(move |layer| keyframes.request_of(layer)));
     }
 }
 
@@ -1404,6 +1425,8 @@ struct WatchWaiter {
     from: String,
     candidates: Vec<std::net::SocketAddr>,
     fingerprint: String,
+    /// Aceita trocar de camada (simulcast, ADR 0026).
+    simulcast: bool,
 }
 
 struct BroadcastTap {
@@ -1434,7 +1457,28 @@ impl StreamTap for BroadcastTap {
                 encode_us: frame.encode_us,
             },
             data: Arc::from(frame.data.as_slice()),
+            layer: Layer::Main,
         });
+    }
+
+    fn low_video(&self, seq: u32, frame: &EncodedFrame) {
+        if !self.inner.broadcaster.wants_low() {
+            return;
+        }
+        self.inner.broadcaster.send_video(&VideoFrame {
+            header: FrameHeader {
+                seq,
+                timestamp_us: frame.timestamp_us,
+                keyframe: frame.keyframe,
+                encode_us: frame.encode_us,
+            },
+            data: Arc::from(frame.data.as_slice()),
+            layer: Layer::Low,
+        });
+    }
+
+    fn wants_low(&self) -> bool {
+        self.inner.broadcaster.wants_low()
     }
 
     fn audio(&self, packet: &AudioPacket) {

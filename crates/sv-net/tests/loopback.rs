@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sv_net::protocol::FrameHeader;
-use sv_net::{Broadcaster, Peer, Purpose, Receiver, ReceiverSink, VideoFrame};
+use sv_net::{Broadcaster, Layer, Peer, Purpose, Receiver, ReceiverSink, VideoFrame};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -38,6 +38,7 @@ fn frame(seq: u32, keyframe: bool, size: usize) -> VideoFrame {
             encode_us: 2_000,
         },
         data: Arc::from(vec![(seq % 251) as u8; size]),
+        layer: Layer::Main,
     }
 }
 
@@ -62,7 +63,7 @@ async fn assiste_um_stream_de_ponta_a_ponta() {
         assert_eq!(accepted.fingerprint.as_deref(), Some(viewer.fingerprint()));
         let conn = accepted.conn;
         let k = keyframes.clone();
-        broadcaster.add(conn, Arc::new(move || *k.lock().unwrap() += 1));
+        broadcaster.add(conn, false, Arc::new(move |_| *k.lock().unwrap() += 1));
     };
     let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
     let (_, conn) = tokio::join!(accept, connect);
@@ -181,6 +182,108 @@ async fn settle(broadcaster: &Broadcaster, pred: impl Fn(usize) -> bool) -> usiz
     broadcaster.viewer_count()
 }
 
+/// Espera um frame de vídeo cujos bytes são todos `fill`, descartando os outros.
+async fn video_filled_with(rx: &mut mpsc::UnboundedReceiver<Got>, fill: u8) -> FrameHeader {
+    loop {
+        if let Got::Video(header, data) = next(rx).await
+            && data.iter().all(|b| *b == fill)
+        {
+            return header;
+        }
+    }
+}
+
+// Simulcast (ADR 0026): quem perde frames desce para a camada baixa no keyframe dela, e quem tem
+// um app antigo (não avisou que aceita trocar de camada) continua na principal.
+#[tokio::test(flavor = "multi_thread")]
+async fn quem_perde_frames_desce_para_a_camada_baixa_e_o_app_antigo_fica_na_principal() {
+    let streamer = Peer::bind(&[]).await.unwrap();
+    let novo = Peer::bind(&[]).await.unwrap();
+    let antigo = Peer::bind(&[]).await.unwrap();
+    streamer.allowed().allow(novo.fingerprint());
+    streamer.allowed().allow(antigo.fingerprint());
+    let broadcaster = Broadcaster::new();
+    let pedidos = Arc::new(Mutex::new(Vec::new()));
+    let mut receivers = Vec::new();
+    for (viewer, simulcast) in [(&novo, true), (&antigo, false)] {
+        let accept = async {
+            let accepted = streamer.accept().await.expect("aceitar");
+            let p = pedidos.clone();
+            broadcaster.add(
+                accepted.conn,
+                simulcast,
+                Arc::new(move |layer| p.lock().unwrap().push((simulcast, layer))),
+            );
+        };
+        let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
+        let (_, conn) = tokio::join!(accept, connect);
+        let (tx, rx) = mpsc::unbounded_channel();
+        receivers.push((Receiver::start(conn.expect("conectar"), Sink(tx)), rx));
+    }
+    // Os `Receiver` ficam vivos até o fim: descartar um fecha a conexão.
+    let (_novo, mut novo_rx) = receivers.remove(0);
+    let (_antigo, mut antigo_rx) = receivers.remove(0);
+
+    // Uma rajada maior que a fila dos dois (6 frames): os dois perdem frames no mesmo segundo.
+    // Os frames já prontos antes, para a rajada sair mais rápido do que qualquer fila esvazia.
+    let burst: Vec<_> = (0..60).map(|seq| frame(seq, seq == 0, 400_000)).collect();
+    for f in &burst {
+        broadcaster.send_video(f);
+    }
+    let pedidos_agora = pedidos.lock().unwrap().clone();
+    assert!(pedidos_agora.contains(&(true, Layer::Low)), "{pedidos_agora:?}");
+    assert!(!pedidos_agora.contains(&(false, Layer::Low)), "{pedidos_agora:?}");
+    assert!(broadcaster.wants_low(), "o segundo encoder tem que ligar");
+
+    // As filas esvaziam; chega o keyframe da camada baixa e depois um da principal.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let low = VideoFrame {
+        header: FrameHeader {
+            seq: 0,
+            timestamp_us: 2_000,
+            keyframe: true,
+            encode_us: 1_000,
+        },
+        data: Arc::from(vec![0xaa; 1_000]),
+        layer: Layer::Low,
+    };
+    broadcaster.send_video(&low);
+    let main = VideoFrame {
+        header: FrameHeader {
+            seq: 60,
+            timestamp_us: 2_100,
+            keyframe: true,
+            encode_us: 1_000,
+        },
+        data: Arc::from(vec![0xbb; 1_000]),
+        layer: Layer::Main,
+    };
+    broadcaster.send_video(&main);
+
+    // O novo recebe a baixa e para de receber a principal; o antigo só recebe a principal.
+    assert_eq!(video_filled_with(&mut novo_rx, 0xaa).await.timestamp_us, 2_000);
+    assert_eq!(video_filled_with(&mut antigo_rx, 0xbb).await.timestamp_us, 2_100);
+    let next_frame = VideoFrame {
+        header: FrameHeader {
+            seq: 1,
+            timestamp_us: 2_200,
+            keyframe: false,
+            encode_us: 1_000,
+        },
+        data: Arc::from(vec![0xcc; 1_000]),
+        layer: Layer::Low,
+    };
+    broadcaster.send_video(&next_frame);
+    // Antes da baixa seguinte, nada da principal chegou ao novo.
+    loop {
+        match next(&mut novo_rx).await {
+            Got::Video(_, data) if data.iter().all(|b| *b == 0xcc) => break,
+            Got::Video(_, data) => assert!(!data.iter().all(|b| *b == 0xbb), "a principal chegou ao novo"),
+            _ => {}
+        }
+    }
+}
+
 // Achado na esteira: com vários endereços que respondem (o local e o 127.0.0.1), quem transmite
 // chegou a contar dois espectadores. A tentativa que perde fecha, e quem transmite tem que tirá-la.
 #[tokio::test(flavor = "multi_thread")]
@@ -192,7 +295,7 @@ async fn dois_enderecos_que_respondem_viram_uma_conexao_so() {
     let (s, b) = (streamer.clone(), broadcaster.clone());
     tokio::spawn(async move {
         while let Some(accepted) = s.accept().await {
-            b.add(accepted.conn, Arc::new(|| {}));
+            b.add(accepted.conn, false, Arc::new(|_| {}));
         }
     });
 
@@ -218,7 +321,7 @@ async fn quem_sai_antes_do_primeiro_frame_deixa_de_contar() {
     let broadcaster = Broadcaster::new();
     let accept = async {
         let accepted = streamer.accept().await.expect("aceitar");
-        broadcaster.add(accepted.conn, Arc::new(|| {}));
+        broadcaster.add(accepted.conn, false, Arc::new(|_| {}));
     };
     let connect = viewer.connect(streamer.candidates(), None, streamer.fingerprint());
     let (_, conn) = tokio::join!(accept, connect);

@@ -96,6 +96,9 @@ function Details() {
 
           <p className="text-xs text-text-faint">
             Encoder: {stats.encoder}
+            {/* Simulcast (ADR 0026): quem não aguenta a qualidade escolhida recebe uma camada leve. */}
+            {stats.lowLayerHeight > 0 && ` · Camada de ${stats.lowLayerHeight}p ligada para quem tem internet fraca`}
+            {stats.lowLayerError && ` · ${stats.lowLayerError}`}
             {logPath && (
               <>
                 {" · "}Registro desta sessão (só no seu PC): <span className="break-all select-text">{logPath}</span>

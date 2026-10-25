@@ -63,6 +63,7 @@ async fn dois_amigos_se_encontram_na_sala_e_trocam_sinais() {
     let request = Signal::WatchRequest {
         candidates: vec!["127.0.0.1:5000".parse().unwrap()],
         fingerprint: "ab".into(),
+        simulcast: false,
     };
     beto.signal(&ana_id, &request);
     assert_eq!(

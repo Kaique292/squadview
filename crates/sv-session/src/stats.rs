@@ -35,6 +35,10 @@ pub struct StreamStats {
     pub audio_lost: u32,
     /// Ida e volta até quem transmite, em ms (só para quem assiste; 0 na prévia).
     pub rtt_ms: f32,
+    /// Altura da camada baixa do simulcast, quando ela está ligada para alguém (0: desligada).
+    pub low_layer_height: u32,
+    /// Por que a camada baixa não abriu, se der erro (quem assiste fica na principal).
+    pub low_layer_error: Option<String>,
 }
 
 /// Acumula medições e fecha uma [`StreamStats`] por janela de tempo.

@@ -9,7 +9,7 @@ use sv_encode::EncodedFrame;
 use sv_gpu::{Size, clock};
 use sv_media::{Bounds, WindowTarget};
 use sv_net::protocol::{FrameHeader, StreamDescription};
-use sv_net::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
+use sv_net::{Broadcaster, KeyframeRequester, Layer, Receiver, ReceiverSink, VideoFrame};
 
 use crate::surface::{Surface, lock};
 use crate::{AudioPacket, AudioReceiver, ReceiverEvent, StatsMeter, StreamInfo, StreamStats, VideoViewer, ViewerEvent};
@@ -70,6 +70,12 @@ impl Shared {
                 if let Some(k) = self.keyframes.get() {
                     k.request();
                 }
+            }
+            // Trocou de camada: as estatísticas (e o selo de qualidade) mostram o que chega de fato.
+            ViewerEvent::Resized(size) => {
+                let mut base = lock(&self.base);
+                base.width = size.width;
+                base.height = size.height;
             }
             ViewerEvent::Closed | ViewerEvent::Failed(_) => {}
         }
@@ -249,6 +255,8 @@ impl ReceiverSink for Sink {
             state.relay.send_video(&VideoFrame {
                 header,
                 data: Arc::from(&data[..]),
+                // Para quem recebe por nós, o que chega é "a" camada (sem troca no repasse).
+                layer: Layer::Main,
             });
         }
         let frame = EncodedFrame {
@@ -361,6 +369,18 @@ mod tests {
         assert_eq!(s.latency_ms, 40.0);
         assert_eq!(s.audio_level, 0.5);
         assert!(s.bitrate_kbps > 0 && s.audio_kbps > 0);
+    }
+
+    #[test]
+    fn trocar_de_camada_muda_o_tamanho_nas_estatisticas() {
+        let (state, stats, _) = state();
+        state.on_viewer_event(ViewerEvent::Resized(Size::new(1280, 720)));
+        let mut sink = Sink { state };
+        sink.video(header(0), vec![1; 100]);
+        next_window();
+        sink.video(header(1), vec![1; 100]);
+        let s = lock(&stats)[0].clone();
+        assert_eq!((s.width, s.height), (1280, 720));
     }
 
     #[test]

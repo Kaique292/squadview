@@ -75,6 +75,22 @@ impl EncoderConfig {
         }
     }
 
+    /// A camada baixa do simulcast (ADR 0026) para quem transmite em `self`: 720p30 com a mesma
+    /// proporção da camada principal. `None` quando a principal já é tão leve quanto ela (não
+    /// adianta um segundo encoder para mandar a mesma coisa).
+    pub fn low_layer(self) -> Option<Self> {
+        let low = Self::for_layer(QualityLayer::Low);
+        if self.size.height <= low.size.height && self.fps <= low.fps {
+            return None;
+        }
+        let size = sv_gpu::scaled_to_fit(self.size, low.size);
+        Some(Self {
+            size,
+            fps: low.fps.min(self.fps),
+            bitrate_kbps: low.bitrate_kbps.min(self.bitrate_kbps),
+        })
+    }
+
     /// A mesma camada, mas com o tamanho real da fonte reduzido para caber no máximo dela.
     pub fn fitted_to(self, source: Size) -> Self {
         Self {
@@ -126,6 +142,35 @@ mod tests {
     fn camada_baixa_e_720p30() {
         let cfg = EncoderConfig::for_layer(QualityLayer::Low);
         assert_eq!((cfg.size, cfg.fps), (Size::new(1280, 720), 30));
+    }
+
+    #[test]
+    fn camada_baixa_do_simulcast_e_720p30_na_proporcao_da_principal() {
+        let main = EncoderConfig::for_layer(QualityLayer::High);
+        let low = main.low_layer().expect("1080p60 tem camada baixa");
+        assert_eq!((low.size, low.fps), (Size::new(1280, 720), 30));
+        // Ultrawide: a baixa segue a proporção da principal.
+        let uw = EncoderConfig::for_layer(QualityLayer::High).fitted_to(Size::new(3440, 1440));
+        let low = uw.low_layer().unwrap();
+        assert_eq!(low.size.width, 1280);
+        assert!(low.size.height < 720);
+        // 720p60: a baixa só corta os fps.
+        let p720 = EncoderConfig {
+            fps: 60,
+            ..EncoderConfig::for_layer(QualityLayer::Low)
+        };
+        assert_eq!(
+            p720.low_layer().map(|l| (l.size, l.fps)),
+            Some((Size::new(1280, 720), 30))
+        );
+        // Já em 720p30 (ou menos), não há camada baixa.
+        assert_eq!(EncoderConfig::for_layer(QualityLayer::Low).low_layer(), None);
+        let small = EncoderConfig {
+            size: Size::new(960, 540),
+            fps: 15,
+            bitrate_kbps: 1_500,
+        };
+        assert_eq!(small.low_layer(), None);
     }
 
     #[test]

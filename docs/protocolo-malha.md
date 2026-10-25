@@ -40,7 +40,15 @@ O planejamento está em `sv_mesh::plan` e é testado com o simulador `sv_mesh::s
 
 ## Camadas de qualidade
 
-- O streamer gera duas camadas (alta e baixa) por simulcast ou SVC, cada uma com as suas 5 faixas.
+Já funciona entre quem transmite e cada espectador direto ([ADR 0026](adr/0026-simulcast-com-2-camadas.md)):
+
+- Quem transmite gera a camada principal e, só enquanto alguém precisa, uma baixa de 720p30 (simulcast, um segundo encoder).
+- Quem pede para assistir avisa no `watch-request` que aceita trocar de camada (`simulcast: true`; ausente em apps antigos, que ficam na principal).
+- Quem transmite escolhe a camada de cada espectador pelo que se perde na conexão dele (frames fora da fila ou vídeo preso no QUIC) e troca no keyframe da camada nova. Cada conexão recebe uma camada só, com a sua sequência.
+
+Na malha (falta fazer):
+
+- Cada camada desce com as suas 5 faixas.
 - Cada membro assina a camada que o download dele aguenta (`sv_mesh::layer_for_download`).
 - Um repassador só encaminha as camadas que os filhos pediram.
 
