@@ -1,15 +1,17 @@
 //! Controles do modo Lan House Fliperama (ADR 0023, plano em `docs/fliperama.md`).
 //!
 //! - [`pad`]: o estado de um controle ([`PadState`]), no layout do XInput.
-//! - [`xinput`]: lê os controles físicos ligados ao PC.
+//! - [`xinput`]: lê os controles de Xbox ligados ao PC.
+//! - [`gamepads`]: lê os de PlayStation, Switch e genéricos (ADR 0031).
 //! - [`virtual_pad`]: cria controles virtuais de Xbox 360 pelo ViGEmBus (só no host).
 //! - [`driver`]: diz se o ViGEmBus está instalado e onde está o desinstalador dele.
 //! - [`wire`]: o que viaja na conexão do fliperama (controle e teclado/mouse).
-//! - [`reader`]: lê o controle físico do jogador numa thread própria.
+//! - [`reader`]: lê os controles físicos do jogador numa thread própria e junta os estados.
 //! - [`keymap`]: teclado e mouse do jogador viram controle (ADR 0024).
 //! - [`kbm`]: o "controle total" de teclado e mouse no host, com as regras de segurança (ADR 0024).
 
 pub mod driver;
+pub mod gamepads;
 pub mod kbm;
 pub mod keymap;
 pub mod pad;
@@ -19,6 +21,7 @@ pub mod wire;
 pub mod xinput;
 
 pub use driver::{DriverStatus, Uninstaller, driver_status, find_uninstaller};
+pub use gamepads::{PadDevice, PadKind};
 pub use keymap::{KeyMap, KeyboardPad, PadInput};
 pub use pad::PadState;
 pub use reader::PadReader;

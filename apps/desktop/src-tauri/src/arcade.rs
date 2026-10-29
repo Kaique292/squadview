@@ -15,8 +15,12 @@ use crate::room::{RoomState, lock};
 
 /// Jogadores do fliperama que abrimos (`Vec<ArcadeSeatInfo>`).
 pub const PLAYERS_EVENT: &str = "arcade-players";
-/// Ganhamos a vaga num fliperama: `{ hostId, slot }`.
+/// Ganhamos a vaga num fliperama: `{ hostId, slot, relayed }`.
 pub const SEAT_EVENT: &str = "arcade-seat";
+/// Os controles achados no nosso PC para jogar (`Vec<PadDevice>`; vazia: nenhum).
+pub const CONTROLLERS_EVENT: &str = "arcade-controllers";
+/// A janela do jogo do nosso fliperama entrou ou saiu do primeiro plano: `bool`.
+pub const FOCUS_EVENT: &str = "arcade-focus";
 /// Saímos de um fliperama: `{ hostId, reason }` (`reason` vazio: saímos nós).
 pub const LEFT_EVENT: &str = "arcade-left";
 /// Quem hospeda ligou ou desligou nosso controle total: `{ hostId, granted }`.
@@ -120,9 +124,16 @@ fn msi_product(command: &str) -> Option<String> {
     Some(command[start..=end].to_owned())
 }
 
-/// Abre o fliperama sobre a nossa transmissão: até `slots` jogadores (P2 a P4).
+/// Abre o fliperama sobre a nossa transmissão: até `slots` jogadores (P2 a P4). `reserve_p1`: sem
+/// controle no PC, um controle virtual parado guarda o P1 para quem hospeda.
 #[tauri::command]
-pub fn arcade_open<R: Runtime>(app: AppHandle<R>, slots: u8, game: Option<String>) -> Result<(), String> {
+pub fn arcade_open<R: Runtime>(
+    app: AppHandle<R>,
+    slots: u8,
+    game: Option<String>,
+    reserve_p1: Option<bool>,
+) -> Result<(), String> {
+    let reserve_p1 = reserve_p1.unwrap_or(true);
     let capture = crate::preview::current_capture(&app);
     let window = match capture.as_ref().map(|(source, _)| *source) {
         Some(CaptureSource::Window(hwnd)) => Some(hwnd),
@@ -132,9 +143,11 @@ pub fn arcade_open<R: Runtime>(app: AppHandle<R>, slots: u8, game: Option<String
     let state = app.state::<RoomState>();
     let running = lock(&state);
     let room = running.room.as_ref().ok_or("Entre numa sala primeiro.")?;
-    room.arcade_open(game, slots, window)?;
-    app.state::<Diagnostics>()
-        .write("arcade-open", &json!({ "slots": slots, "window": window.is_some() }));
+    room.arcade_open(game, slots, window, reserve_p1)?;
+    app.state::<Diagnostics>().write(
+        "arcade-open",
+        &json!({ "slots": slots, "window": window.is_some(), "reserveP1": reserve_p1 }),
+    );
     Ok(())
 }
 
@@ -272,12 +285,33 @@ pub(crate) fn emit<R: Runtime>(app: &AppHandle<R>, update: sv_session::RoomUpdat
     use sv_session::RoomUpdate as U;
     match update {
         U::ArcadePlayers(seats) => {
+            // Para o registro: quem conectou e quem ficou sem vaga no XInput (o jogo não o vê).
+            let summary: Vec<_> = seats
+                .iter()
+                .map(|s| json!({ "slot": s.slot, "connected": s.connected, "xinput": s.xinput }))
+                .collect();
+            app.state::<Diagnostics>()
+                .write("arcade-players", &json!({ "seats": summary }));
             let _ = app.emit(PLAYERS_EVENT, seats);
         }
-        U::ArcadeSeat { host, slot } => {
+        U::ArcadeSeat { host, slot, relayed } => {
             app.state::<Diagnostics>()
-                .write("arcade-seat", &json!({ "slot": slot }));
-            let _ = app.emit(SEAT_EVENT, json!({ "hostId": host, "slot": slot }));
+                .write("arcade-seat", &json!({ "slot": slot, "relayed": relayed }));
+            let _ = app.emit(SEAT_EVENT, json!({ "hostId": host, "slot": slot, "relayed": relayed }));
+        }
+        U::ArcadeControllers(devices) => {
+            let summary: Vec<_> = devices
+                .iter()
+                .map(|d| json!({ "kind": d.kind, "supported": d.supported }))
+                .collect();
+            app.state::<Diagnostics>()
+                .write("arcade-controllers", &json!({ "devices": summary }));
+            let _ = app.emit(CONTROLLERS_EVENT, devices);
+        }
+        U::ArcadeFocus { focused } => {
+            app.state::<Diagnostics>()
+                .write("arcade-focus", &json!({ "focused": focused }));
+            let _ = app.emit(FOCUS_EVENT, focused);
         }
         U::ArcadeLeft { host, reason } => {
             app.state::<Diagnostics>()

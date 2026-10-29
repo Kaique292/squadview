@@ -72,8 +72,13 @@ pub enum RoomUpdate {
     Disconnected,
     /// O fliperama que abrimos (ADR 0023): quem joga em cada vaga.
     ArcadePlayers(Vec<ArcadeSeatInfo>),
-    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu.
-    ArcadeSeat { host: String, slot: u8 },
+    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu (`relayed`: pelo
+    /// repassador TURN de quem hospeda, e não direto).
+    ArcadeSeat { host: String, slot: u8, relayed: bool },
+    /// Os controles que achamos no nosso PC para jogar no fliperama (ADR 0031). Vazia: nenhum.
+    ArcadeControllers(Vec<sv_input::PadDevice>),
+    /// A janela do jogo do nosso fliperama entrou (`true`) ou saiu do primeiro plano.
+    ArcadeFocus { focused: bool },
     /// Saímos do fliperama de `host`: recusado, tirado, fechado ou caiu (`reason` vazio: saímos nós).
     ArcadeLeft { host: String, reason: String },
     /// Quem hospeda ligou ou desligou o nosso controle total de teclado e mouse (ADR 0024).
@@ -166,11 +171,14 @@ impl std::fmt::Debug for RoomUpdate {
             Self::Reconnected { resumed } => f.debug_struct("Reconnected").field("resumed", resumed).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
             Self::ArcadePlayers(seats) => f.debug_tuple("ArcadePlayers").field(seats).finish(),
-            Self::ArcadeSeat { host, slot } => f
+            Self::ArcadeSeat { host, slot, relayed } => f
                 .debug_struct("ArcadeSeat")
                 .field("host", host)
                 .field("slot", slot)
+                .field("relayed", relayed)
                 .finish(),
+            Self::ArcadeControllers(devices) => f.debug_tuple("ArcadeControllers").field(devices).finish(),
+            Self::ArcadeFocus { focused } => f.debug_struct("ArcadeFocus").field("focused", focused).finish(),
             Self::ArcadeLeft { host, reason } => f
                 .debug_struct("ArcadeLeft")
                 .field("host", host)
@@ -485,8 +493,14 @@ impl Room {
 
     /// Abre o fliperama sobre a nossa live (ADR 0023): até `slots` membros jogam como P2 a P4.
     /// `window` é a janela do jogo que estamos capturando (sem ela, o controle total não liga).
-    pub fn arcade_open(&self, game: Option<String>, slots: u8, window: Option<isize>) -> Result<(), String> {
-        self.inner.arcade_open(game, slots, window)
+    pub fn arcade_open(
+        &self,
+        game: Option<String>,
+        slots: u8,
+        window: Option<isize>,
+        reserve_p1: bool,
+    ) -> Result<(), String> {
+        self.inner.arcade_open(game, slots, window, reserve_p1)
     }
 
     /// O nosso fliperama está aberto.
