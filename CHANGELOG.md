@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.14.0](https://github.com/Kaique292/squadview/compare/v0.13.0...v0.14.0) (2026-10-29)
+
+
+### ✨ Novidades
+
+* **input:** aceita controles de PlayStation e Switch e guarda o P1 no fliperama ([#129](https://github.com/Kaique292/squadview/issues/129)) ([f4ea76d](https://github.com/Kaique292/squadview/commit/f4ea76d2e64917c93c3bc8397e704cbcdcc0ec64))
+* **net:** distribui o vídeo pela malha da sala, com faixas, paridade e troca de pai ([#124](https://github.com/Kaique292/squadview/issues/124)) ([649e681](https://github.com/Kaique292/squadview/commit/649e6813d40550710b92a9cb51eb7fd713cdad54))
+* **net:** manda 720p30 para quem tem internet fraca, sem afetar os outros ([#123](https://github.com/Kaique292/squadview/issues/123)) ([a101f14](https://github.com/Kaique292/squadview/commit/a101f14a87292b9db35997a379961b6ee7c4038e))
+
+
+### 🐛 Correções
+
+* **ui:** ajusta a grade da sala à altura da janela ([#122](https://github.com/Kaique292/squadview/issues/122)) ([5c35e24](https://github.com/Kaique292/squadview/commit/5c35e243a3ebafbebbd1a88b077db353e12d6bf2))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e as capturas para a versão 0.14 ([#130](https://github.com/Kaique292/squadview/issues/130)) ([7141f86](https://github.com/Kaique292/squadview/commit/7141f866a4872c686abfc3b85dbdfa178a03bbf4))
+
+
+### 📦 Build
+
+* **deps:** bump the javascript group with 7 updates ([#128](https://github.com/Kaique292/squadview/issues/128)) ([f6d46ef](https://github.com/Kaique292/squadview/commit/f6d46efec97dc508ee23afc3898b813ce085ea40))
+* **deps:** bump the rust group with 4 updates ([#127](https://github.com/Kaique292/squadview/issues/127)) ([c85fdbc](https://github.com/Kaique292/squadview/commit/c85fdbc27cc6d378d739fe1791707ac71bc91d28))
+
 ## [0.13.0](https://github.com/Kaique292/squadview/compare/v0.12.0...v0.13.0) (2026-10-23)
 
 
