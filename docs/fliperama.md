@@ -94,6 +94,19 @@ O relógio de 4 ms do envio, na prática, andava na granularidade padrão do Win
 - quem assiste não mostra mais, um por um, os quadros atrasados de uma rajada da rede: decodifica e pula para o mais novo;
 - com a live abaixo de 60 fps, o painel do fliperama avisa e troca com um clique (a 30 fps, cada quadro espera até 33 ms).
 
+## Queixas do P2: controles, P1 guardado e avisos (ADR 0031)
+
+Amigos relataram que não conseguiam conectar o controle nem jogar como P2. As causas e o que mudou:
+
+- [x] **Controle de PlayStation, Switch ou genérico não era lido** (só o XInput). Agora o `PadReader` lê todos os controles ligados e junta os estados: os de Xbox pelo XInput, os outros pelo Windows.Gaming.Input (`gamepads.rs`, crate `gilrs`). Isso também resolve o leitor que ficava com o controle errado quando havia dois ligados.
+- [x] **Ninguém sabia se o controle tinha sido achado.** O quadro do jogo mostra "Controle de PlayStation conectado", "Nenhum controle encontrado…" ou que o controle não tem mapa de botões, e avisa se a conexão passa pelo repassador.
+- [x] **Com o host no teclado, o amigo virava o P1 do jogo.** A opção "Guardar o P1 para mim" (ligada por padrão) pluga um controle parado antes do primeiro jogador quando o PC do host não tem controle. Os plugs agora são um por vez.
+- [x] **Controle virtual sem vaga no XInput** (as 4 ocupadas): o painel e um toast avisam o host.
+- [x] **Jogo fora do primeiro plano:** o host confere a cada 500 ms (com a captura de uma janela) e avisa no painel e, uma vez por fliperama, num toast.
+- [x] Registro: `arcade-controllers`, `arcade-players`, `arcade-seat` (com `relayed`), `arcade-focus` e `reserveP1` no `arcade-open`.
+- [ ] No teste real: conferir um DualSense e um Pro Controller, a latência deles (o `gilrs` lê a cada 8 ms) e se o Windows.Gaming.Input lê com o SquadView fora do primeiro plano.
+- [x] Testes `#[ignore]` com o ViGEmBus: `sem_controle_no_host_o_p1_fica_guardado_e_o_amigo_e_o_segundo_controle` (com o Worker local e nenhum controle ligado) e `controle_recem_plugado_ja_aparece_solto`. O segundo achou que o controle virtual nascia com os analógicos fora do centro: agora o `plug` o solta.
+
 ## Etapa 5: medição e testes reais
 
 - [ ] `perf-check` no host com o fliperama aberto e 3 jogadores: FPS do jogo, 1% low e uso do encoder.

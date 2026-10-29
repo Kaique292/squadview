@@ -14,7 +14,7 @@ use sv_encode::EncodedFrame;
 use sv_net::protocol::{FrameHeader, Signal, StreamDescription};
 use sv_net::signaling::error_message;
 use sv_net::{
-    Broadcaster, DiscordUser, JoinRequester, Member, Peer, RoomClient, RoomEvent as WireEvent, SpeakingEffect,
+    Broadcaster, DiscordUser, JoinRequester, Layer, Member, Peer, RoomClient, RoomEvent as WireEvent, SpeakingEffect,
     VideoFrame, stun,
 };
 use tokio::runtime::Runtime;
@@ -23,6 +23,7 @@ use crate::surface::lock;
 use crate::voice_mesh::VoiceMesh;
 
 mod arcade;
+mod mesh;
 use crate::{AudioPacket, KeyframeHandle, RelaySource, StreamInfo, StreamTap, VoiceEngine, VoiceEvent, VoiceSettings};
 pub use arcade::{ArcadeSeatInfo, MAX_SLOTS as MAX_ARCADE_SLOTS};
 
@@ -43,12 +44,14 @@ pub enum RoomUpdate {
     VoiceBridges(BTreeMap<String, String>),
     /// Não deu para ligar a voz com `member_id` (sem conexão direta).
     VoiceFailed { member_id: String, reason: String },
-    /// A conexão com quem pedimos para assistir abriu, pelo caminho `path`.
+    /// A conexão com quem pedimos para assistir abriu, pelo caminho `path`. Com `mesh`, o vídeo
+    /// vem em faixas (ADR 0030): o `RemoteView` abre na malha.
     WatchReady {
         member: Member,
         conn: Connection,
         desc: StreamDescription,
         path: WatchPath,
+        mesh: bool,
     },
     /// O repassador TURN desta sala ficou pronto (`Ok`, com o nosso endereço nele) ou falhou.
     Relay(Result<std::net::SocketAddr, String>),
@@ -69,8 +72,13 @@ pub enum RoomUpdate {
     Disconnected,
     /// O fliperama que abrimos (ADR 0023): quem joga em cada vaga.
     ArcadePlayers(Vec<ArcadeSeatInfo>),
-    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu.
-    ArcadeSeat { host: String, slot: u8 },
+    /// Ganhamos a vaga `slot` (o P) no fliperama de `host`, e a conexão abriu (`relayed`: pelo
+    /// repassador TURN de quem hospeda, e não direto).
+    ArcadeSeat { host: String, slot: u8, relayed: bool },
+    /// Os controles que achamos no nosso PC para jogar no fliperama (ADR 0031). Vazia: nenhum.
+    ArcadeControllers(Vec<sv_input::PadDevice>),
+    /// A janela do jogo do nosso fliperama entrou (`true`) ou saiu do primeiro plano.
+    ArcadeFocus { focused: bool },
     /// Saímos do fliperama de `host`: recusado, tirado, fechado ou caiu (`reason` vazio: saímos nós).
     ArcadeLeft { host: String, reason: String },
     /// Quem hospeda ligou ou desligou o nosso controle total de teclado e mouse (ADR 0024).
@@ -163,11 +171,14 @@ impl std::fmt::Debug for RoomUpdate {
             Self::Reconnected { resumed } => f.debug_struct("Reconnected").field("resumed", resumed).finish(),
             Self::Disconnected => f.write_str("Disconnected"),
             Self::ArcadePlayers(seats) => f.debug_tuple("ArcadePlayers").field(seats).finish(),
-            Self::ArcadeSeat { host, slot } => f
+            Self::ArcadeSeat { host, slot, relayed } => f
                 .debug_struct("ArcadeSeat")
                 .field("host", host)
                 .field("slot", slot)
+                .field("relayed", relayed)
                 .finish(),
+            Self::ArcadeControllers(devices) => f.debug_tuple("ArcadeControllers").field(devices).finish(),
+            Self::ArcadeFocus { focused } => f.debug_struct("ArcadeFocus").field("focused", focused).finish(),
             Self::ArcadeLeft { host, reason } => f
                 .debug_struct("ArcadeLeft")
                 .field("host", host)
@@ -223,6 +234,9 @@ struct Inner {
     relay_sources: Mutex<HashMap<String, RelaySource>>,
     /// Fingerprint de quem vai conectar para receber repassado por nós → de qual streamer.
     relay_viewers: Mutex<HashMap<String, String>>,
+    /// Fingerprint de quem vai conectar para assistir a nossa live e aceita trocar de camada
+    /// (simulcast, ADR 0026).
+    simulcast_viewers: Mutex<std::collections::HashSet<String>>,
     /// A voz com estes membros não abriu: pedindo a alguém para repassar (ADR 0020).
     pending_voice_relay: Mutex<HashMap<String, PendingVoiceRelay>>,
     /// Pedidos para assistir que chegaram com o "AO VIVO" já anunciado, mas antes do primeiro
@@ -230,6 +244,8 @@ struct Inner {
     first_frame_waiters: Mutex<Vec<WatchWaiter>>,
     /// O fliperama que abrimos ou em que jogamos (ADR 0023).
     arcade: arcade::ArcadeState,
+    /// A malha das lives (ADR 0030): a nossa, que coordenamos, e as que assistimos.
+    mesh: mesh::MeshState,
     voice: Arc<VoiceMesh>,
     runtime: tokio::runtime::Handle,
     on_update: OnUpdate,
@@ -358,9 +374,11 @@ impl Room {
                 pending_relay: Mutex::default(),
                 relay_sources: Mutex::default(),
                 relay_viewers: Mutex::default(),
+                simulcast_viewers: Mutex::default(),
                 pending_voice_relay: Mutex::new(HashMap::new()),
                 first_frame_waiters: Mutex::default(),
                 arcade: arcade::ArcadeState::default(),
+                mesh: mesh::MeshState::default(),
                 voice,
                 runtime: tokio::runtime::Handle::current(),
                 on_update: on_update.clone(),
@@ -452,6 +470,7 @@ impl Room {
     /// Começamos a transmitir: a sala fica sabendo e passamos a aceitar quem pedir para assistir.
     pub fn stream_started(&self, keyframes: KeyframeHandle) {
         *lock(&self.inner.keyframes) = Some(keyframes);
+        self.inner.mesh_start();
         lock(&self.inner.me).live = true;
         self.inner.send_status();
         self.inner.publish_members();
@@ -463,6 +482,8 @@ impl Room {
         self.inner.arcade_close();
         *lock(&self.inner.keyframes) = None;
         *lock(&self.inner.stream) = None;
+        lock(&self.inner.simulcast_viewers).clear();
+        self.inner.mesh_stop();
         self.inner.flush_waiters();
         self.inner.broadcaster.close();
         lock(&self.inner.me).live = false;
@@ -472,8 +493,14 @@ impl Room {
 
     /// Abre o fliperama sobre a nossa live (ADR 0023): até `slots` membros jogam como P2 a P4.
     /// `window` é a janela do jogo que estamos capturando (sem ela, o controle total não liga).
-    pub fn arcade_open(&self, game: Option<String>, slots: u8, window: Option<isize>) -> Result<(), String> {
-        self.inner.arcade_open(game, slots, window)
+    pub fn arcade_open(
+        &self,
+        game: Option<String>,
+        slots: u8,
+        window: Option<isize>,
+        reserve_p1: bool,
+    ) -> Result<(), String> {
+        self.inner.arcade_open(game, slots, window, reserve_p1)
     }
 
     /// O nosso fliperama está aberto.
@@ -557,6 +584,9 @@ impl Room {
         let signal = Signal::WatchRequest {
             candidates: self.inner.peer.candidates().to_vec(),
             fingerprint: self.inner.peer.fingerprint().to_owned(),
+            // O decoder acompanha a troca de resolução: podemos receber a camada baixa.
+            simulcast: true,
+            mesh: Some(self.inner.mesh_hello()),
         };
         lock(&self.inner.client).signal(member_id, &signal);
     }
@@ -620,11 +650,15 @@ impl Room {
     /// Começamos a assistir `source.streamer`: a sala pode repassar esse stream a quem não alcança
     /// quem transmite (ADR 0014).
     pub fn add_relay_source(&self, source: RelaySource) {
+        if let Some(mesh) = source.mesh.clone() {
+            self.inner.mesh_view_opened(&source.streamer, mesh);
+        }
         lock(&self.inner.relay_sources).insert(source.streamer.clone(), source);
     }
 
     /// Paramos de assistir `streamer`: quem ia receber esse stream por nós não recebe mais.
     pub fn remove_relay_source(&self, streamer: &str) {
+        self.inner.mesh_view_closed(streamer);
         lock(&self.inner.relay_sources).remove(streamer);
         lock(&self.inner.relay_viewers).retain(|_, s| s != streamer);
     }
@@ -677,6 +711,19 @@ impl Inner {
         let reply = match (live, desc) {
             (true, Some(stream)) => {
                 self.peer.allowed().allow(&request.fingerprint);
+                if request.simulcast {
+                    lock(&self.simulcast_viewers).insert(request.fingerprint.clone());
+                }
+                let mesh = request.mesh.is_some_and(|hello| {
+                    self.mesh_offer(
+                        &request.fingerprint,
+                        mesh::MeshRequest {
+                            id: request.from.clone(),
+                            candidates: request.candidates.clone(),
+                            hello,
+                        },
+                    )
+                });
                 self.peer.punch(&request.candidates);
                 // Se o direto não fechar, a pessoa vem pelo nosso endereço no repassador.
                 self.peer.permit_relay(&request.candidates);
@@ -685,6 +732,7 @@ impl Inner {
                     fingerprint: self.peer.fingerprint().to_owned(),
                     stream,
                     relay: self.peer.relay_addr(),
+                    mesh,
                 }
             }
             (true, None) => {
@@ -955,20 +1003,29 @@ impl Inner {
             Ok(()) => return,
             Err(other) => other,
         };
+        let signal = match self.mesh_signal(&from, signal) {
+            Ok(()) => return,
+            Err(other) => other,
+        };
         match signal {
             Signal::WatchRequest {
                 candidates,
                 fingerprint,
+                simulcast,
+                mesh,
             } => self.answer_watch(WatchWaiter {
                 from,
                 candidates,
                 fingerprint,
+                simulcast,
+                mesh,
             }),
             Signal::WatchAccept {
                 candidates,
                 fingerprint,
                 stream,
                 relay,
+                mesh,
             } => {
                 let direct = lock(&self.pending_watch).contains(&from);
                 // Ou é quem aceitou repassar um stream que pedimos.
@@ -1005,6 +1062,8 @@ impl Inner {
                                 conn,
                                 desc: stream,
                                 path,
+                                // Só quem transmite coordena a malha (um membro que repassa, não).
+                                mesh: mesh && direct,
                             });
                         }
                         // Sem caminho até quem transmite (nem pelo repassador): pede a quem já
@@ -1042,6 +1101,7 @@ impl Inner {
                             fingerprint: self.peer.fingerprint().to_owned(),
                             stream: source.desc,
                             relay: self.peer.relay_addr(),
+                            mesh: false,
                         }
                     }
                     None => Signal::WatchDeny {
@@ -1155,7 +1215,10 @@ impl Inner {
             | Signal::ArcadeSeat { .. }
             | Signal::ArcadeDeny { .. }
             | Signal::ArcadeLeave
-            | Signal::ArcadeKbm { .. } => {}
+            | Signal::ArcadeKbm { .. }
+            // Tratados antes, em `mesh_signal`.
+            | Signal::MeshAssign { .. }
+            | Signal::MeshLost { .. } => {}
             Signal::WatchDeny { reason } => {
                 if lock(&self.pending_watch).remove(&from) {
                     (self.on_update)(RoomUpdate::WatchFailed {
@@ -1219,6 +1282,7 @@ async fn handle_events(inner: Arc<Inner>, mut events: tokio::sync::mpsc::Unbound
             }
             WireEvent::MemberLeft(id) => {
                 lock(&inner.members).remove(&id);
+                inner.mesh_leave(&id);
                 lock(&inner.pending_voice_relay).remove(&id);
                 inner.voice.unregister(&id);
                 inner.arcade_member_left(&id);
@@ -1355,6 +1419,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
             inner.arcade_accept(accepted.conn, accepted.fingerprint);
             continue;
         }
+        if accepted.purpose == sv_net::Purpose::Mesh {
+            // Malha (ADR 0030): um filho que vem buscar a nossa faixa da casa.
+            inner.mesh_child(accepted.conn, accepted.fingerprint.as_deref());
+            continue;
+        }
         if accepted.purpose == sv_net::Purpose::VoiceRelay {
             // Repasse de voz (ADR 0020): só de quem já está na voz com a gente.
             let member = accepted
@@ -1377,8 +1446,11 @@ async fn accept_viewers(inner: Arc<Inner>) {
             let source = lock(&inner.relay_sources).get(&streamer).cloned();
             match source {
                 Some(source) => {
+                    // O repasse manda os frames como chegam (uma camada só): sem troca.
                     let keyframes = source.keyframes.clone();
-                    source.broadcaster.add(conn, Arc::new(move || keyframes.request()));
+                    source
+                        .broadcaster
+                        .add(conn, false, Arc::new(move |_| keyframes.request()));
                 }
                 None => conn.close(quinn::VarInt::from_u32(1), b"parou de assistir"),
             }
@@ -1389,7 +1461,17 @@ async fn accept_viewers(inner: Arc<Inner>) {
             conn.close(quinn::VarInt::from_u32(1), b"nao esta transmitindo");
             continue;
         };
-        inner.broadcaster.add(conn, Arc::new(move || keyframes.request()));
+        // Quem pediu pela malha recebe só as faixas que vão direto (ADR 0030).
+        if inner.mesh_accept(&conn, accepted.fingerprint.as_deref()) {
+            continue;
+        }
+        let simulcast = accepted
+            .fingerprint
+            .as_ref()
+            .is_some_and(|f| lock(&inner.simulcast_viewers).remove(f));
+        inner
+            .broadcaster
+            .add(conn, simulcast, Arc::new(move |layer| keyframes.request_of(layer)));
     }
 }
 
@@ -1404,6 +1486,10 @@ struct WatchWaiter {
     from: String,
     candidates: Vec<std::net::SocketAddr>,
     fingerprint: String,
+    /// Aceita trocar de camada (simulcast, ADR 0026).
+    simulcast: bool,
+    /// Pode entrar na malha (ADR 0030).
+    mesh: Option<sv_net::protocol::MeshHello>,
 }
 
 struct BroadcastTap {
@@ -1434,7 +1520,28 @@ impl StreamTap for BroadcastTap {
                 encode_us: frame.encode_us,
             },
             data: Arc::from(frame.data.as_slice()),
+            layer: Layer::Main,
         });
+    }
+
+    fn low_video(&self, seq: u32, frame: &EncodedFrame) {
+        if !self.inner.broadcaster.wants_low() {
+            return;
+        }
+        self.inner.broadcaster.send_video(&VideoFrame {
+            header: FrameHeader {
+                seq,
+                timestamp_us: frame.timestamp_us,
+                keyframe: frame.keyframe,
+                encode_us: frame.encode_us,
+            },
+            data: Arc::from(frame.data.as_slice()),
+            layer: Layer::Low,
+        });
+    }
+
+    fn wants_low(&self) -> bool {
+        self.inner.broadcaster.wants_low()
     }
 
     fn audio(&self, packet: &AudioPacket) {

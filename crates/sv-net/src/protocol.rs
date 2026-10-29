@@ -17,6 +17,14 @@ pub enum Signal {
     WatchRequest {
         candidates: Vec<SocketAddr>,
         fingerprint: String,
+        /// Quem assiste aceita trocar de camada no meio do stream (simulcast, ADR 0026). Ausente
+        /// em apps antigos: esses ficam sempre na camada principal.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        simulcast: bool,
+        /// Quem assiste pode entrar na malha (ADR 0030): o NAT e o upload que ele pode doar.
+        /// Ausente em apps antigos, que recebem o vídeo inteiro de quem transmite.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mesh: Option<MeshHello>,
     },
     /// Quem transmite aceita e manda os dele (e já começa a "furar" o NAT na direção do outro).
     WatchAccept {
@@ -27,6 +35,9 @@ pub enum Signal {
         /// não fechar. Ausente em apps antigos ou sem repassador.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         relay: Option<SocketAddr>,
+        /// Quem assiste entra na malha (ADR 0030): o vídeo desta conexão vem em faixas.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mesh: bool,
     },
     /// Quem transmite recusou (não está ao vivo, ou atingiu o limite de espectadores).
     WatchDeny { reason: String },
@@ -81,6 +92,56 @@ pub enum Signal {
     ArcadeLeave,
     /// Quem hospeda ligou ou desligou o "controle total" de teclado e mouse deste jogador (ADR 0024).
     ArcadeKbm { granted: bool },
+    /// Malha (ADR 0030), de quem transmite para quem assiste: de onde vem cada faixa e para quem
+    /// repassar a faixa da casa. Vale por inteiro (a anterior é substituída).
+    MeshAssign {
+        /// De quem vem cada faixa (as que faltam aqui não chegam a ninguém agora).
+        parents: Vec<MeshParent>,
+        /// A faixa que repassamos (`None`: só recebemos).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<u8>,
+        /// Quem vai conectar na gente para receber a faixa da casa.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        children: Vec<MeshPeer>,
+    },
+    /// Malha, de quem assiste para quem transmite: a faixa `stripe` parou de chegar (o pai saiu
+    /// ou ficou para trás). Quem transmite conserta o plano (ADR 0029).
+    MeshLost { stripe: u8 },
+}
+
+/// O que quem assiste conta para entrar na malha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshHello {
+    pub nat: MeshNat,
+    /// Upload que pode doar para repassar, em kbit/s.
+    pub upload_kbps: u32,
+}
+
+/// O NAT de quem assiste, como o planejador da malha precisa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MeshNat {
+    Open,
+    Cone,
+    Symmetric,
+}
+
+/// De onde vem uma faixa.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeshParent {
+    pub stripe: u8,
+    /// Quem repassa (`None`: quem transmite manda direto, pela conexão de assistir).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<MeshPeer>,
+}
+
+/// Um membro da malha: como chegar nele (ou como ele vai chegar na gente).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeshPeer {
+    pub id: String,
+    pub candidates: Vec<SocketAddr>,
+    pub fingerprint: String,
 }
 
 /// O que quem assiste precisa saber para preparar o decoder.
@@ -290,6 +351,8 @@ mod tests {
         let s = Signal::WatchRequest {
             candidates: vec!["1.2.3.4:5000".parse().unwrap()],
             fingerprint: "ab".into(),
+            simulcast: false,
+            mesh: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(
@@ -297,6 +360,72 @@ mod tests {
             r#"{"kind":"watch-request","candidates":["1.2.3.4:5000"],"fingerprint":"ab"}"#
         );
         assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn pedido_para_assistir_diz_se_aceita_trocar_de_camada() {
+        // Simulcast (ADR 0026): o app novo avisa; o pedido de um app antigo, sem o campo, vale
+        // como "não aceita" e ele fica na camada principal.
+        let s = Signal::WatchRequest {
+            candidates: vec![],
+            fingerprint: "ab".into(),
+            simulcast: true,
+            mesh: None,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""simulcast":true"#), "{json}");
+        assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), s);
+        let old = r#"{"kind":"watch-request","candidates":[],"fingerprint":"ab"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Signal>(old).unwrap(),
+            Signal::WatchRequest { simulcast: false, .. }
+        ));
+    }
+
+    #[test]
+    fn sinais_da_malha_vao_e_voltam_e_app_antigo_nao_entra_nela() {
+        let hello = MeshHello {
+            nat: MeshNat::Cone,
+            upload_kbps: 5_000,
+        };
+        let req = Signal::WatchRequest {
+            candidates: vec![],
+            fingerprint: "ab".into(),
+            simulcast: true,
+            mesh: Some(hello),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains(r#""mesh":{"nat":"cone","uploadKbps":5000}"#), "{json}");
+        assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), req);
+        let old = r#"{"kind":"watch-request","candidates":[],"fingerprint":"ab"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Signal>(old).unwrap(),
+            Signal::WatchRequest { mesh: None, .. }
+        ));
+        let peer = MeshPeer {
+            id: "ana".into(),
+            candidates: vec!["1.2.3.4:5000".parse().unwrap()],
+            fingerprint: "cd".into(),
+        };
+        let assign = Signal::MeshAssign {
+            parents: vec![
+                MeshParent { stripe: 0, via: None },
+                MeshParent {
+                    stripe: 1,
+                    via: Some(peer.clone()),
+                },
+            ],
+            home: Some(1),
+            children: vec![peer],
+        };
+        let json = serde_json::to_string(&assign).unwrap();
+        assert!(json.starts_with(r#"{"kind":"mesh-assign""#), "{json}");
+        assert_eq!(serde_json::from_str::<Signal>(&json).unwrap(), assign);
+        let lost = Signal::MeshLost { stripe: 3 };
+        assert_eq!(
+            serde_json::to_string(&lost).unwrap(),
+            r#"{"kind":"mesh-lost","stripe":3}"#
+        );
     }
 
     #[test]

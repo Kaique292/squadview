@@ -43,6 +43,23 @@ impl VirtualPads {
             .plug()?
             .wait_for_ready_timeout(READY_TIMEOUT)?;
         let slot = find_slot(&target, before);
+        // Antes da primeira atualização, o XInput mostra os analógicos um pouco fora do centro
+        // (medido: até 3356). O controle que guarda o P1, que nunca recebe estado, faria um
+        // personagem andar sozinho nos jogos com zona morta pequena. Mandar o controle solto não
+        // basta: o driver pula o relatório igual ao último que guardou (que começa zerado). Então
+        // vai um quase solto e, em seguida, o solto, quando o XInput já vê o controle.
+        if let Some(s) = slot {
+            let deadline = Instant::now() + SLOT_TIMEOUT;
+            while xinput::read(s).is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let nudge = PadState {
+            thumb_lx: 1,
+            ..PadState::default()
+        };
+        target.update(&nudge.to_x360())?;
+        target.update(&PadState::default().to_x360())?;
         if let Some(s) = slot {
             OUR_SLOTS.fetch_or(1 << s, Ordering::SeqCst);
         }
@@ -58,6 +75,16 @@ static OUR_SLOTS: AtomicU8 = AtomicU8::new(0);
 /// A vaga `slot` do XInput é um controle virtual criado por este app.
 pub fn is_ours(slot: u32) -> bool {
     slot < xinput::SLOTS && OUR_SLOTS.load(Ordering::SeqCst) & (1 << slot) != 0
+}
+
+/// Há algum controle no XInput que não é um dos nossos (o do host, ou de outro programa como o
+/// DS4Windows). Sem nenhum, o primeiro controle virtual do fliperama vira o P1 do jogo.
+pub fn other_pad_connected() -> bool {
+    foreign(xinput::connected(), OUR_SLOTS.load(Ordering::SeqCst))
+}
+
+fn foreign(connected: [bool; xinput::SLOTS as usize], ours: u8) -> bool {
+    (0..xinput::SLOTS).any(|s| connected[s as usize] && ours & (1 << s) == 0)
 }
 
 /// Quanto esperar o Windows dar uma vaga do XInput ao controle novo.
@@ -141,6 +168,33 @@ mod tests {
             None,
             "uma saiu"
         );
+    }
+
+    /// Regressão: com o host sem controle, o controle do amigo pegava a vaga 0 e o jogo o tratava
+    /// como o P1. O P1 só é guardado quando não há controle nenhum além dos nossos.
+    #[test]
+    fn so_guarda_o_p1_sem_controle_de_fora() {
+        assert!(!foreign([false; 4], 0), "PC sem controle: guarda o P1");
+        assert!(
+            !foreign([true, true, false, false], 0b0011),
+            "só os nossos: guarda o P1"
+        );
+        assert!(foreign([true, false, false, false], 0), "o host tem controle na vaga 0");
+        assert!(foreign([true, true, false, false], 0b0001), "um nosso e um de fora");
+    }
+
+    /// Regressão: o controle que guarda o P1 nunca recebe estado, e o XInput mostrava os analógicos
+    /// fora do centro (-3356, -1869...) até a primeira atualização diferente de zero.
+    #[test]
+    #[ignore = "precisa do ViGEmBus instalado"]
+    fn controle_recem_plugado_ja_aparece_solto() {
+        let pads = VirtualPads::connect().expect("ViGEmBus instalado");
+        let pad = pads.plug().expect("controle plugado");
+        let slot = pad.user_index().expect("vaga do XInput");
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(crate::xinput::read(slot), Some(PadState::default()));
+        // Como no fliperama: o controle fica plugado até o Windows terminar de reconhecê-lo.
+        std::thread::sleep(Duration::from_millis(300));
     }
 
     #[test]

@@ -9,7 +9,10 @@ use std::fmt;
 
 use sv_core::{PeerId, QualityLayer};
 
-use crate::plan::{Config, Member, Nat, Plan, RELAY, impact, plan};
+use crate::plan::{Config, Member, Nat, Plan, RELAY, changes, impact, plan, repair};
+
+/// Quanto tempo sem uma faixa até o membro dar o pai como perdido (ADR 0029).
+pub const PARENT_TIMEOUT_MS: u32 = 300;
 
 /// Gerador pseudoaleatório pequeno (SplitMix64): reprodutível e sem dependência.
 #[derive(Debug, Clone)]
@@ -153,13 +156,20 @@ pub struct Report {
     pub churn: f64,
     pub frozen: f64,
     pub covered: f64,
+    /// Depois do conserto: fração dos que ficaram que mudou de pai em alguma árvore.
+    pub moved: f64,
+    /// Fração dos que tinham imagem e continuam com ela depois do conserto.
+    pub restored: f64,
+    /// Tempo da troca de pai (perceber a saída, conectar no pai novo e receber a primeira faixa),
+    /// p95, em ms.
+    pub swap_p95: u32,
 }
 
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{:>7} | {:>5.1}% {:>5.1}% {:>5.1}% {:>5.1}% | {:>4} {:>4} {:>4} ms | {:>6} | {:>19.1} | {:>12.2} | {:>6.1} | {:>6.1}% {:>4.1}%",
+            "{:>7} | {:>5.1}% {:>5.1}% {:>5.1}% {:>5.1}% | {:>4} {:>4} {:>4} ms | {:>6} | {:>19.1} | {:>12.2} | {:>6.1} | {:>6.1}% {:>4.1}% | {:>5.1}% {:>6.1}% {:>5} ms",
             self.members,
             self.ultra * 100.0,
             self.high * 100.0,
@@ -174,12 +184,15 @@ impl fmt::Display for Report {
             self.relay_mbps,
             self.frozen * 100.0,
             self.covered * 100.0,
+            self.moved * 100.0,
+            self.restored * 100.0,
+            self.swap_p95,
         )
     }
 }
 
 /// Cabeçalho da tabela do [`Report`].
-pub const REPORT_HEADER: &str = "membros |  1440p  1080p   720p   nada |  p50  p95  máx    | saltos | Mbps quem transmite | Mbps cada um | nuvem  | congela cobre";
+pub const REPORT_HEADER: &str = "membros |  1440p  1080p   720p   nada |  p50  p95  máx    | saltos | Mbps quem transmite | Mbps cada um | nuvem  | congela cobre | mudam  voltam  troca p95";
 
 /// RTT entre duas pessoas: a rota entre as cidades mais a última milha de cada lado.
 pub fn rtt(a: &Person, b: &Person) -> u32 {
@@ -212,7 +225,37 @@ pub fn run(n: usize, cfg: &Config, churn: f64, seed: u64) -> Report {
     let rtt_fn = |a: PeerId, b: PeerId| rtt(by_id[&a], by_id[&b]);
     let plan = plan(&source.member, &members, &rtt_fn, cfg);
     let gone: Vec<PeerId> = members.iter().filter(|_| rng.chance(churn)).map(|m| m.id).collect();
-    summarize(&plan, cfg, &source.member, &members, churn, &gone)
+    let mut report = summarize(&plan, cfg, &source.member, &members, churn, &gone);
+
+    // A troca de pai: quem ficou recebe pais novos só onde precisa.
+    let staying: Vec<Member> = members.iter().filter(|m| !gone.contains(&m.id)).cloned().collect();
+    let fixed = repair(&plan, &source.member, &staying, &rtt_fn, cfg);
+    let moved = changes(&plan, &fixed);
+    let mut moved_ids: Vec<PeerId> = moved.iter().map(|c| c.member).collect();
+    moved_ids.sort();
+    moved_ids.dedup();
+    let had: Vec<&Member> = staying.iter().filter(|m| plan.layer[&m.id].is_some()).collect();
+    let kept = had.iter().filter(|m| fixed.layer[&m.id].is_some()).count();
+    // Perceber a saída, um aperto de mão QUIC (1 RTT) e a primeira faixa (meia volta).
+    let mut swaps: Vec<u32> = moved
+        .iter()
+        .filter_map(|c| {
+            c.parent
+                .map(|p| PARENT_TIMEOUT_MS + rtt_fn(p, c.member) * 3 / 2 + cfg.hop_ms)
+        })
+        .collect();
+    swaps.sort_unstable();
+    report.moved = moved_ids.len() as f64 / staying.len().max(1) as f64;
+    report.restored = if had.is_empty() {
+        1.0
+    } else {
+        kept as f64 / had.len() as f64
+    };
+    report.swap_p95 = swaps
+        .get(((swaps.len() as f64 - 1.0) * 0.95).round() as usize)
+        .copied()
+        .unwrap_or(0);
+    report
 }
 
 fn summarize(plan: &Plan, cfg: &Config, source: &Member, members: &[Member], churn: f64, gone: &[PeerId]) -> Report {
@@ -251,6 +294,9 @@ fn summarize(plan: &Plan, cfg: &Config, source: &Member, members: &[Member], chu
         churn,
         frozen: hit.frozen as f64 / staying,
         covered: hit.covered as f64 / staying,
+        moved: 0.0,
+        restored: 1.0,
+        swap_p95: 0,
     }
 }
 
@@ -332,5 +378,17 @@ mod tests {
         assert!(r.frozen <= 0.03, "{r}");
         // Em sala grande sempre há gente de rede aberta: o repassador na nuvem fica parado.
         assert!(r.relay_mbps <= 1.0, "{r}");
+    }
+
+    #[test]
+    fn troca_de_pai_volta_a_imagem_de_todos_em_menos_de_1_s() {
+        // Critério da Fase 3: troca de pai em menos de 1 s, mexendo só em quem precisa.
+        for n in [8, 100, 1_000] {
+            let r = run(n, &proposed(), 0.05, 2);
+            assert!(r.restored >= 0.99, "{r}");
+            assert!(r.swap_p95 < 1_000, "{r}");
+            // Só muda de pai quem perdeu alguma faixa com a saída.
+            assert!(r.moved <= r.covered + r.frozen + 1e-9, "{r}");
+        }
     }
 }

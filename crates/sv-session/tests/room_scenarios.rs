@@ -18,9 +18,13 @@ use sv_net::protocol::{
     FrameHeader, RelayKey, Relayed, Signal, StreamDescription, decode_relayed, encode_audio, encode_relayed, relay_peer,
 };
 use sv_net::signaling::{error_message, new_room_code};
-use sv_net::{Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, VideoFrame};
+use sv_net::{
+    Broadcaster, DiscordUser, Peer, Purpose, Receiver, ReceiverSink, RoomClient, RoomEvent, StripeReceiver,
+    StripeRelay, StripeSink, VideoFrame,
+};
 use sv_session::{
-    AudioPacket, JoinAs, KeyframeHandle, Member, RelaySource, Room, RoomUpdate, StreamInfo, VoiceSettings, WatchPath,
+    AudioPacket, JoinAs, KeyframeHandle, Member, MeshEndpoint, RelaySource, Room, RoomUpdate, StreamInfo,
+    VoiceSettings, WatchPath,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -310,6 +314,8 @@ fn pedido_antes_do_primeiro_quadro_espera_e_entra_quando_ele_sai() {
         &Signal::WatchRequest {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: false,
+            mesh: None,
         },
     );
     // Sem o primeiro quadro, a Ana não responde nada (nem recusa).
@@ -354,6 +360,7 @@ fn sinais_que_ninguem_pediu_sao_ignorados() {
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
         Signal::WatchDeny { reason: "não".into() },
         // A Ana entrou sem voz: convite e resposta de voz não fazem nada.
@@ -411,6 +418,7 @@ fn assiste_um_amigo_que_aceita_pela_conexao_direta() {
             fingerprint: beto_peer.fingerprint().to_owned(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let accepted = rt.spawn(async move {
@@ -450,6 +458,7 @@ fn sem_conexao_direta_quem_pediu_para_assistir_fica_sabendo() {
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let (who, reason) = ana.wait("a falha", |u| match u {
@@ -488,6 +497,7 @@ fn ana_pede_repasse_ao_caio(rt: &Runtime, url: &str) -> (Someone, Friend, Friend
             fingerprint: "ab".into(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let request = caio.signal_from(rt, &ana_id);
@@ -517,6 +527,7 @@ fn sem_caminho_ate_quem_transmite_recebe_por_quem_ja_assiste() {
             fingerprint: caio_peer.fingerprint().to_owned(),
             stream: desc(),
             relay: None,
+            mesh: false,
         },
     );
     let accepted = rt.spawn(async move {
@@ -610,6 +621,8 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         &Signal::WatchRequest {
             candidates: beto_peer.candidates().to_vec(),
             fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: false,
+            mesh: None,
         },
     );
     let Signal::WatchAccept {
@@ -677,6 +690,242 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         .expect("o aperto de mão passa");
     let reason = rt.block_on(late.closed());
     assert!(reason.to_string().contains("nao esta transmitindo"), "{reason}");
+}
+
+/// Simulcast (ADR 0026) pela sala de verdade: quem avisa no pedido que aceita trocar de camada e
+/// não dá conta da principal faz a sala pedir a camada baixa, e recebe ela.
+#[test]
+fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
+    let Some(url) = worker() else { return };
+    let rt = Runtime::new().unwrap();
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let mut beto = friend(&rt, &url, &code, "Beto");
+    let beto_peer = rt.block_on(Peer::bind(&[])).unwrap();
+    let ana_id = ana.members("o Beto", |m| m.iter().any(|x| x.name == "Beto"))[0]
+        .id
+        .clone();
+
+    let tap = ana.room.tap();
+    tap.started(&StreamInfo {
+        size: Size::new(1920, 1080),
+        fps: 60,
+        encoder: "teste".into(),
+    });
+    ana.room.stream_started(KeyframeHandle::detached());
+    beto.client.signal(
+        &ana_id,
+        &Signal::WatchRequest {
+            candidates: beto_peer.candidates().to_vec(),
+            fingerprint: beto_peer.fingerprint().to_owned(),
+            simulcast: true,
+            mesh: None,
+        },
+    );
+    let Signal::WatchAccept {
+        candidates,
+        fingerprint,
+        ..
+    } = beto.signal_from(&rt, &ana_id)
+    else {
+        panic!("a Ana devia aceitar")
+    };
+    let conn = rt
+        .block_on(beto_peer.connect(&candidates, None, &fingerprint))
+        .expect("conectar na Ana");
+    let (tx, got) = mpsc::channel();
+    let _receiver = {
+        let _guard = rt.enter();
+        Receiver::start(conn, Sink(tx))
+    };
+    for _ in 0..100 {
+        if ana.room.viewer_count() == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!tap.wants_low(), "ninguém precisa da camada baixa ainda");
+
+    // Uma rajada maior que a fila do Beto, no mesmo segundo.
+    for seq in 0..60 {
+        tap.video(
+            seq,
+            &EncodedFrame {
+                data: vec![1; 400_000],
+                keyframe: seq == 0,
+                timestamp_us: 1_000 + u64::from(seq),
+                encode_us: 1,
+            },
+        );
+    }
+    assert!(tap.wants_low(), "a sala pede a camada baixa ao encoder");
+
+    std::thread::sleep(Duration::from_millis(500));
+    tap.low_video(
+        1_000,
+        &EncodedFrame {
+            data: vec![2; 1_000],
+            keyframe: true,
+            timestamp_us: 2_000,
+            encode_us: 1,
+        },
+    );
+    loop {
+        if let Got::Video(1_000) = got.recv_timeout(WAIT).expect("a camada baixa não chegou ao Beto") {
+            break;
+        }
+    }
+}
+
+/// Os frames remontados das faixas, para quem assiste pela malha.
+struct MeshFrames(mpsc::Sender<u32>);
+
+impl StripeSink for MeshFrames {
+    fn frame(&mut self, header: FrameHeader, _data: Vec<u8>) {
+        let _ = self.0.send(header.seq);
+    }
+    fn lost(&mut self, _first_seq: u32, _count: u32) {}
+}
+
+/// O som e o relógio da conexão direta, que este teste não confere.
+struct Quiet;
+
+impl ReceiverSink for Quiet {
+    fn video(&mut self, _: FrameHeader, _: Vec<u8>) {}
+    fn audio(&mut self, _: u32, _: u64, _: f32, _: &[u8]) {}
+    fn closed(&mut self, _: String) {}
+}
+
+/// Quem assiste pela malha, como o app faz: abre a live e registra a nossa ponta nela.
+struct MeshWatcher {
+    who: Someone,
+    frames: mpsc::Receiver<u32>,
+    endpoint: MeshEndpoint,
+    _receiver: Receiver,
+    seen: Vec<u32>,
+}
+
+impl MeshWatcher {
+    fn open(who: Someone, streamer: &str) -> Self {
+        who.room.watch(streamer);
+        let (conn, mesh) = who.wait("a live da Ana", |u| match u {
+            RoomUpdate::WatchReady { conn, mesh, .. } => Some((conn, mesh)),
+            _ => None,
+        });
+        assert!(mesh, "devia vir pela malha");
+        let (tx, frames) = mpsc::channel();
+        let _guard = who.room.runtime().enter();
+        let stripes = StripeReceiver::new(MeshFrames(tx));
+        stripes.attach(conn.clone());
+        let receiver = Receiver::start_without_video(conn, Quiet);
+        let endpoint = MeshEndpoint {
+            stripes,
+            relay: StripeRelay::new(),
+        };
+        who.room.add_relay_source(RelaySource {
+            streamer: streamer.to_owned(),
+            desc: desc(),
+            broadcaster: Broadcaster::new(),
+            keyframes: receiver.keyframe_requester(),
+            mesh: Some(endpoint.clone()),
+        });
+        Self {
+            who,
+            frames,
+            endpoint,
+            _receiver: receiver,
+            seen: Vec::new(),
+        }
+    }
+
+    /// Junta o que chegou até agora e confere que veio na ordem.
+    fn drain(&mut self) -> usize {
+        self.seen.extend(self.frames.try_iter());
+        assert!(
+            self.seen.windows(2).all(|w| w[0] < w[1]),
+            "fora de ordem: {:?}",
+            self.seen
+        );
+        self.seen.len()
+    }
+}
+
+/// Malha na sala (ADR 0030), pelo caminho de verdade: pedido, aceite, plano pela sinalização,
+/// conexões da malha e repasse da faixa da casa. Com 4 assistindo, quem transmite não dá conta
+/// de mandar tudo a todos (2 cópias), então alguém repassa. Um pai sai e os outros continuam.
+#[test]
+fn malha_na_sala_repassa_a_faixa_da_casa_e_segue_quando_um_pai_sai() {
+    let Some(url) = worker() else { return };
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let names = ["Beto", "Caio", "Dani", "Edu"];
+    let people: Vec<Someone> = names.iter().map(|n| join(&url, &code, n, None)).collect();
+    let ana_id = people[0].id_of("Ana");
+
+    let tap = ana.room.tap();
+    tap.started(&StreamInfo {
+        size: Size::new(1920, 1080),
+        fps: 60,
+        encoder: "teste".into(),
+    });
+    ana.room.stream_started(KeyframeHandle::detached());
+    let mut watchers: Vec<MeshWatcher> = people.into_iter().map(|p| MeshWatcher::open(p, &ana_id)).collect();
+
+    // A live: 60 quadros por segundo, um keyframe por segundo.
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let live = running.clone();
+    let sender = std::thread::spawn(move || {
+        let mut seq = 0u32;
+        while live.load(std::sync::atomic::Ordering::Relaxed) {
+            tap.video(
+                seq,
+                &EncodedFrame {
+                    data: vec![(seq % 251) as u8; 20_000],
+                    keyframe: seq.is_multiple_of(60),
+                    timestamp_us: u64::from(seq) * 16_667,
+                    encode_us: 1,
+                },
+            );
+            seq += 1;
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    });
+
+    // Todos recebem, na ordem, e alguém repassa a faixa da casa.
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let counts: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+        let relaying = watchers.iter().any(|w| w.endpoint.relay.count() > 0);
+        if counts.iter().all(|c| *c >= 90) && relaying {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "não chegou: frames {counts:?}, repasse: {relaying}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Um pai sai da sala: os outros continuam recebendo.
+    let parent = watchers
+        .iter()
+        .position(|w| w.endpoint.relay.count() > 0)
+        .expect("alguém repassa");
+    let gone = watchers.remove(parent);
+    drop(gone);
+    let before: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+    std::thread::sleep(Duration::from_millis(2_000));
+    let after: Vec<usize> = watchers.iter_mut().map(MeshWatcher::drain).collect();
+    running.store(false, std::sync::atomic::Ordering::Relaxed);
+    sender.join().unwrap();
+    for (i, (b, a)) in before.iter().zip(&after).enumerate() {
+        // 2 s a 60 fps são 120 quadros; uma troca de pai sem congelar perde quase nenhum.
+        assert!(
+            a - b >= 90,
+            "{} parou de receber depois da saída: {b} → {a}",
+            watchers[i].who.room.code()
+        );
+    }
 }
 
 #[test]
@@ -841,6 +1090,7 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
         desc: desc(),
         broadcaster: relay.clone(),
         keyframes,
+        mesh: None,
     });
 
     // Pedido de repasse de outro stream: recusa.
@@ -891,6 +1141,7 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
             encode_us: 1,
         },
         data: std::sync::Arc::from(vec![7u8; 2000]),
+        layer: sv_net::Layer::Main,
     });
     let first = got.recv_timeout(WAIT).expect("o frame repassado não chegou");
     assert!(matches!(first, Got::Video(5)));
@@ -1243,10 +1494,13 @@ fn fliperama_fechado_recusa_a_vaga_e_abrir_pede_live_e_driver() {
         }
     );
 
-    let err = ana.room.arcade_open(Some("Bomberman".into()), 3, None).unwrap_err();
+    let err = ana
+        .room
+        .arcade_open(Some("Bomberman".into()), 3, None, false)
+        .unwrap_err();
     assert!(err.contains("Comece a transmitir"), "{err}");
     ana.room.stream_started(KeyframeHandle::detached());
-    match ana.room.arcade_open(Some("Bomberman".into()), 3, None) {
+    match ana.room.arcade_open(Some("Bomberman".into()), 3, None, false) {
         // Na CI não há o ViGEmBus: a mensagem leva às Configurações.
         Err(e) => assert!(e.contains("ViGEmBus"), "{e}"),
         Ok(()) => {
@@ -1277,12 +1531,12 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
     let beto_id = ana.id_of("Beto");
     ana.room.stream_started(KeyframeHandle::detached());
     ana.room
-        .arcade_open(Some("Teste".into()), 2, None)
+        .arcade_open(Some("Teste".into()), 2, None, false)
         .expect("ViGEmBus instalado");
 
     beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
     let slot = beto.wait("a vaga", |u| match u {
-        RoomUpdate::ArcadeSeat { host, slot } if host == ana_id => Some(slot),
+        RoomUpdate::ArcadeSeat { host, slot, .. } if host == ana_id => Some(slot),
         RoomUpdate::ArcadeLeft { reason, .. } => panic!("recusado: {reason}"),
         _ => None,
     });
@@ -1352,6 +1606,65 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
     ana.room.stream_stopped();
 }
 
+/// Regressão: com o host sem controle, o controle virtual do Beto pegava a vaga 0 do XInput, e o
+/// jogo o tratava como o P1 (os dois mexiam no mesmo personagem). Com o P1 guardado, a vaga 0 fica
+/// com um controle parado e o Beto vira o segundo controle do Windows, o P2 de verdade.
+#[test]
+#[ignore = "precisa do ViGEmBus instalado, do Worker local e de nenhum controle ligado no PC"]
+fn sem_controle_no_host_o_p1_fica_guardado_e_o_amigo_e_o_segundo_controle() {
+    let Some(url) = worker() else { return };
+    if sv_input::virtual_pad::other_pad_connected() {
+        eprintln!("há um controle ligado no PC: desligue para este teste");
+        return;
+    }
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let beto = join(&url, &code, "Beto", None);
+    let ana_id = beto.id_of("Ana");
+    let beto_id = ana.id_of("Beto");
+    ana.room.stream_started(KeyframeHandle::detached());
+    ana.room
+        .arcade_open(Some("Teste".into()), 1, None, true)
+        .expect("ViGEmBus instalado");
+
+    beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
+    let slot = beto.wait("a vaga", |u| match u {
+        RoomUpdate::ArcadeSeat { host, slot, .. } if host == ana_id => Some(slot),
+        RoomUpdate::ArcadeLeft { reason, .. } => panic!("recusado: {reason}"),
+        _ => None,
+    });
+    let seat = ana.wait("o Beto conectado", |u| match u {
+        RoomUpdate::ArcadePlayers(seats) => seats.into_iter().find(|s| s.member_id == beto_id && s.connected),
+        _ => None,
+    });
+    assert_eq!(slot, 2);
+    assert!(seat.xinput, "o controle do Beto ganhou vaga no XInput");
+
+    beto.room.arcade_key("KeyJ", true);
+    let xinput = (0..100)
+        .find_map(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            (0..sv_input::xinput::SLOTS)
+                .find(|&i| sv_input::xinput::read(i).is_some_and(|p| p.pressed(sv_input::pad::buttons::A)))
+        })
+        .expect("o A do controle virtual apertou");
+    beto.room.arcade_key("KeyJ", false);
+    assert_eq!(xinput, 1, "o Beto é o segundo controle do Windows");
+    assert_eq!(
+        sv_input::xinput::read(0),
+        Some(sv_input::PadState::default()),
+        "a vaga 0 é o controle parado que guarda o P1"
+    );
+
+    ana.room.arcade_close();
+    let gone = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        sv_input::xinput::read(0).is_none() && sv_input::xinput::read(1).is_none()
+    });
+    assert!(gone, "ao fechar, os dois controles virtuais saíram do PC");
+    ana.room.stream_stopped();
+}
+
 /// Mede a latência da entrada do fliperama no mesmo PC (sinalização local, QUIC pelo loopback,
 /// controle virtual do ViGEmBus): do `arcade_key` do jogador até o XInput do host ver o botão.
 /// Não inclui a rede de verdade nem o vídeo; mostra o que o app acrescenta. Ver o PR para os
@@ -1365,8 +1678,9 @@ fn latencia_da_tecla_ate_o_controle_virtual() {
     let beto = join(&url, &code, "Beto", None);
     let ana_id = beto.id_of("Ana");
     ana.room.stream_started(KeyframeHandle::detached());
+    // Com o P1 guardado, o P do Beto é a vaga do XInput + 1 (sem ele, o Beto seria o P2 na vaga 0).
     ana.room
-        .arcade_open(Some("Teste".into()), 1, None)
+        .arcade_open(Some("Teste".into()), 1, None, true)
         .expect("ViGEmBus instalado");
     beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
     let slot = beto.wait("a vaga", |u| match u {

@@ -42,3 +42,8 @@
 | [0022](adr/0022-retomada-da-vaga-na-sala.md)              | Retomada da vaga na sala depois de uma queda da sinalização                         |
 | [0023](adr/0023-modo-fliperama.md)                        | Modo Lan House Fliperama: jogo local com controles remotos (ViGEmBus)               |
 | [0024](adr/0024-fliperama-teclado-e-mouse.md)             | Fliperama: mouse no analógico e "controle total" de teclado e mouse (com permissão) |
+| [0026](adr/0026-simulcast-com-2-camadas.md)               | Simulcast com 2 camadas, escolhidas por quem transmite para cada espectador         |
+| [0028](adr/0028-faixas-e-paridade-no-envio.md)            | Faixas e paridade no envio: um stream QUIC por faixa e remontagem com prazo         |
+| [0029](adr/0029-troca-de-pai-na-malha.md)                 | Troca de pai na malha: conserto local, só para quem perdeu uma faixa                |
+| [0030](adr/0030-malha-na-rede-da-sala.md)                 | Malha na rede da sala: quem transmite coordena, faixas pela conexão direta e pais   |
+| [0031](adr/0031-controles-alem-do-xbox-e-p1-guardado.md)  | Fliperama: controles além do Xbox, P1 guardado e avisos do que impede o P2          |

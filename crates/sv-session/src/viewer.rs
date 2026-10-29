@@ -30,6 +30,8 @@ pub enum ViewerEvent {
     Presented {
         latency_us: u32,
     },
+    /// A imagem mudou de tamanho (quem transmite trocou a nossa camada do simulcast, ADR 0026).
+    Resized(Size),
     /// O usuário fechou a janela.
     Closed,
     Failed(String),
@@ -159,7 +161,11 @@ fn run(
         let show = queued.is_none();
         let offset = clock_offset.load(Ordering::Relaxed);
         let mut present_error = None;
+        let mut resized = None;
         let decoded = decoder.decode(&frame.data, frame.timestamp_us, |image| {
+            if last.as_ref().is_some_and(|l| l.size != image.size) {
+                resized = Some(image.size);
+            }
             last = Some(image.clone());
             if !show {
                 return;
@@ -171,6 +177,9 @@ fn run(
                 latency_us: latency_us(frame.timestamp_us, offset, clock::now_us()),
             });
         });
+        if let Some(size) = resized {
+            on_event(ViewerEvent::Resized(size));
+        }
         if decoded.is_err() {
             // Frame corrompido ou perdido: limpa o decoder e espera o próximo keyframe.
             decoder.flush();

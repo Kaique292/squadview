@@ -9,7 +9,9 @@ use sv_encode::EncodedFrame;
 use sv_gpu::{Size, clock};
 use sv_media::{Bounds, WindowTarget};
 use sv_net::protocol::{FrameHeader, StreamDescription};
-use sv_net::{Broadcaster, KeyframeRequester, Receiver, ReceiverSink, VideoFrame};
+use sv_net::{
+    Broadcaster, KeyframeRequester, Layer, Receiver, ReceiverSink, StripeReceiver, StripeRelay, StripeSink, VideoFrame,
+};
 
 use crate::surface::{Surface, lock};
 use crate::{AudioPacket, AudioReceiver, ReceiverEvent, StatsMeter, StreamInfo, StreamStats, VideoViewer, ViewerEvent};
@@ -71,6 +73,12 @@ impl Shared {
                     k.request();
                 }
             }
+            // Trocou de camada: as estatísticas (e o selo de qualidade) mostram o que chega de fato.
+            ViewerEvent::Resized(size) => {
+                let mut base = lock(&self.base);
+                base.width = size.width;
+                base.height = size.height;
+            }
             ViewerEvent::Closed | ViewerEvent::Failed(_) => {}
         }
     }
@@ -82,6 +90,16 @@ pub struct RemoteView {
     receiver: Receiver,
     state: Arc<Shared>,
     desc: StreamDescription,
+    /// Na malha (ADR 0030): as faixas que chegam de quem transmite e dos pais, e os filhos.
+    mesh: Option<MeshEndpoint>,
+}
+
+/// A nossa ponta na malha de uma live: onde chegam as faixas (de quem transmite e dos pais) e para
+/// quem repassamos a faixa da casa.
+#[derive(Clone, Debug)]
+pub struct MeshEndpoint {
+    pub stripes: StripeReceiver,
+    pub relay: StripeRelay,
 }
 
 /// O que a sala precisa para repassar um stream que estamos assistindo a quem não alcança quem
@@ -93,6 +111,8 @@ pub struct RelaySource {
     pub desc: StreamDescription,
     pub broadcaster: Broadcaster,
     pub keyframes: KeyframeRequester,
+    /// A live veio pela malha: a sala liga os pais e os filhos aqui (ADR 0030).
+    pub mesh: Option<MeshEndpoint>,
 }
 
 impl std::fmt::Debug for RelaySource {
@@ -111,13 +131,15 @@ impl std::fmt::Debug for RemoteView {
 }
 
 impl RemoteView {
-    /// Começa a assistir pela conexão `conn` (já aberta). Precisa ser chamado dentro do runtime
-    /// tokio da sala (`Room::runtime`).
+    /// Começa a assistir pela conexão `conn` (já aberta). Com `mesh`, quem transmite aceitou a
+    /// gente na malha (ADR 0030): o vídeo chega em faixas, por esta conexão e pelos pais que a sala
+    /// ligar. Precisa ser chamado dentro do runtime tokio da sala (`Room::runtime`).
     pub fn start(
         conn: Connection,
         desc: StreamDescription,
         streamer_name: &str,
         target: WindowTarget,
+        mesh: bool,
         on_stats: impl FnMut(StreamStats) + Send + 'static,
         on_closed: impl FnOnce(String) + Send + 'static,
     ) -> Self {
@@ -132,7 +154,20 @@ impl RemoteView {
         });
         *lock(&state.audio) = audio.ok();
 
-        let receiver = Receiver::start(conn, Sink { state: state.clone() });
+        let (receiver, mesh) = if mesh {
+            let stripes = StripeReceiver::new(MeshSink { state: state.clone() });
+            stripes.attach(conn.clone());
+            let receiver = Receiver::start_without_video(conn, Sink { state: state.clone() });
+            (
+                receiver,
+                Some(MeshEndpoint {
+                    stripes,
+                    relay: StripeRelay::new(),
+                }),
+            )
+        } else {
+            (Receiver::start(conn, Sink { state: state.clone() }), None)
+        };
         let _ = state.keyframes.set(receiver.keyframe_requester());
 
         // O vídeo abre com a primeira imagem; o relógio do amigo é corrigido pela estimativa da conexão.
@@ -161,7 +196,12 @@ impl RemoteView {
         *lock(&state.viewer) = Some(viewer);
 
         let _ = state.rtt_us.set(receiver.rtt_handle());
-        Self { receiver, state, desc }
+        Self {
+            receiver,
+            state,
+            desc,
+            mesh,
+        }
     }
 
     /// Para repassar este stream pela sala: quem pedir recebe os mesmos frames, e os pedidos de
@@ -172,6 +212,7 @@ impl RemoteView {
             desc: self.desc,
             broadcaster: self.state.relay.clone(),
             keyframes: self.receiver.keyframe_requester(),
+            mesh: self.mesh.clone(),
         }
     }
 
@@ -231,6 +272,9 @@ impl Drop for RemoteView {
     fn drop(&mut self) {
         // Paramos de assistir: quem recebia repassado por nós cai (e procura outro caminho).
         self.state.relay.close();
+        if let Some(mesh) = &self.mesh {
+            mesh.relay.close();
+        }
         lock(&self.state.viewer).take();
         lock(&self.state.audio).take();
     }
@@ -240,58 +284,86 @@ struct Sink {
     state: Arc<Shared>,
 }
 
-impl ReceiverSink for Sink {
-    fn video(&mut self, header: FrameHeader, data: Vec<u8>) {
-        let state = &self.state;
-        lock(&state.meter).record_encoded(data.len(), header.encode_us);
-        // Repasse: só copia quando alguém recebe por nós (sem ninguém, nada muda no caminho).
-        if state.relay.viewer_count() > 0 {
-            state.relay.send_video(&VideoFrame {
-                header,
-                data: Arc::from(&data[..]),
-            });
-        }
-        let frame = EncodedFrame {
-            data,
-            keyframe: header.keyframe,
-            timestamp_us: header.timestamp_us,
-            encode_us: header.encode_us,
-        };
-        let accepted = lock(&state.viewer).as_ref().is_none_or(|v| v.submit(frame));
-        if !accepted && let Some(k) = state.keyframes.get() {
-            // Fila do decoder cheia: o próximo frame não vai decodificar sem um keyframe.
+/// Os frames remontados das faixas da malha seguem o mesmo caminho dos frames inteiros.
+struct MeshSink {
+    state: Arc<Shared>,
+}
+
+impl StripeSink for MeshSink {
+    fn frame(&mut self, header: FrameHeader, data: Vec<u8>) {
+        on_video(&self.state, header, data);
+    }
+
+    fn lost(&mut self, _first_seq: u32, _count: u32) {
+        // Faltou mais de uma faixa: o decoder perdeu a cadeia de referências.
+        if let Some(k) = self.state.keyframes.get() {
             k.request();
         }
-        let mut base = lock(&state.base).clone();
-        base.rtt_ms = state
-            .rtt_us
-            .get()
-            .map_or(0.0, |r| r.load(Ordering::Relaxed) as f32 / 1000.0);
-        let ready = lock(&state.meter).poll(clock::now_us(), &base);
-        if let Some(stats) = ready {
-            (lock(&state.on_stats))(stats);
-        }
+    }
+}
+
+impl ReceiverSink for Sink {
+    fn video(&mut self, header: FrameHeader, data: Vec<u8>) {
+        on_video(&self.state, header, data);
     }
 
     fn audio(&mut self, seq: u32, timestamp_us: u64, peak: f32, opus: &[u8]) {
-        lock(&self.state.meter).record_audio(opus.len(), peak);
-        if self.state.relay.viewer_count() > 0 {
-            self.state.relay.send_audio(seq, timestamp_us, peak, opus);
-        }
-        if let Some(audio) = lock(&self.state.audio).as_ref() {
-            audio.submit(AudioPacket {
-                seq,
-                data: opus.to_vec(),
-                peak,
-                timestamp_us,
-            });
-        }
+        on_audio(&self.state, seq, timestamp_us, peak, opus);
     }
 
     fn closed(&mut self, reason: String) {
         if let Some(cb) = lock(&self.state.on_closed).take() {
             cb(reason);
         }
+    }
+}
+
+/// Um frame chegou (inteiro ou remontado das faixas): repasse, decoder e estatísticas.
+fn on_video(state: &Arc<Shared>, header: FrameHeader, data: Vec<u8>) {
+    lock(&state.meter).record_encoded(data.len(), header.encode_us);
+    // Repasse: só copia quando alguém recebe por nós (sem ninguém, nada muda no caminho).
+    if state.relay.viewer_count() > 0 {
+        state.relay.send_video(&VideoFrame {
+            header,
+            data: Arc::from(&data[..]),
+            // Para quem recebe por nós, o que chega é "a" camada (sem troca no repasse).
+            layer: Layer::Main,
+        });
+    }
+    let frame = EncodedFrame {
+        data,
+        keyframe: header.keyframe,
+        timestamp_us: header.timestamp_us,
+        encode_us: header.encode_us,
+    };
+    let accepted = lock(&state.viewer).as_ref().is_none_or(|v| v.submit(frame));
+    if !accepted && let Some(k) = state.keyframes.get() {
+        // Fila do decoder cheia: o próximo frame não vai decodificar sem um keyframe.
+        k.request();
+    }
+    let mut base = lock(&state.base).clone();
+    base.rtt_ms = state
+        .rtt_us
+        .get()
+        .map_or(0.0, |r| r.load(Ordering::Relaxed) as f32 / 1000.0);
+    let ready = lock(&state.meter).poll(clock::now_us(), &base);
+    if let Some(stats) = ready {
+        (lock(&state.on_stats))(stats);
+    }
+}
+
+fn on_audio(state: &Arc<Shared>, seq: u32, timestamp_us: u64, peak: f32, opus: &[u8]) {
+    lock(&state.meter).record_audio(opus.len(), peak);
+    if state.relay.viewer_count() > 0 {
+        state.relay.send_audio(seq, timestamp_us, peak, opus);
+    }
+    if let Some(audio) = lock(&state.audio).as_ref() {
+        audio.submit(AudioPacket {
+            seq,
+            data: opus.to_vec(),
+            peak,
+            timestamp_us,
+        });
     }
 }
 
@@ -361,6 +433,18 @@ mod tests {
         assert_eq!(s.latency_ms, 40.0);
         assert_eq!(s.audio_level, 0.5);
         assert!(s.bitrate_kbps > 0 && s.audio_kbps > 0);
+    }
+
+    #[test]
+    fn trocar_de_camada_muda_o_tamanho_nas_estatisticas() {
+        let (state, stats, _) = state();
+        state.on_viewer_event(ViewerEvent::Resized(Size::new(1280, 720)));
+        let mut sink = Sink { state };
+        sink.video(header(0), vec![1; 100]);
+        next_window();
+        sink.video(header(1), vec![1; 100]);
+        let s = lock(&stats)[0].clone();
+        assert_eq!((s.width, s.height), (1280, 720));
     }
 
     #[test]

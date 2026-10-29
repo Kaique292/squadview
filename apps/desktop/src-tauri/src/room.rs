@@ -503,7 +503,8 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
             conn,
             desc,
             path,
-        } => start_watching(app, member, conn, desc, path),
+            mesh,
+        } => start_watching(app, member, conn, desc, path, mesh),
         // O repassador TURN da sala (ADR 0014): só para o registro, a interface não muda.
         RoomUpdate::Relay(result) => {
             let detail = match &result {
@@ -538,6 +539,8 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         }
         update @ (RoomUpdate::ArcadePlayers(_)
         | RoomUpdate::ArcadeSeat { .. }
+        | RoomUpdate::ArcadeControllers(_)
+        | RoomUpdate::ArcadeFocus { .. }
         | RoomUpdate::ArcadeLeft { .. }
         | RoomUpdate::ArcadeKbm { .. }) => crate::arcade::emit(app, update),
         RoomUpdate::Disconnected => {
@@ -568,6 +571,7 @@ fn start_watching<R: Runtime>(
     conn: quinn::Connection,
     desc: sv_net::protocol::StreamDescription,
     path: sv_session::WatchPath,
+    mesh: bool,
 ) {
     let target = match preview::video_target(app) {
         Ok(t) => t,
@@ -591,6 +595,7 @@ fn start_watching<R: Runtime>(
         desc,
         &member.name,
         target,
+        mesh,
         move |stats| {
             stats_app.state::<Diagnostics>().write("watch", &stats);
             let _ = stats_app.emit(WATCH_STATS_EVENT, json!({ "memberId": stats_id, "stats": stats }));
@@ -623,7 +628,7 @@ fn start_watching<R: Runtime>(
     );
     app.state::<Diagnostics>().write(
         "watch-start",
-        &json!({ "member": member.name, "desc": format!("{desc:?}"), "path": path.label() }),
+        &json!({ "member": member.name, "desc": format!("{desc:?}"), "path": path.label(), "mesh": mesh }),
     );
     let relay = view.relay_source(&member.id);
     let state = app.state::<RoomState>();

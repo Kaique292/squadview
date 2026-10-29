@@ -40,21 +40,45 @@ O planejamento está em `sv_mesh::plan` e é testado com o simulador `sv_mesh::s
 
 ## Camadas de qualidade
 
-- O streamer gera duas camadas (alta e baixa) por simulcast ou SVC, cada uma com as suas 5 faixas.
+Já funciona entre quem transmite e cada espectador direto ([ADR 0026](adr/0026-simulcast-com-2-camadas.md)):
+
+- Quem transmite gera a camada principal e, só enquanto alguém precisa, uma baixa de 720p30 (simulcast, um segundo encoder).
+- Quem pede para assistir avisa no `watch-request` que aceita trocar de camada (`simulcast: true`; ausente em apps antigos, que ficam na principal).
+- Quem transmite escolhe a camada de cada espectador pelo que se perde na conexão dele (frames fora da fila ou vídeo preso no QUIC) e troca no keyframe da camada nova. Cada conexão recebe uma camada só, com a sua sequência.
+
+Na malha (falta fazer):
+
+- Cada camada desce com as suas 5 faixas.
 - Cada membro assina a camada que o download dele aguenta (`sv_mesh::layer_for_download`).
 - Um repassador só encaminha as camadas que os filhos pediram.
 
 ## Recuperação de perda
 
-- **NACK:** o filho pede o pacote perdido ao pai, não ao streamer. O pai guarda os últimos ~500 ms.
+O formato das faixas está na [ADR 0028](adr/0028-faixas-e-paridade-no-envio.md): cada faixa vai num stream unidirecional QUIC próprio, com um `StripeHeader` (cabeçalho do frame, camada, índice da faixa e tamanho do frame) na frente. A paridade é o XOR das 4 faixas de dados.
+
+- **NACK:** o filho recebe de novo o pacote perdido do pai, não do streamer. Isso é a retransmissão do próprio QUIC em cada stream de faixa, salto a salto, sem mensagem `Nack` própria.
 - **Paridade entre faixas:** a quinta faixa cobre a perda de qualquer outra, inclusive a saída de quem repassava.
 - **FEC dentro da faixa:** pacotes de redundância ligados quando a perda passa de 2%.
 - **Keyframe sob demanda:** se a perda tornar o vídeo irrecuperável, o pedido sobe até o streamer.
 
+## Na rede da sala
+
+Desenho na [ADR 0030](adr/0030-malha-na-rede-da-sala.md). Já funciona para a camada principal:
+
+- Quem pede para assistir com o app novo manda `mesh: { nat, uploadKbps }` no `watch-request`; quem transmite responde `mesh: true` no `watch-accept`. Apps antigos recebem o vídeo inteiro.
+- A conexão direta com quem transmite continua com o som, o relógio e os keyframes. O vídeo dela vem em faixas, só as que o plano manda direto.
+- Quem transmite coordena: a cada mudança, manda a cada membro afetado um `mesh-assign` com de quem vem cada faixa (endereços e fingerprint do pai), a faixa da casa e os filhos.
+- O filho conecta no pai com o ALPN `squadview-mesh/1` e recebe por ela a faixa da casa do pai.
+- O filho manda `mesh-lost { stripe }` quando o pai cai, não conecta ou fica 300 ms sem mandar enquanto as outras faixas chegam.
+
 ## Troca de pai
 
-- Se o pai de uma faixa some por mais de 300 ms, a imagem segue pela paridade (4 das 5 faixas) e o membro pede um pai novo naquela árvore.
-- Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar.
+Desenho na [ADR 0029](adr/0029-troca-de-pai-na-malha.md): `sv_mesh::plan::repair_with` e `changes`, usados pelo coordenador da sala.
+
+- Se o pai de uma faixa some por mais de 300 ms (ou a conexão fecha), a imagem segue pela paridade (4 das 5 faixas) e o membro avisa quem transmite.
+- Quem transmite conserta o plano só onde quebrou: cada órfão ganha um pai do tronco da mesma árvore, com vaga e que não esteja abaixo dele. Quem não foi afetado não muda.
+- Cada membro afetado recebe o seu `mesh-assign` novo e conecta no pai novo.
+- Meta: ninguém congela na saída de uma pessoa; menos de 1 s para a faixa voltar (p95 simulado: 370 a 390 ms).
 
 ## Atravessar NAT
 
@@ -71,9 +95,9 @@ Em camadas ([ADR 0014](adr/0014-conexao-em-camadas.md)):
 | ----------------- | ----------------- | --------------------------------------------------- |
 | `Hello`           | membro ↔ membro   | versão do protocolo, `PeerId`, capacidades de codec |
 | `Stats`           | membro → sala     | medições acima                                      |
-| `Assign`          | streamer → membro | pai, pai reserva, camada                            |
-| `Media`           | pai → filho       | pacote de mídia (camada, sequência, timestamp)      |
-| `Nack`            | filho → pai       | sequências perdidas                                 |
+| `mesh-assign`     | streamer → membro | pai de cada faixa, faixa da casa e filhos           |
+| `mesh-lost`       | membro → streamer | a faixa que parou de chegar                         |
+| `Media`           | pai → filho       | uma faixa: `StripeHeader` + bytes (ADR 0028)        |
 | `KeyframeRequest` | membro → streamer | —                                                   |
 | `Bye`             | membro → sala     | saída limpa                                         |
 

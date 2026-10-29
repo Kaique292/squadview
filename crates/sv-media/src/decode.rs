@@ -7,11 +7,11 @@ use sv_gpu::{Gpu, GpuFrame, Size, mf as mfu};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Media::MediaFoundation::{
     IMFDXGIBuffer, IMFMediaBuffer, IMFSample, IMFTransform, MF_E_TRANSFORM_NEED_MORE_INPUT,
-    MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_SUBTYPE, MF_SA_D3D11_AWARE, MFCreateMemoryBuffer,
-    MFCreateSample, MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
-    MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
-    MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFVideoFormat_H264,
-    MFVideoFormat_NV12,
+    MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_SIZE, MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_SUBTYPE,
+    MF_SA_D3D11_AWARE, MFCreateMemoryBuffer, MFCreateSample, MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_SORTANDFILTER,
+    MFT_ENUM_FLAG_SYNCMFT, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
+    MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFVideoArea, MFVideoFormat_H264, MFVideoFormat_NV12,
 };
 use windows::core::{Interface, Result};
 
@@ -63,6 +63,7 @@ impl Decoder {
             inputs: Vec::new(),
             next_input: 0,
         };
+        // O tamanho visível é o do stream; o tipo de saída pode vir alinhado (1080 → 1088).
         decoder.choose_output_type()?;
         // SAFETY: mensagens de início de stream na thread dona do MFT.
         unsafe {
@@ -89,7 +90,12 @@ impl Decoder {
             match self.next_output()? {
                 Output::Frame(frame) => on_frame(&frame),
                 Output::NeedMoreInput => return Ok(()),
-                Output::FormatChanged => self.choose_output_type()?,
+                // O stream mudou (outra camada do simulcast, ADR 0026): a imagem passa a ter o
+                // tamanho do tipo de saída novo.
+                Output::FormatChanged => {
+                    let (frame, aperture) = self.choose_output_type()?;
+                    self.size = visible_size(self.size, frame, aperture);
+                }
             }
         }
     }
@@ -184,22 +190,39 @@ impl Decoder {
         }
     }
 
-    fn choose_output_type(&mut self) -> Result<()> {
+    /// Escolhe a saída NV12 e devolve o tamanho dela e a área visível, se o decoder informar.
+    fn choose_output_type(&mut self) -> Result<(Option<Size>, Option<Size>)> {
+        let mut geometry = (None, None);
         // SAFETY: enumeração dos tipos de saída oferecidos pelo MFT.
         unsafe {
             for i in 0.. {
                 let t = self.transform.GetOutputAvailableType(0, i)?;
                 if t.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_NV12 {
-                    // O decoder pode alinhar a altura (1080 → 1088). A área visível continua sendo
-                    // o tamanho do stream (`self.size`), então o tamanho do tipo de saída é ignorado.
                     self.transform.SetOutputType(0, &t, 0)?;
+                    let frame = t.GetUINT64(&MF_MT_FRAME_SIZE).ok().map(|v| {
+                        let (w, h) = mfu::unpack(v);
+                        Size::new(w, h)
+                    });
+                    let mut area = MFVideoArea::default();
+                    let bytes = std::slice::from_raw_parts_mut(
+                        (&raw mut area).cast::<u8>(),
+                        std::mem::size_of::<MFVideoArea>(),
+                    );
+                    let aperture = t
+                        .GetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE, bytes, None)
+                        .ok()
+                        .and_then(|()| {
+                            let (w, h) = (u32::try_from(area.Area.cx).ok()?, u32::try_from(area.Area.cy).ok()?);
+                            (w > 0 && h > 0).then(|| Size::new(w, h))
+                        });
+                    geometry = (frame, aperture);
                     break;
                 }
             }
             let info = self.transform.GetOutputStreamInfo(0)?;
             self.provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
         }
-        Ok(())
+        Ok(geometry)
     }
 }
 
@@ -207,6 +230,22 @@ enum Output {
     Frame(GpuFrame),
     NeedMoreInput,
     FormatChanged,
+}
+
+/// O tamanho visível depois de uma mudança de formato. A área visível do decoder vale primeiro;
+/// sem ela, o tamanho do tipo de saída, a não ser que ele seja só o atual alinhado em 16
+/// (1080 → 1088): aí o tamanho não mudou.
+fn visible_size(current: Size, frame: Option<Size>, aperture: Option<Size>) -> Size {
+    if let Some(aperture) = aperture {
+        return aperture;
+    }
+    match frame {
+        Some(f) if f.width == current.width.next_multiple_of(16) && f.height == current.height.next_multiple_of(16) => {
+            current
+        }
+        Some(f) if f.width > 0 && f.height > 0 => f,
+        _ => current,
+    }
 }
 
 /// Menor buffer de entrada: cabe um keyframe 1080p comum sem realocar.
@@ -246,6 +285,22 @@ mod tests {
         // Keyframe de 300 KB: sobe para o próximo degrau.
         assert_eq!(grow_to(Some(MIN_INPUT_CAPACITY), 300_000), Some(512 * 1024));
         assert_eq!(grow_to(None, 3_000_000), Some(4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn tamanho_visivel_vem_da_area_do_decoder_ou_do_tipo_de_saida() {
+        let hd = Size::new(1920, 1080);
+        // Com a área visível, ela vale (a camada baixa do simulcast chegou).
+        assert_eq!(
+            visible_size(hd, Some(Size::new(1280, 720)), Some(Size::new(1280, 720))),
+            Size::new(1280, 720)
+        );
+        assert_eq!(visible_size(hd, Some(Size::new(1920, 1088)), Some(hd)), hd);
+        // Sem ela, o alinhamento de 16 não muda o tamanho, mas outra resolução muda.
+        assert_eq!(visible_size(hd, Some(Size::new(1920, 1088)), None), hd);
+        assert_eq!(visible_size(hd, Some(Size::new(1280, 720)), None), Size::new(1280, 720));
+        assert_eq!(visible_size(hd, None, None), hd);
+        assert_eq!(visible_size(hd, Some(Size::new(0, 0)), None), hd);
     }
 
     #[test]
@@ -327,6 +382,28 @@ mod tests {
             decoder.decode(&f.data, f.timestamp_us, |_| out += 1).unwrap();
         }
         assert!(out > 0, "nada saiu depois do flush");
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo com encoder e decoder H.264"]
+    fn troca_de_camada_no_meio_do_stream_muda_o_tamanho_da_imagem() {
+        // Simulcast (ADR 0026): quem assiste passa da camada alta para a baixa num keyframe, com o
+        // mesmo decoder. Antes, a imagem de 720p saía marcada como 1080p.
+        let gpu = Gpu::new().unwrap();
+        let high = EncoderConfig::for_layer(QualityLayer::High);
+        let low = EncoderConfig::for_layer(QualityLayer::Low);
+        let mut decoder = Decoder::new(&gpu, high.size, high.fps).unwrap();
+        let mut sizes = Vec::new();
+        for f in encode_frames(&gpu, high, 10)
+            .iter()
+            .chain(&encode_frames(&gpu, low, 10))
+        {
+            decoder
+                .decode(&f.data, f.timestamp_us, |out| sizes.push(out.size))
+                .unwrap();
+        }
+        assert_eq!(sizes.first(), Some(&high.size), "{sizes:?}");
+        assert_eq!(sizes.last(), Some(&low.size), "{sizes:?}");
     }
 
     #[test]

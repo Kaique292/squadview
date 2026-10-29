@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Keyboard, MousePointer2 } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, type WheelEvent, useEffect, useRef, useState } from "react";
 import { type KeyMap, useArcadeStore } from "./arcade-store";
+import { controllerStatus } from "./controllers";
 import { keyLegend } from "./key-legend";
 
 /** O navegador tem o evento cru do mouse (o WebView2 do app tem; o jsdom dos testes, não). */
@@ -47,6 +48,9 @@ const BUTTONS: Record<number, "left" | "middle" | "right"> = { 0: "left", 1: "mi
  */
 export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) {
   const playing = useArcadeStore((s) => s.playing);
+  // Os controles achados no nosso PC: sem esse aviso, quem tinha um que o app não lia achava que
+  // ele "não conectava".
+  const pad = controllerStatus(useArcadeStore((s) => s.controllers));
   const area = useRef<HTMLDivElement>(null);
   const [captured, setCaptured] = useState(false);
   // Movimento do mouse ainda não mandado ao Rust. Vai na hora; só se junta enquanto a chamada
@@ -167,6 +171,17 @@ export function ArcadePlayOverlay(props: { hostId: string; compact?: boolean }) 
             {hint}
           </span>
           {legend && !playing.kbm && <span className="text-white/70">{legend}</span>}
+          {pad && (
+            <span role="status" className={`flex items-center gap-1.5 ${pad.ok ? "text-online" : "text-warning"}`}>
+              <Gamepad2 size={13} />
+              {pad.text}
+            </span>
+          )}
+          {playing.relayed && (
+            <span className="text-white/60">
+              Conectado pelo repassador: o controle pode ter um pouco mais de atraso
+            </span>
+          )}
         </span>
       )}
     </div>

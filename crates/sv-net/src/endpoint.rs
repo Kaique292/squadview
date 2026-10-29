@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::cert::fingerprint;
 use crate::cert::{Allowed, AllowedClients, ExpectFingerprint, Identity, provider};
 use crate::turn::{TurnError, TurnServer, TurnSocket};
-use crate::{ALPN, ARCADE_ALPN, DM_ALPN, VOICE_ALPN, VOICE_RELAY_ALPN, stun};
+use crate::{ALPN, ARCADE_ALPN, DM_ALPN, MESH_ALPN, VOICE_ALPN, VOICE_RELAY_ALPN, stun};
 
 /// Quanto tempo tentar conectar antes de desistir.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -92,6 +92,8 @@ pub enum Purpose {
     VoiceRelay,
     /// O controle de um jogador do fliperama para quem hospeda (ADR 0023).
     Arcade,
+    /// As faixas da casa de um pai da malha para um filho (ADR 0030).
+    Mesh,
 }
 
 impl Purpose {
@@ -102,6 +104,7 @@ impl Purpose {
             Self::Dm => DM_ALPN,
             Self::VoiceRelay => VOICE_RELAY_ALPN,
             Self::Arcade => ARCADE_ALPN,
+            Self::Mesh => MESH_ALPN,
         }
     }
 }
@@ -467,6 +470,7 @@ fn server_config(identity: &Identity, allowed: &Allowed, relayed: bool) -> io::R
         DM_ALPN.to_vec(),
         VOICE_RELAY_ALPN.to_vec(),
         ARCADE_ALPN.to_vec(),
+        MESH_ALPN.to_vec(),
     ];
     let crypto = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
@@ -500,6 +504,7 @@ fn purpose_of(conn: &Connection) -> Purpose {
         Some(p) if p == DM_ALPN => Purpose::Dm,
         Some(p) if p == VOICE_RELAY_ALPN => Purpose::VoiceRelay,
         Some(p) if p == ARCADE_ALPN => Purpose::Arcade,
+        Some(p) if p == MESH_ALPN => Purpose::Mesh,
         _ => Purpose::Stream,
     }
 }

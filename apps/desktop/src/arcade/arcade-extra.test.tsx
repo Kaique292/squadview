@@ -78,7 +78,7 @@ describe("store do fliperama", () => {
 
   it("abrir dá certo com aviso; fechar limpa os jogadores; sair sem jogar não faz nada", async () => {
     expect(await useArcadeStore.getState().open(3, "Bomberman")).toBe(true);
-    expect(invoke).toHaveBeenCalledWith("arcade_open", { slots: 3, game: "Bomberman" });
+    expect(invoke).toHaveBeenCalledWith("arcade_open", { slots: 3, game: "Bomberman", reserveP1: true });
     useArcadeStore.setState({ seats: [{ memberId: "x", slot: 2, connected: true, kbm: false }] });
     await useArcadeStore.getState().close();
     expect(useArcadeStore.getState().seats).toEqual([]);
