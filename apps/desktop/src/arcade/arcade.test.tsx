@@ -45,7 +45,7 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockResolvedValue(undefined);
   useToastStore.setState({ toasts: [] });
-  useArcadeStore.setState({ hostDialog: false, seats: [], playing: null });
+  useArcadeStore.setState({ hostDialog: false, seats: [], playing: null, controllers: null, gameFocused: null });
   useRoomStore.setState({ code: "B8RJ2Q", members: [ME, ANA, BETO], watching: {}, pendingWatch: [] });
   await listenToArcadeEvents();
 });
@@ -66,7 +66,7 @@ describe("painel do fliperama (host)", () => {
     render(<ArcadeHostDialog />);
     fireEvent.click(await screen.findByRole("radio", { name: "2 jogadores" }));
     fireEvent.click(screen.getByRole("button", { name: "Abrir fliperama" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("arcade_open", { slots: 2, game: null }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("arcade_open", { slots: 2, game: null, reserveP1: true }));
   });
 
   it("sem transmitir, pede para começar a live antes", async () => {
@@ -99,6 +99,51 @@ describe("painel do fliperama (host)", () => {
     expect(invoke).toHaveBeenCalledWith("arcade_kick", { memberId: BETO.id });
     fireEvent.click(screen.getByRole("button", { name: "Fechar fliperama" }));
     expect(invoke).toHaveBeenCalledWith("arcade_close");
+  });
+
+  it("dá para abrir sem guardar o P1", async () => {
+    respond({ arcade_driver: INSTALLED });
+    useArcadeStore.setState({ hostDialog: true });
+    render(<ArcadeHostDialog />);
+    const reserve = await screen.findByRole("switch", { name: "Guardar o P1 para mim" });
+    expect(reserve).toBeChecked();
+    fireEvent.click(reserve);
+    fireEvent.click(screen.getByRole("button", { name: "Abrir fliperama" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("arcade_open", { slots: 3, game: null, reserveP1: false }));
+  });
+
+  // Regressão: com as 4 vagas do XInput ocupadas, o controle do amigo não aparecia no jogo e o app
+  // mostrava "P2" como se estivesse tudo certo.
+  it("avisa quando o Windows não deu vaga ao controle do jogador", () => {
+    useRoomStore.setState({ members: [{ ...ME, arcade: { game: null, slots: 2, players: [BETO.id] } }, BETO] });
+    useArcadeStore.setState({ hostDialog: true });
+    render(<ArcadeHostDialog />);
+    emit("arcade-players", [{ memberId: BETO.id, slot: 2, connected: true, kbm: false, xinput: false }]);
+    expect(screen.getByRole("alert")).toHaveTextContent(/não deu vaga a este controle/);
+    expect(toasts().some((t) => /não deu vaga ao controle de Beto/.test(t))).toBe(true);
+    emit("arcade-players", [{ memberId: BETO.id, slot: 2, connected: true, kbm: false, xinput: true }]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // Regressão: muitos jogos ignoram os controles fora do primeiro plano, e o amigo achava que o
+  // controle dele não funcionava.
+  it("com alguém jogando, avisa (uma vez) quando o jogo sai do primeiro plano", async () => {
+    respond({ arcade_driver: INSTALLED });
+    await useArcadeStore.getState().open(1);
+    useRoomStore.setState({ members: [{ ...ME, arcade: { game: null, slots: 1, players: [BETO.id] } }, BETO] });
+    useArcadeStore.setState({ hostDialog: true });
+    render(<ArcadeHostDialog />);
+    emit("arcade-focus", false);
+    expect(screen.queryByRole("alert")).toBeNull();
+    emit("arcade-players", [{ memberId: BETO.id, slot: 2, connected: true, kbm: false, xinput: true }]);
+    emit("arcade-focus", true);
+    emit("arcade-focus", false);
+    expect(screen.getByRole("alert")).toHaveTextContent(/não está em primeiro plano/);
+    emit("arcade-focus", true);
+    emit("arcade-focus", false);
+    expect(toasts().filter((t) => /saiu do primeiro plano/.test(t))).toHaveLength(1);
+    emit("arcade-focus", true);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
@@ -196,6 +241,24 @@ describe("jogando: o teclado e o mouse no quadro do jogo", () => {
     expect(invoke).not.toHaveBeenCalledWith("arcade_key", expect.anything());
     fireEvent.blur(area);
     expect(invoke).toHaveBeenCalledWith("arcade_release");
+  });
+
+  // Regressão: com um controle que o app não lia (DualSense), o amigo achava que ele "não
+  // conectava": nada dizia se o controle tinha sido achado.
+  it("diz se o controle foi achado, e qual", () => {
+    const area = renderTile();
+    expect(within(area).queryByText(/controle/i)).toBeNull();
+    emit("arcade-controllers", []);
+    expect(within(area).getByText("Nenhum controle encontrado: ligue um ou jogue com o teclado")).toBeInTheDocument();
+    emit("arcade-controllers", [{ name: "DualSense Wireless Controller", kind: "playstation", supported: true }]);
+    expect(within(area).getByText("Controle de PlayStation conectado")).toBeInTheDocument();
+  });
+
+  it("pelo repassador, avisa que o controle pode atrasar", () => {
+    renderTile();
+    expect(screen.queryByText(/pelo repassador/)).toBeNull();
+    emit("arcade-seat", { hostId: ANA.id, slot: 2, relayed: true });
+    expect(screen.getByText(/Conectado pelo repassador/)).toBeInTheDocument();
   });
 
   it("sem a vaga ainda, não captura nada", () => {

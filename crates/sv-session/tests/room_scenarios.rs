@@ -1494,10 +1494,13 @@ fn fliperama_fechado_recusa_a_vaga_e_abrir_pede_live_e_driver() {
         }
     );
 
-    let err = ana.room.arcade_open(Some("Bomberman".into()), 3, None).unwrap_err();
+    let err = ana
+        .room
+        .arcade_open(Some("Bomberman".into()), 3, None, false)
+        .unwrap_err();
     assert!(err.contains("Comece a transmitir"), "{err}");
     ana.room.stream_started(KeyframeHandle::detached());
-    match ana.room.arcade_open(Some("Bomberman".into()), 3, None) {
+    match ana.room.arcade_open(Some("Bomberman".into()), 3, None, false) {
         // Na CI não há o ViGEmBus: a mensagem leva às Configurações.
         Err(e) => assert!(e.contains("ViGEmBus"), "{e}"),
         Ok(()) => {
@@ -1528,12 +1531,12 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
     let beto_id = ana.id_of("Beto");
     ana.room.stream_started(KeyframeHandle::detached());
     ana.room
-        .arcade_open(Some("Teste".into()), 2, None)
+        .arcade_open(Some("Teste".into()), 2, None, false)
         .expect("ViGEmBus instalado");
 
     beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
     let slot = beto.wait("a vaga", |u| match u {
-        RoomUpdate::ArcadeSeat { host, slot } if host == ana_id => Some(slot),
+        RoomUpdate::ArcadeSeat { host, slot, .. } if host == ana_id => Some(slot),
         RoomUpdate::ArcadeLeft { reason, .. } => panic!("recusado: {reason}"),
         _ => None,
     });
@@ -1603,6 +1606,65 @@ fn jogador_aperta_tecla_e_o_controle_virtual_do_host_aperta_o_botao() {
     ana.room.stream_stopped();
 }
 
+/// Regressão: com o host sem controle, o controle virtual do Beto pegava a vaga 0 do XInput, e o
+/// jogo o tratava como o P1 (os dois mexiam no mesmo personagem). Com o P1 guardado, a vaga 0 fica
+/// com um controle parado e o Beto vira o segundo controle do Windows, o P2 de verdade.
+#[test]
+#[ignore = "precisa do ViGEmBus instalado, do Worker local e de nenhum controle ligado no PC"]
+fn sem_controle_no_host_o_p1_fica_guardado_e_o_amigo_e_o_segundo_controle() {
+    let Some(url) = worker() else { return };
+    if sv_input::virtual_pad::other_pad_connected() {
+        eprintln!("há um controle ligado no PC: desligue para este teste");
+        return;
+    }
+    let code = new_room_code();
+    let ana = join(&url, &code, "Ana", None);
+    let beto = join(&url, &code, "Beto", None);
+    let ana_id = beto.id_of("Ana");
+    let beto_id = ana.id_of("Beto");
+    ana.room.stream_started(KeyframeHandle::detached());
+    ana.room
+        .arcade_open(Some("Teste".into()), 1, None, true)
+        .expect("ViGEmBus instalado");
+
+    beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
+    let slot = beto.wait("a vaga", |u| match u {
+        RoomUpdate::ArcadeSeat { host, slot, .. } if host == ana_id => Some(slot),
+        RoomUpdate::ArcadeLeft { reason, .. } => panic!("recusado: {reason}"),
+        _ => None,
+    });
+    let seat = ana.wait("o Beto conectado", |u| match u {
+        RoomUpdate::ArcadePlayers(seats) => seats.into_iter().find(|s| s.member_id == beto_id && s.connected),
+        _ => None,
+    });
+    assert_eq!(slot, 2);
+    assert!(seat.xinput, "o controle do Beto ganhou vaga no XInput");
+
+    beto.room.arcade_key("KeyJ", true);
+    let xinput = (0..100)
+        .find_map(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            (0..sv_input::xinput::SLOTS)
+                .find(|&i| sv_input::xinput::read(i).is_some_and(|p| p.pressed(sv_input::pad::buttons::A)))
+        })
+        .expect("o A do controle virtual apertou");
+    beto.room.arcade_key("KeyJ", false);
+    assert_eq!(xinput, 1, "o Beto é o segundo controle do Windows");
+    assert_eq!(
+        sv_input::xinput::read(0),
+        Some(sv_input::PadState::default()),
+        "a vaga 0 é o controle parado que guarda o P1"
+    );
+
+    ana.room.arcade_close();
+    let gone = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        sv_input::xinput::read(0).is_none() && sv_input::xinput::read(1).is_none()
+    });
+    assert!(gone, "ao fechar, os dois controles virtuais saíram do PC");
+    ana.room.stream_stopped();
+}
+
 /// Mede a latência da entrada do fliperama no mesmo PC (sinalização local, QUIC pelo loopback,
 /// controle virtual do ViGEmBus): do `arcade_key` do jogador até o XInput do host ver o botão.
 /// Não inclui a rede de verdade nem o vídeo; mostra o que o app acrescenta. Ver o PR para os
@@ -1616,8 +1678,9 @@ fn latencia_da_tecla_ate_o_controle_virtual() {
     let beto = join(&url, &code, "Beto", None);
     let ana_id = beto.id_of("Ana");
     ana.room.stream_started(KeyframeHandle::detached());
+    // Com o P1 guardado, o P do Beto é a vaga do XInput + 1 (sem ele, o Beto seria o P2 na vaga 0).
     ana.room
-        .arcade_open(Some("Teste".into()), 1, None)
+        .arcade_open(Some("Teste".into()), 1, None, true)
         .expect("ViGEmBus instalado");
     beto.room.arcade_join(&ana_id, sv_input::KeyMap::default());
     let slot = beto.wait("a vaga", |u| match u {

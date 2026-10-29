@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Download, Gamepad2, Gauge, Keyboard, Loader2, UserX } from "lucide-react";
+import { AppWindow, Download, Gamepad2, Gauge, Keyboard, Loader2, UserX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { memberPhoto, useRoomStore } from "../room/room-store";
 import { useStreamStore } from "../stream/stream-store";
@@ -39,6 +39,7 @@ export function ArcadeHostDialog() {
 function Setup() {
   const [driver, setDriver] = useState<DriverInfo | null>(null);
   const [slots, setSlots] = useState(3);
+  const [reserveP1, setReserveP1] = useState(true);
   const [busy, setBusy] = useState(false);
   const live = useRoomStore((s) => s.members[0]?.live ?? false);
   const openArcade = useArcadeStore((s) => s.open);
@@ -88,12 +89,18 @@ function Setup() {
           Cada jogador vira um controle de Xbox no seu PC. Você continua sendo o P1 com o seu controle.
         </p>
       </fieldset>
+      <Switch
+        checked={reserveP1}
+        onChange={setReserveP1}
+        label="Guardar o P1 para mim"
+        hint="Sem controle ligado no seu PC, um controle parado fica com o P1, e os amigos viram P2 a P4 no jogo. Desligue se o jogo já trata o teclado como P1 e o primeiro controle como P2."
+      />
       <button
         type="button"
         disabled={!live || busy}
         onClick={async () => {
           setBusy(true);
-          await openArcade(slots);
+          await openArcade(slots, null, reserveP1);
           setBusy(false);
         }}
         className="flex items-center justify-center gap-2 rounded-md bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-50"
@@ -165,10 +172,17 @@ function Running() {
   const members = useRoomStore((s) => s.members);
   const arcade = useRoomStore((s) => s.members[0]?.arcade);
   const free = Math.max(0, (arcade?.slots ?? 0) - seats.length);
+  const gameFocused = useArcadeStore((s) => s.gameFocused);
 
   return (
     <div className="flex flex-col gap-4 text-left">
       <SmoothnessHint />
+      {gameFocused === false && seats.some((s) => s.connected) && (
+        <p role="alert" className="flex items-start gap-2 rounded-md bg-warning/15 px-3 py-2 text-xs">
+          <AppWindow size={16} className="mt-0.5 shrink-0" />O jogo não está em primeiro plano. Muitos jogos ignoram os
+          controles dos amigos assim: deixe a janela do jogo na frente enquanto jogam.
+        </p>
+      )}
       <p className="text-sm text-text-muted">
         {arcade?.game ? `${arcade.game} · ` : ""}
         {free > 0 ? `${free} ${free === 1 ? "vaga livre" : "vagas livres"}` : "Vagas cheias"}. A galera entra em “Entrar
@@ -197,6 +211,12 @@ function Running() {
                   <UserX size={16} />
                 </button>
               </div>
+              {seat.xinput === false && (
+                <p role="alert" className="rounded-md bg-warning/15 px-2 py-1.5 text-xs">
+                  O Windows não deu vaga a este controle, e o jogo não o enxerga. O Windows aceita 4 controles: desligue
+                  um do seu PC, tire {name} e peça para entrar de novo.
+                </p>
+              )}
               <Switch
                 checked={seat.kbm}
                 onChange={(on) => void grantKbm(on ? seat.memberId : null)}

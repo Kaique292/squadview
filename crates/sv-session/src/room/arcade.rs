@@ -4,8 +4,11 @@
 //! - **Host:** dá as vagas, pluga um controle virtual de Xbox (ViGEmBus) para cada jogador, aplica
 //!   os estados que chegam por datagrama e, com o "controle total" de um jogador ligado, injeta o
 //!   teclado e o mouse dele (só com a janela do jogo em primeiro plano, e com corte em Ctrl+Alt+F12).
-//! - **Jogador:** pede a vaga, abre a conexão do fliperama, lê o controle físico (250 por segundo)
-//!   e junta com o teclado e o mouse; manda o estado quando muda e, parado, a cada 100 ms.
+//!   Sem controle no PC do host, um controle virtual parado guarda o P1 (o jogo numera os controles
+//!   pela ordem do Windows, e o amigo viraria o P1 dele).
+//! - **Jogador:** pede a vaga, abre a conexão do fliperama, lê todos os controles físicos (1000 por
+//!   segundo, ADR 0031) e junta com o teclado e o mouse; manda o estado quando muda e, parado, a cada
+//!   100 ms.
 //!
 //! O vídeo é a live normal de quem hospeda: o jogador assiste pelo caminho de sempre.
 
@@ -16,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use quinn::Connection;
 use serde::Serialize;
-use sv_input::kbm::{Injector, KbmGuard, PanicHotkey, vk_from_code};
+use sv_input::kbm::{Injector, KbmGuard, PanicHotkey, foreground_window, vk_from_code};
 use sv_input::wire::{KBM_EVENT_LEN, decode_pad, encode_pad, is_newer};
 use sv_input::{KbmEvent, KeyMap, KeyboardPad, MouseButton, PadReader, PadState, VirtualPad, VirtualPads};
 use sv_net::Arcade;
@@ -34,6 +37,8 @@ const RESEND_EVERY: Duration = Duration::from_millis(100);
 /// Com o analógico do mouse voltando ao centro, o jogador manda o estado a cada tanto, até parar.
 /// Fora isso, o envio é na hora em que algo muda (controle, tecla ou mouse), sem esperar relógio.
 const DECAY_TICK: Duration = Duration::from_millis(4);
+/// De quanto em quanto o host confere se a janela do jogo está em primeiro plano.
+const FOCUS_EVERY: Duration = Duration::from_millis(500);
 
 /// Um jogador no fliperama que abrimos (para a interface do host).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -46,6 +51,9 @@ pub struct ArcadeSeatInfo {
     pub connected: bool,
     /// Ele está com o controle total de teclado e mouse (ADR 0024).
     pub kbm: bool,
+    /// O Windows deu uma vaga do XInput ao controle virtual dele. Sem vaga (as 4 ocupadas), o jogo
+    /// não enxerga o controle, e o host precisa saber.
+    pub xinput: bool,
 }
 
 /// O que o fliperama precisa saber da sala.
@@ -69,6 +77,13 @@ struct Host {
     hotkey: Option<PanicHotkey>,
     /// Membros esperando o controle virtual plugar (não contam duas vezes).
     plugging: Vec<String>,
+    /// Guardar o P1 para quem hospeda com um controle virtual parado, se não houver controle no PC.
+    reserve_p1: bool,
+    /// O controle que guarda o P1 (sai do PC junto com o fliperama).
+    reserve: Option<VirtualPad>,
+    /// Um plug por vez: a vaga do controle novo é descoberta pela vaga que apareceu no XInput, e
+    /// dois plugs juntos deixariam isso ambíguo. Também garante que o P1 é guardado antes do amigo.
+    plug_turn: Arc<Mutex<()>>,
 }
 
 struct Seat {
@@ -119,12 +134,14 @@ fn sorry(reason: &str) -> Signal {
 impl Inner {
     // ---------------------------------------------------------------- host
 
-    /// Abre o fliperama sobre a nossa live. `window`: a janela capturada (para o controle total).
+    /// Abre o fliperama sobre a nossa live. `window`: a janela capturada (para o controle total e o
+    /// aviso de foco). `reserve_p1`: guardar o P1 para nós se não houver controle no PC.
     pub(super) fn arcade_open(
         self: &Arc<Self>,
         game: Option<String>,
         slots: u8,
         window: Option<isize>,
+        reserve_p1: bool,
     ) -> Result<(), String> {
         if lock(&self.keyframes).is_none() {
             return Err("Comece a transmitir o jogo antes de abrir o fliperama.".into());
@@ -142,9 +159,10 @@ impl Inner {
             slots: slots.clamp(1, MAX_SLOTS),
             players: Vec::new(),
         };
+        let pads = Arc::new(pads);
         let previous = lock(&self.arcade.host).replace(Host {
             info,
-            pads: Arc::new(pads),
+            pads: pads.clone(),
             seats: BTreeMap::new(),
             expected: HashMap::new(),
             window,
@@ -152,12 +170,65 @@ impl Inner {
             injector: Arc::default(),
             hotkey: None,
             plugging: Vec::new(),
+            reserve_p1,
+            reserve: None,
+            plug_turn: Arc::default(),
         });
         if let Some(old) = previous {
             self.say_goodbye(old);
         }
+        if let Some(window) = window {
+            self.watch_focus(window, Arc::downgrade(&pads));
+        }
         self.arcade_changed();
         Ok(())
+    }
+
+    /// Avisa a interface quando a janela do jogo entra ou sai do primeiro plano: muitos jogos
+    /// ignoram os controles quando não estão na frente (o padrão do SDL e da Unity), e o amigo acha
+    /// que o controle dele não funciona. Para quando este fliperama (o dono de `pads`) fecha.
+    fn watch_focus(self: &Arc<Self>, window: isize, pads: Weak<VirtualPads>) {
+        let inner = Arc::downgrade(self);
+        self.runtime.spawn(async move {
+            let mut last = None;
+            let mut tick = tokio::time::interval(FOCUS_EVERY);
+            loop {
+                tick.tick().await;
+                let Some(inner) = inner.upgrade() else { return };
+                let open = lock(&inner.arcade.host)
+                    .as_ref()
+                    .is_some_and(|h| std::ptr::eq(Arc::as_ptr(&h.pads), pads.as_ptr()));
+                if !open {
+                    return;
+                }
+                let focused = foreground_window() == window;
+                if last != Some(focused) {
+                    last = Some(focused);
+                    (inner.on_update)(RoomUpdate::ArcadeFocus { focused });
+                }
+            }
+        });
+    }
+
+    /// Pluga o controle parado que guarda o P1, se pedido e se não há controle nenhum no PC (fora
+    /// os nossos). Sem isso, com o host no teclado, o controle virtual do amigo pegava a primeira
+    /// vaga do Windows, e o jogo o tratava como o P1: os dois mexiam no mesmo personagem. Chamar
+    /// na vez de plugar (`plug_turn`), antes do controle do jogador.
+    fn reserve_p1_if_needed(&self, pads: &Arc<VirtualPads>) {
+        let wanted = lock(&self.arcade.host)
+            .as_ref()
+            .is_some_and(|h| h.reserve_p1 && h.reserve.is_none() && Arc::ptr_eq(&h.pads, pads));
+        if !wanted || sv_input::virtual_pad::other_pad_connected() {
+            return;
+        }
+        let Ok(pad) = pads.plug().or_else(|_| pads.plug()) else {
+            return;
+        };
+        let mut guard = lock(&self.arcade.host);
+        if let Some(host) = guard.as_mut().filter(|h| Arc::ptr_eq(&h.pads, pads)) {
+            host.reserve = Some(pad);
+        }
+        // Fechou no meio: o controle sai do PC aqui, com o `pad`.
     }
 
     /// Fecha o fliperama: tira todos os jogadores e os controles virtuais.
@@ -273,7 +344,7 @@ impl Inner {
 
     /// Alguém pediu uma vaga no nosso fliperama.
     fn arcade_join_request(self: &Arc<Self>, from: String, candidates: Vec<std::net::SocketAddr>, fingerprint: String) {
-        let pads = {
+        let (pads, turn) = {
             let mut guard = lock(&self.arcade.host);
             let Some(host) = guard.as_mut() else {
                 drop(guard);
@@ -297,12 +368,15 @@ impl Inner {
                 return;
             }
             host.plugging.push(from.clone());
-            host.pads.clone()
+            (host.pads.clone(), host.plug_turn.clone())
         };
         // Plugar espera o Windows aceitar o controle (até alguns segundos): fora da tarefa da rede.
         let inner = self.clone();
         self.runtime.spawn(async move {
+            let blocking = inner.clone();
             let plugged = tokio::task::spawn_blocking(move || {
+                let _turn = lock(&turn);
+                blocking.reserve_p1_if_needed(&pads);
                 // No primeiro controle depois de instalar o driver, o Windows instala o dele e a
                 // espera volta abortada: uma segunda tentativa resolve (docs/fliperama.md).
                 pads.plug().or_else(|_| pads.plug())
@@ -408,6 +482,7 @@ impl Inner {
                             slot: s.slot,
                             connected: s.conn.is_some(),
                             kbm: host.kbm.as_deref() == Some(member),
+                            xinput: s.pad.user_index().is_some(),
                         })
                         .collect();
                     (Some(host.info.clone()), seats)
@@ -520,16 +595,23 @@ impl Inner {
                 let physical = p.physical.clone();
                 let sink = physical.clone();
                 let wake = p.wake.clone();
-                p.reader = PadReader::start(move |state| {
-                    *lock(&sink) = state;
-                    wake.notify_one();
-                })
+                let notify = inner.on_update.clone();
+                p.reader = PadReader::start(
+                    move |state| {
+                        *lock(&sink) = state;
+                        wake.notify_one();
+                    },
+                    // Quais controles achamos: sem isso, quem tinha um controle que o app não lia
+                    // achava que ele "não conectava".
+                    move |devices| notify(RoomUpdate::ArcadeControllers(devices.to_vec())),
+                )
                 .ok();
                 (physical, p.keyboard.clone(), p.stop.clone(), p.wake.clone())
             };
             (inner.on_update)(RoomUpdate::ArcadeSeat {
                 host: host.clone(),
                 slot,
+                relayed: relay.is_some_and(|r| conn.remote_address() == r),
             });
             send_pads(&conn, &physical, &keyboard, &stop, &wake).await;
             if !stop.load(Ordering::Relaxed) {

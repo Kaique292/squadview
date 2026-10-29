@@ -539,6 +539,8 @@ fn on_update<R: Runtime>(app: &AppHandle<R>, update: RoomUpdate) {
         }
         update @ (RoomUpdate::ArcadePlayers(_)
         | RoomUpdate::ArcadeSeat { .. }
+        | RoomUpdate::ArcadeControllers(_)
+        | RoomUpdate::ArcadeFocus { .. }
         | RoomUpdate::ArcadeLeft { .. }
         | RoomUpdate::ArcadeKbm { .. }) => crate::arcade::emit(app, update),
         RoomUpdate::Disconnected => {
