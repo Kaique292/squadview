@@ -13,6 +13,7 @@ import {
   PictureInPicture2,
   TriangleAlert,
   UserPlus,
+  Users,
   Volume2,
 } from "lucide-react";
 import {
@@ -79,6 +80,26 @@ export function gridLayout(n: number, width: number, height: number): { columns:
   return best;
 }
 
+/** Onde fica a escolha de deixar só as transmissões na grade (só neste PC). */
+const ONLY_VIDEO_KEY = "squadview.so-transmissoes";
+
+function savedOnlyVideo(): boolean {
+  try {
+    return localStorage.getItem(ONLY_VIDEO_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveOnlyVideo(on: boolean) {
+  try {
+    if (on) localStorage.setItem(ONLY_VIDEO_KEY, "1");
+    else localStorage.removeItem(ONLY_VIDEO_KEY);
+  } catch {
+    // Sem armazenamento, a escolha vale só até fechar o app.
+  }
+}
+
 /** O tamanho da área de conteúdo de um elemento (sem o padding), acompanhando as mudanças. */
 function useContentSize() {
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -104,6 +125,7 @@ type TileVariant = "grid" | "focus" | "strip";
  * A sala como um canal de voz do Discord: um quadro por pessoa (borda verde quando fala, mudo e
  * surdo no nome, "Ao vivo" para assistir) e a barra de controles embaixo. Clicar num quadro põe a
  * pessoa em foco (grande no centro, os outros numa faixa embaixo); clicar nele de novo volta à grade.
+ * Com "Só transmissões", a grade fica só com as lives, e as pessoas vão para a faixa de baixo.
  */
 export function VoiceRoom() {
   const { code, roomName, members, pendingWatch, watching, watch, leave } = useRoomStore();
@@ -118,6 +140,7 @@ export function VoiceRoom() {
   const clicked = useRef(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [stripOpen, setStripOpen] = useState(true);
+  const [onlyVideo, setOnlyVideo] = useState(savedOnlyVideo);
   // A área da grade: os quadros são medidos para caber nela inteiros, na largura e na altura.
   const [gridArea, gridSize] = useContentSize();
   // A nossa live é um quadro a mais, antes das pessoas (como no Discord).
@@ -207,11 +230,64 @@ export function VoiceRoom() {
   const chromeClass = `transition-[opacity,translate] duration-200 ease-out ${
     chrome ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0"
   }`;
-  const { columns, tileWidth } = gridLayout(ids.length, gridSize.width, gridSize.height);
+  // Os primeiros quadros são as lives (a nossa e as que assistimos); depois vêm as pessoas.
+  const videoCount = (live ? 1 : 0) + watched.length;
+  // "Só transmissões" vale quando há live na tela; sem nenhuma, a grade volta a mostrar todos.
+  const hidePeople = onlyVideo && videoCount > 0;
+  const all = ids.map((_, i) => i);
+  const gridIndices = hidePeople ? all.slice(0, videoCount) : all;
+  const { columns, tileWidth } = gridLayout(gridIndices.length, gridSize.width, gridSize.height);
   // Cada pessoa com o seu fundo em degradê, sem repetir o de ninguém da sala.
   const glows = tileGlows(members.map((m) => m.id));
-  const others = ids.map((_, i) => i).filter((i) => i !== focusIndex);
+  // A faixa de baixo: em foco, todos os outros; na grade com "Só transmissões", as pessoas.
+  const others = focusIndex >= 0 ? all.filter((i) => i !== focusIndex) : hidePeople ? all.slice(videoCount) : [];
+  function toggleOnlyVideo() {
+    saveOnlyVideo(!onlyVideo);
+    setOnlyVideo(!onlyVideo);
+  }
+
   const stripLabel = stripOpen ? "Esconder participantes" : "Mostrar participantes";
+
+  // A faixa de baixo, com a setinha que recolhe e mostra.
+  const strip = (
+    <>
+      <div className={`flex justify-center py-1.5 ${chromeClass}`}>
+        <Tooltip label={stripLabel} side="top">
+          <button
+            type="button"
+            aria-label={stripLabel}
+            aria-expanded={stripOpen}
+            aria-controls="faixa-da-voz"
+            onClick={() => setStripOpen((v) => !v)}
+            className="grid h-6 w-10 place-items-center rounded-full bg-surface-3/80 text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
+          >
+            {stripOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          </button>
+        </Tooltip>
+      </div>
+      {/* A faixa recolhe animando a altura da linha da grade (0fr ↔ 1fr). */}
+      <div
+        id="faixa-da-voz"
+        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+          stripOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <ul
+            aria-label="Outros na voz"
+            inert={!stripOpen}
+            className="scrollbar-none mx-auto flex w-max max-w-full gap-2 overflow-x-auto"
+          >
+            {others.map((i) => (
+              <li key={ids[i]} className="h-28 shrink-0 animate-focus-in">
+                {tile(i, "strip", !stripOpen)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </>
+  );
 
   async function invite() {
     try {
@@ -310,35 +386,38 @@ export function VoiceRoom() {
       </header>
 
       {focusIndex < 0 ? (
-        <div ref={gridArea} className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pt-14 pb-2">
-          {/* Com a área medida, cada quadro tem a largura que faz a grade caber inteira (antes, só
-              a largura contava e, numa janela baixa, as linhas passavam da altura e eram cortadas). */}
-          <ul
-            aria-label="Quem está na voz"
-            className="flex w-full animate-focus-in flex-wrap content-center justify-center gap-3"
-            style={{
-              maxWidth:
-                tileWidth > 0
-                  ? columns * tileWidth + (columns - 1) * GRID_GAP
-                  : columns === 1
-                    ? MAX_SINGLE_WIDTH
-                    : undefined,
-            }}
-          >
-            {ids.map((id, i) => (
-              <li
-                key={id}
-                className="min-w-0 shrink-0"
-                style={
+        <div className="flex min-h-0 flex-1 flex-col pb-2">
+          <div ref={gridArea} className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pt-14">
+            {/* Com a área medida, cada quadro tem a largura que faz a grade caber inteira (antes, só
+                a largura contava e, numa janela baixa, as linhas passavam da altura e eram cortadas). */}
+            <ul
+              aria-label="Quem está na voz"
+              className="flex w-full animate-focus-in flex-wrap content-center justify-center gap-3"
+              style={{
+                maxWidth:
                   tileWidth > 0
-                    ? { width: tileWidth }
-                    : { flexBasis: `calc((100% - ${(columns - 1) * GRID_GAP}px) / ${columns})` }
-                }
-              >
-                {tile(i, "grid")}
-              </li>
-            ))}
-          </ul>
+                    ? columns * tileWidth + (columns - 1) * GRID_GAP
+                    : columns === 1
+                      ? MAX_SINGLE_WIDTH
+                      : undefined,
+              }}
+            >
+              {gridIndices.map((i) => (
+                <li
+                  key={ids[i]}
+                  className="min-w-0 shrink-0"
+                  style={
+                    tileWidth > 0
+                      ? { width: tileWidth }
+                      : { flexBasis: `calc((100% - ${(columns - 1) * GRID_GAP}px) / ${columns})` }
+                  }
+                >
+                  {tile(i, "grid")}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {others.length > 0 && <div className="px-4">{strip}</div>}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col px-4 pt-14 pb-2">
@@ -346,45 +425,7 @@ export function VoiceRoom() {
           <div key={focusId} role="group" aria-label="Em foco" className="min-h-0 flex-1 animate-focus-in">
             {tile(focusIndex, "focus")}
           </div>
-          {others.length > 0 && (
-            <>
-              <div className={`flex justify-center py-1.5 ${chromeClass}`}>
-                <Tooltip label={stripLabel} side="top">
-                  <button
-                    type="button"
-                    aria-label={stripLabel}
-                    aria-expanded={stripOpen}
-                    aria-controls="faixa-da-voz"
-                    onClick={() => setStripOpen((v) => !v)}
-                    className="grid h-6 w-10 place-items-center rounded-full bg-surface-3/80 text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
-                  >
-                    {stripOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                  </button>
-                </Tooltip>
-              </div>
-              {/* A faixa recolhe animando a altura da linha da grade (0fr ↔ 1fr). */}
-              <div
-                id="faixa-da-voz"
-                className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
-                  stripOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-                }`}
-              >
-                <div className="min-h-0 overflow-hidden">
-                  <ul
-                    aria-label="Outros na voz"
-                    inert={!stripOpen}
-                    className="scrollbar-none mx-auto flex w-max max-w-full gap-2 overflow-x-auto"
-                  >
-                    {others.map((i) => (
-                      <li key={ids[i]} className="h-28 shrink-0 animate-focus-in">
-                        {tile(i, "strip", !stripOpen)}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </>
-          )}
+          {others.length > 0 && strip}
         </div>
       )}
 
@@ -444,6 +485,14 @@ export function VoiceRoom() {
             <PhoneOff size={20} />
           </button>
         </Tooltip>
+        {/* No canto esquerdo, com alguma live na grade: deixar só as lives e as pessoas na faixa. */}
+        {focusIndex < 0 && videoCount > 0 && members.length > 0 && (
+          <div className="absolute left-4 flex items-center">
+            <CornerButton label="Só transmissões na grade" pressed={onlyVideo} onClick={toggleOnlyVideo}>
+              <Users size={20} />
+            </CornerButton>
+          </div>
+        )}
         {/* No canto: a live em foco em tela cheia ou na janelinha por cima de tudo. */}
         {focusedLive && (
           <div className="absolute right-4 flex items-center gap-1">
@@ -623,14 +672,17 @@ function ControlGroup(props: { label: string; children: ReactNode }) {
 }
 
 /** Botão do canto da barra: só o ícone, sem caixa (como o de tela cheia do Discord). */
-function CornerButton(props: { label: string; onClick: () => void; children: ReactNode }) {
+function CornerButton(props: { label: string; pressed?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <Tooltip label={props.label} side="top">
       <button
         type="button"
         aria-label={props.label}
+        aria-pressed={props.pressed}
         onClick={props.onClick}
-        className="grid size-10 place-items-center rounded-lg text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
+        className={`grid size-10 place-items-center rounded-lg transition-colors hover:bg-surface-hover hover:text-text ${
+          props.pressed ? "bg-surface-3 text-text" : "text-text-muted"
+        }`}
       >
         {props.children}
       </button>
