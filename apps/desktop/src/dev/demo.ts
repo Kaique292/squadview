@@ -198,6 +198,7 @@ function liveHistory(): StreamStats[] {
     encoder: "NVIDIA H.264 Encoder MFT",
     lowLayerHeight: 0,
     lowLayerError: null,
+    keyframeRequests: 0,
   }));
 }
 

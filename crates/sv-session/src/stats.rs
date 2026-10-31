@@ -39,6 +39,9 @@ pub struct StreamStats {
     pub low_layer_height: u32,
     /// Por que a camada baixa não abriu, se der erro (quem assiste fica na principal).
     pub low_layer_error: Option<String>,
+    /// Keyframes que quem assiste pediu na janela (frame perdido ou o keyframe pedido não veio).
+    /// Vai para o registro: muitos seguidos mostram a imagem parada esperando um keyframe.
+    pub keyframe_requests: u32,
 }
 
 /// Acumula medições e fecha uma [`StreamStats`] por janela de tempo.
@@ -55,6 +58,7 @@ pub struct StatsMeter {
     audio_bytes: u64,
     audio_level: f32,
     audio_lost: u32,
+    keyframe_requests: u32,
 }
 
 impl StatsMeter {
@@ -98,6 +102,11 @@ impl StatsMeter {
         self.audio_lost += 1;
     }
 
+    /// Quem assiste pediu um keyframe.
+    pub fn record_keyframe_request(&mut self) {
+        self.keyframe_requests += 1;
+    }
+
     /// Um frame foi descartado antes do encoder.
     pub fn record_dropped(&mut self) {
         self.dropped += 1;
@@ -139,6 +148,7 @@ impl StatsMeter {
             audio_kbps: (self.audio_bytes as f64 * 8.0 / 1000.0 / secs) as u32,
             audio_level: self.audio_level,
             audio_lost: self.audio_lost,
+            keyframe_requests: self.keyframe_requests,
             ..base.clone()
         };
         *self = Self {

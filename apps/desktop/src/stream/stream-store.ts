@@ -66,6 +66,8 @@ export interface StreamStats {
   lowLayerHeight: number;
   /** Por que a camada baixa não abriu (quem assiste fica na principal). */
   lowLayerError: string | null;
+  /** Keyframes que quem assiste pediu na janela (só vai para o registro). */
+  keyframeRequests: number;
 }
 
 /** Espelha `sv_session::SystemLoad` (porcentagens). */

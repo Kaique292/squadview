@@ -65,14 +65,18 @@ impl Shared {
         }
     }
 
+    /// Pede um keyframe a quem transmite e conta o pedido nas estatísticas (e no registro).
+    fn request_keyframe(&self) {
+        lock(&self.meter).record_keyframe_request();
+        if let Some(k) = self.keyframes.get() {
+            k.request();
+        }
+    }
+
     fn on_viewer_event(&self, event: ViewerEvent) {
         match event {
             ViewerEvent::Presented { latency_us } => lock(&self.meter).record_presented(latency_us),
-            ViewerEvent::NeedKeyframe => {
-                if let Some(k) = self.keyframes.get() {
-                    k.request();
-                }
-            }
+            ViewerEvent::NeedKeyframe => self.request_keyframe(),
             // Trocou de camada: as estatísticas (e o selo de qualidade) mostram o que chega de fato.
             ViewerEvent::Resized(size) => {
                 let mut base = lock(&self.base);
@@ -296,9 +300,7 @@ impl StripeSink for MeshSink {
 
     fn lost(&mut self, _first_seq: u32, _count: u32) {
         // Faltou mais de uma faixa: o decoder perdeu a cadeia de referências.
-        if let Some(k) = self.state.keyframes.get() {
-            k.request();
-        }
+        self.state.request_keyframe();
     }
 }
 
@@ -337,9 +339,9 @@ fn on_video(state: &Arc<Shared>, header: FrameHeader, data: Vec<u8>) {
         encode_us: header.encode_us,
     };
     let accepted = lock(&state.viewer).as_ref().is_none_or(|v| v.submit(frame));
-    if !accepted && let Some(k) = state.keyframes.get() {
+    if !accepted {
         // Fila do decoder cheia: o próximo frame não vai decodificar sem um keyframe.
-        k.request();
+        state.request_keyframe();
     }
     let mut base = lock(&state.base).clone();
     base.rtt_ms = state
@@ -473,6 +475,7 @@ mod tests {
         sink.video(header(1), vec![1; 100]);
         let s = &lock(&stats)[0];
         assert_eq!(s.audio_lost, 2);
+        assert_eq!(s.keyframe_requests, 1, "o pedido de keyframe vai para o registro");
         assert_eq!(s.audio_error.as_deref(), Some("não deu para tocar o som: sem fone"));
     }
 

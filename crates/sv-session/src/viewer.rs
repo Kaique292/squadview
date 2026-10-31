@@ -145,7 +145,7 @@ fn run(
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             },
         };
-        match gate.admit(frame.keyframe) {
+        match gate.admit(frame.keyframe, clock::now_us()) {
             Admit::Decode => {}
             Admit::Skip => continue,
             Admit::SkipAndAsk => {
@@ -183,7 +183,7 @@ fn run(
         if decoded.is_err() {
             // Frame corrompido ou perdido: limpa o decoder e espera o próximo keyframe.
             decoder.flush();
-            gate.decode_failed();
+            gate.decode_failed(clock::now_us());
             on_event(ViewerEvent::NeedKeyframe);
         }
         if let Some(e) = present_error {
@@ -198,43 +198,52 @@ enum Admit {
     Decode,
     /// Sem keyframe ainda: descarta (o keyframe já foi pedido).
     Skip,
-    /// Sem keyframe ainda: descarta e pede um (só uma vez por espera).
+    /// Sem keyframe ainda: descarta e pede um (no começo da espera e a cada [`KEYFRAME_RETRY_US`]).
     SkipAndAsk,
 }
 
+/// Quanto esperar o keyframe pedido antes de pedir de novo. O pedido ou o keyframe podem se
+/// perder (rede apertada), e o GOP é longo: pedindo uma vez só, a imagem ficava parada até 2
+/// minutos, com o som tocando.
+const KEYFRAME_RETRY_US: u64 = 1_000_000;
+
 /// Sem um keyframe o decoder não tem referência: no começo e depois de um erro, descarta tudo
-/// até o próximo keyframe, pedindo um só uma vez.
+/// até o próximo keyframe, pedindo um por segundo enquanto espera.
 #[derive(Debug)]
 struct KeyframeGate {
     waiting: bool,
-    asked: bool,
+    /// Quando pedimos o último keyframe (µs, no nosso relógio).
+    asked_us: Option<u64>,
 }
 
 impl KeyframeGate {
     fn new() -> Self {
         Self {
             waiting: true,
-            asked: false,
+            asked_us: None,
         }
     }
 
-    fn admit(&mut self, keyframe: bool) -> Admit {
+    fn admit(&mut self, keyframe: bool, now_us: u64) -> Admit {
         if self.waiting && !keyframe {
-            if self.asked {
+            if self
+                .asked_us
+                .is_some_and(|asked| now_us.saturating_sub(asked) < KEYFRAME_RETRY_US)
+            {
                 return Admit::Skip;
             }
-            self.asked = true;
+            self.asked_us = Some(now_us);
             return Admit::SkipAndAsk;
         }
         self.waiting = false;
-        self.asked = false;
+        self.asked_us = None;
         Admit::Decode
     }
 
     /// O frame não decodificou (corrompido ou faltou um antes): quem chama já pediu keyframe.
-    fn decode_failed(&mut self) {
+    fn decode_failed(&mut self, now_us: u64) {
         self.waiting = true;
-        self.asked = true;
+        self.asked_us = Some(now_us);
     }
 }
 
@@ -249,26 +258,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn comeca_esperando_keyframe_e_pede_um_so_uma_vez() {
+    fn comeca_esperando_keyframe_e_pede_um() {
         let mut gate = KeyframeGate::new();
-        assert_eq!(gate.admit(false), Admit::SkipAndAsk);
-        assert_eq!(gate.admit(false), Admit::Skip);
-        assert_eq!(gate.admit(false), Admit::Skip);
-        assert_eq!(gate.admit(true), Admit::Decode);
-        assert_eq!(gate.admit(false), Admit::Decode, "depois do keyframe, tudo decodifica");
+        assert_eq!(gate.admit(false, 0), Admit::SkipAndAsk);
+        assert_eq!(gate.admit(false, 16_000), Admit::Skip);
+        assert_eq!(gate.admit(false, 32_000), Admit::Skip);
+        assert_eq!(gate.admit(true, 48_000), Admit::Decode);
+        assert_eq!(
+            gate.admit(false, 64_000),
+            Admit::Decode,
+            "depois do keyframe, tudo decodifica"
+        );
     }
 
     #[test]
-    fn erro_de_decode_volta_a_esperar_keyframe_sem_pedir_de_novo() {
+    fn erro_de_decode_volta_a_esperar_keyframe_sem_pedir_de_novo_na_hora() {
         let mut gate = KeyframeGate::new();
-        assert_eq!(gate.admit(true), Admit::Decode);
-        gate.decode_failed();
-        assert_eq!(gate.admit(false), Admit::Skip, "o pedido já saiu junto com o erro");
-        assert_eq!(gate.admit(true), Admit::Decode);
+        assert_eq!(gate.admit(true, 0), Admit::Decode);
+        gate.decode_failed(16_000);
+        assert_eq!(
+            gate.admit(false, 32_000),
+            Admit::Skip,
+            "o pedido já saiu junto com o erro"
+        );
+        assert_eq!(gate.admit(true, 48_000), Admit::Decode);
         // Outro erro depois de recuperar: o próximo keyframe recupera de novo.
-        gate.decode_failed();
-        assert_eq!(gate.admit(true), Admit::Decode);
-        assert_eq!(gate.admit(false), Admit::Decode);
+        gate.decode_failed(64_000);
+        assert_eq!(gate.admit(true, 80_000), Admit::Decode);
+        assert_eq!(gate.admit(false, 96_000), Admit::Decode);
+    }
+
+    #[test]
+    fn keyframe_que_nao_chega_e_pedido_de_novo_a_cada_segundo() {
+        // O keyframe pedido se perdeu: antes, a espera pedia uma vez só, e a imagem ficava parada
+        // até o keyframe do GOP (2 minutos), com o som tocando.
+        let mut gate = KeyframeGate::new();
+        assert_eq!(gate.admit(true, 0), Admit::Decode);
+        gate.decode_failed(16_000);
+        let asked = (2..200u64)
+            .filter(|n| gate.admit(false, n * 16_000) == Admit::SkipAndAsk)
+            .count();
+        // Mais 3 s esperando: um pedido por segundo, sem encher quem transmite de pedidos.
+        assert_eq!(asked, 3);
+        assert_eq!(gate.admit(true, 3_200_000), Admit::Decode);
     }
 
     #[test]
