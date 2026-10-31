@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.15.0](https://github.com/Kaique292/squadview/compare/v0.14.0...v0.15.0) (2026-10-31)
+
+
+### ✨ Novidades
+
+* **ui:** deixa só as transmissões na grade e as pessoas na faixa de baixo ([#134](https://github.com/Kaique292/squadview/issues/134)) ([62efd26](https://github.com/Kaique292/squadview/commit/62efd267d58f27040d4b70e055b489d2b256b8f9))
+
+
+### 🐛 Correções
+
+* **net:** pede o keyframe de novo quando ele não chega ([#135](https://github.com/Kaique292/squadview/issues/135)) ([84b72b5](https://github.com/Kaique292/squadview/commit/84b72b53f8d77fbcfda941337dd20f0f383ae434))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e as capturas para a versão 0.15 ([#136](https://github.com/Kaique292/squadview/issues/136)) ([d4092ec](https://github.com/Kaique292/squadview/commit/d4092ecbf17dc684206ea97b71ea1341ad0dd0d9))
+
 ## [0.14.0](https://github.com/Kaique292/squadview/compare/v0.13.0...v0.14.0) (2026-10-29)
 
 
