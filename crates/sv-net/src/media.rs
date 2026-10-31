@@ -271,6 +271,48 @@ impl Broadcaster {
     }
 }
 
+/// Quanto esperar o keyframe pedido antes de pedir de novo. O keyframe é o maior frame e chega
+/// justo com a rede apertada: se ele também ficasse de fora da fila, sem pedir de novo o espectador
+/// ficaria sem imagem até o próximo keyframe do GOP (2 minutos), com o som tocando.
+const KEYFRAME_RETRY_US: u64 = 1_000_000;
+
+/// O que fazer com um frame que saiu da fila de um espectador.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    Send,
+    /// Esperando o keyframe já pedido: os frames até ele não decodificam.
+    Skip,
+    /// Pulou frame (fila cheia) ou o keyframe pedido não veio a tempo: pede um.
+    SkipAndAsk,
+}
+
+/// Frames pulados na fila de um espectador: até chegar um keyframe, os seguintes não decodificam.
+#[derive(Debug, Default)]
+struct KeyframeWait {
+    last_seq: Option<u32>,
+    /// Esperando keyframe, pedido neste horário (µs, no relógio da captura).
+    asked_us: Option<u64>,
+}
+
+impl KeyframeWait {
+    fn next(&mut self, seq: u32, keyframe: bool, now_us: u64) -> Pass {
+        let gap = self.last_seq.is_some_and(|s| seq != s.wrapping_add(1));
+        self.last_seq = Some(seq);
+        if keyframe {
+            self.asked_us = None;
+            return Pass::Send;
+        }
+        match self.asked_us {
+            None if !gap => Pass::Send,
+            Some(asked) if now_us.saturating_sub(asked) < KEYFRAME_RETRY_US => Pass::Skip,
+            _ => {
+                self.asked_us = Some(now_us);
+                Pass::SkipAndAsk
+            }
+        }
+    }
+}
+
 async fn send_video(
     conn: Connection,
     mut rx: mpsc::Receiver<Outgoing>,
@@ -279,24 +321,15 @@ async fn send_video(
     mesh: Option<StripeMask>,
 ) {
     let mut backlog = BacklogMeter::new();
-    let mut last_seq: Option<u32> = None;
-    let mut waiting_keyframe = false;
+    let mut wait = KeyframeWait::default();
     while let Some(frame) = rx.recv().await {
-        // Pulou frame (fila cheia): os seguintes não decodificam até chegar um keyframe.
-        if last_seq.is_some_and(|s| frame.seq() != s.wrapping_add(1)) && !frame.keyframe() {
-            if !waiting_keyframe {
-                waiting_keyframe = true;
+        match wait.next(frame.seq(), frame.keyframe(), frame.timestamp_us()) {
+            Pass::Send => {}
+            Pass::Skip => continue,
+            Pass::SkipAndAsk => {
                 on_keyframe(frame.layer());
+                continue;
             }
-            last_seq = Some(frame.seq());
-            continue;
-        }
-        if frame.keyframe() {
-            waiting_keyframe = false;
-        }
-        last_seq = Some(frame.seq());
-        if waiting_keyframe {
-            continue;
         }
         let written = match &frame {
             Outgoing::Frame(f) => {
@@ -775,6 +808,37 @@ fn now_us() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_pulado_espera_o_keyframe_e_pede_um() {
+        let mut w = KeyframeWait::default();
+        assert_eq!(w.next(0, true, 0), Pass::Send);
+        assert_eq!(w.next(1, false, 16_000), Pass::Send);
+        // A fila encheu e o 2 ficou de fora.
+        assert_eq!(w.next(3, false, 48_000), Pass::SkipAndAsk);
+        assert_eq!(w.next(4, false, 64_000), Pass::Skip);
+        assert_eq!(w.next(5, true, 80_000), Pass::Send);
+        assert_eq!(w.next(6, false, 96_000), Pass::Send);
+    }
+
+    #[test]
+    fn keyframe_pedido_que_nao_chega_e_pedido_de_novo() {
+        // O keyframe (o maior frame) também ficou de fora da fila: antes, ninguém pedia outro, e a
+        // imagem ficava parada até o keyframe do GOP (2 minutos), com o som tocando.
+        let mut w = KeyframeWait::default();
+        assert_eq!(w.next(0, true, 0), Pass::Send);
+        assert_eq!(w.next(2, false, 32_000), Pass::SkipAndAsk);
+        let mut asked = 0;
+        for seq in 3..200u32 {
+            if w.next(seq, false, u64::from(seq) * 16_000) == Pass::SkipAndAsk {
+                asked += 1;
+            }
+        }
+        // Mais 3 s esperando: um pedido por segundo, sem encher o encoder de keyframes.
+        assert_eq!(asked, 3);
+        assert_eq!(w.next(200, true, 3_200_000), Pass::Send);
+        assert_eq!(w.next(201, false, 3_216_000), Pass::Send);
+    }
 
     #[test]
     fn pai_que_ficou_para_tras_e_dado_como_perdido_mas_tela_parada_nao() {
