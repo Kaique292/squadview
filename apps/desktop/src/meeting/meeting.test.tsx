@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { act } from "react";
 import { useRoomStore } from "../room/room-store";
 import { useToastStore } from "../ui/toast-store";
+import { useVoiceStore } from "../voice/voice-store";
 import { lineTime, MeetingPanel } from "./MeetingPanel";
 import { listenToMeetingEvents, useMeetingStore } from "./meeting-store";
 
@@ -217,5 +218,151 @@ describe("aba Reunião", () => {
     const now = new Date(2026, 10, 5, 18, 0);
     expect(lineTime(new Date(2026, 10, 5, 9, 7).getTime(), now)).toBe("09:07");
     expect(lineTime(new Date(2026, 10, 4, 23, 59).getTime(), now)).toBe("04/11 23:59");
+  });
+});
+
+describe("aba Reunião: outros caminhos", () => {
+  // As listas do Radix rolam a opção escolhida até a vista, o que o jsdom não tem.
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  it("o X fecha a aba", async () => {
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Fechar a aba Reunião" }));
+    expect(useMeetingStore.getState().open).toBe(false);
+  });
+
+  it("troca o idioma pela lista", async () => {
+    installed = true;
+    await openPanel();
+    fireEvent.click(await screen.findByRole("combobox", { name: "Idioma da fala" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Detectar sozinho" }));
+    await waitFor(() => expect(useMeetingStore.getState().prefs.language).toBeNull());
+    fireEvent.click(screen.getByRole("combobox", { name: "Idioma da fala" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Português" }));
+    await waitFor(() => expect(useMeetingStore.getState().prefs.language).toBe("pt"));
+  });
+
+  it("troca o modelo antes de baixar e marca o que já está baixado", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      Promise.resolve(
+        cmd === "meeting_status"
+          ? {
+              cpuSupported: true,
+              models: [
+                { ...SMALL, installed: false },
+                { ...BASE, installed: true },
+              ],
+            }
+          : undefined,
+      ),
+    );
+    await openPanel();
+    fireEvent.click(await screen.findByRole("combobox", { name: "Modelo de transcrição" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Leve (60 MB) · baixado" }));
+    await waitFor(() => expect(useMeetingStore.getState().prefs.model).toBe("base"));
+    expect(await screen.findByRole("button", { name: "Transcrever minha voz" })).toBeInTheDocument();
+  });
+
+  it("apagar o modelo em uso para a transcrição antes", async () => {
+    installed = true;
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Apagar o modelo baixado \(190 MB\)/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("meeting_delete_model", { kind: "small" }));
+    // Com a transcrição ligada no mesmo modelo, ela para antes de apagar.
+    invoke.mockClear();
+    useMeetingStore.setState({ transcribing: true });
+    await act(() => useMeetingStore.getState().deleteModel("small"));
+    const calls = invoke.mock.calls.map((c) => c[0]);
+    expect(calls.indexOf("meeting_set_transcribing")).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf("meeting_set_transcribing")).toBeLessThan(calls.indexOf("meeting_delete_model"));
+    expect(useMeetingStore.getState().transcribing).toBe(false);
+  });
+
+  it("falha ao apagar o modelo avisa", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "meeting_delete_model" ? Promise.reject(new Error("arquivo em uso")) : Promise.resolve(undefined),
+    );
+    await act(() => useMeetingStore.getState().deleteModel("base"));
+    expect(useToastStore.getState().toasts[0].message).toBe("arquivo em uso");
+  });
+
+  it("o cancelar do download chega ao Rust, e um segundo download não sai", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "meeting_status") return Promise.resolve(status(false));
+      if (cmd === "meeting_download_model") return new Promise(() => {});
+      return Promise.resolve(undefined);
+    });
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Baixar o modelo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("meeting_cancel_download"));
+    await useMeetingStore.getState().downloadModel("base");
+    expect(invoke.mock.calls.filter((c) => c[0] === "meeting_download_model")).toHaveLength(1);
+  });
+
+  it("erro no download avisa, e progresso sem download em andamento é ignorado", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "meeting_download_model" ? Promise.reject({ algo: "estranho" }) : Promise.resolve(undefined),
+    );
+    await act(() => useMeetingStore.getState().downloadModel("small"));
+    expect(useToastStore.getState().toasts[0].message).toBe("Erro desconhecido.");
+    emit("meeting-model-progress", { kind: "small", received: 10, total: 20 });
+    expect(useMeetingStore.getState().download).toBeNull();
+  });
+
+  it("ligar de novo enquanto carrega não manda outro pedido", async () => {
+    useMeetingStore.setState({ starting: true });
+    await useMeetingStore.getState().start();
+    expect(invoke).not.toHaveBeenCalledWith("meeting_set_transcribing", expect.anything());
+  });
+
+  it("enquanto transcreve, mostra que está ouvindo e a linha com falha", async () => {
+    installed = true;
+    useMeetingStore.setState({ transcribing: true });
+    act(() => useVoiceStore.setState({ speaking: { me: true } }));
+    await openPanel();
+    expect(screen.getByText("Ouvindo…")).toBeInTheDocument();
+    act(() => useVoiceStore.setState({ speaking: {} }));
+    expect(screen.getByText(/o texto aparece aqui quando você der uma pausa/)).toBeInTheDocument();
+    emit("meeting-line", { kind: "failed", atMs: 5, error: "modelo quebrado" });
+    expect(screen.getByText("[não deu para transcrever este trecho]")).toHaveAttribute("title", "modelo quebrado");
+  });
+
+  it("sem os membros da sala a fala aparece como Você, e rolar para cima segura a rolagem", async () => {
+    useRoomStore.setState({ members: [] });
+    await openPanel();
+    emit("meeting-line", { kind: "text", atMs: 1, text: "primeira" });
+    expect(screen.getByText("Você")).toBeInTheDocument();
+    const viewport = screen
+      .getByRole("list", { name: "Transcrição" })
+      .closest<HTMLElement>("[data-radix-scroll-area-viewport]")!;
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 200 });
+    viewport.scrollTop = 100;
+    fireEvent.scroll(viewport);
+    emit("meeting-line", { kind: "text", atMs: 2, text: "segunda" });
+    expect(viewport.scrollTop).toBe(100);
+  });
+
+  it("trocar de sala também limpa a transcrição", () => {
+    useMeetingStore.setState({ lines: [{ id: 1, memberId: "me", atMs: 1, kind: "text", text: "oi" }] });
+    act(() => useRoomStore.setState({ code: "OUTRA1" }));
+    expect(useMeetingStore.getState().lines).toHaveLength(0);
+  });
+
+  it("lembra o modelo e o idioma salvos, e ignora o salvo estragado", async () => {
+    localStorage.setItem("squadview.reuniao", JSON.stringify({ model: "base" }));
+    vi.resetModules();
+    const saved = await import("./meeting-store");
+    expect(saved.useMeetingStore.getState().prefs).toEqual({ model: "base", language: "pt" });
+    localStorage.setItem("squadview.reuniao", "{estragado");
+    vi.resetModules();
+    const broken = await import("./meeting-store");
+    expect(broken.useMeetingStore.getState().prefs).toEqual({ model: "small", language: "pt" });
   });
 });

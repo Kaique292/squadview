@@ -63,7 +63,7 @@ export function MeetingPanel() {
 
       <Transcript lines={lines} transcribing={transcribing} />
 
-      <footer className="flex shrink-0 flex-col gap-3 border-t border-black/30 p-4">
+      <div className="flex shrink-0 flex-col gap-3 border-t border-black/30 p-4">
         {transcribing ? (
           <button
             type="button"
@@ -115,7 +115,7 @@ export function MeetingPanel() {
             </button>
           </>
         )}
-      </footer>
+      </div>
     </aside>
   );
 }

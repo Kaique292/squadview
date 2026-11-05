@@ -5,6 +5,7 @@ import { App } from "../App";
 import { listenToRoomEvents, type Member, useRoomStore } from "../room/room-store";
 import { DEFAULT_QUALITY, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
+import { useMeetingStore } from "../meeting/meeting-store";
 import { gridColumns, gridLayout } from "./VoiceRoom";
 import { DEFAULT_PREFS, listenToVoiceEvents, useVoiceStore } from "./voice-store";
 
@@ -39,6 +40,7 @@ beforeEach(async () => {
   useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   useToastStore.setState({ toasts: [] });
+  useMeetingStore.setState({ open: false, transcribing: false, lines: [] });
   await listenToRoomEvents();
   await listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name);
 });
@@ -64,6 +66,21 @@ describe("chat de voz", () => {
     expect(within(grade).getAllByRole("listitem")).toHaveLength(3);
     expect(within(grade).getByText("Ao vivo")).toBeInTheDocument();
     expect(within(grade).getByLabelText("Microfone silenciado")).toBeInTheDocument();
+  });
+
+  it("o botão do canto abre e fecha a aba Reunião ao lado da sala", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    fireEvent.click(screen.getByRole("button", { name: "Reunião (transcrever a conversa)" }));
+    expect(screen.getByRole("complementary", { name: "Reunião" })).toBeInTheDocument();
+    // Transcrevendo, o botão ganha a bolinha vermelha.
+    act(() => useMeetingStore.setState({ transcribing: true }));
+    const controls = screen.getByRole("navigation", { name: "Controles da voz" });
+    const button = within(controls).getByRole("button", { name: "Fechar a aba Reunião" });
+    expect(button.querySelector(".bg-live")).not.toBeNull();
+    fireEvent.click(button);
+    expect(screen.queryByRole("complementary", { name: "Reunião" })).not.toBeInTheDocument();
+    act(() => useMeetingStore.setState({ transcribing: false }));
   });
 
   it("acende a borda de quem está falando", () => {
