@@ -7,6 +7,7 @@ mod discord;
 mod dm;
 mod friends;
 mod invite;
+mod meeting;
 mod pip;
 mod presence;
 mod preview;
@@ -94,6 +95,7 @@ fn manage_states<R: tauri::Runtime>(builder: tauri::Builder<R>, presence: presen
         .manage(friends::Friends::default())
         .manage(dm::Dms::default())
         .manage(tray::Tray::default())
+        .manage(meeting::Meeting::default())
         .manage(presence)
 }
 
@@ -222,6 +224,11 @@ pub fn run() {
             voice::voice_set_settings,
             voice::voice_set_peer_volume,
             voice::voice_set_peer_muted,
+            meeting::meeting_status,
+            meeting::meeting_download_model,
+            meeting::meeting_cancel_download,
+            meeting::meeting_delete_model,
+            meeting::meeting_set_transcribing,
             preview::stop_preview,
             tray::window_settings,
             tray::set_close_to_tray,
