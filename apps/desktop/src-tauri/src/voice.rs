@@ -83,6 +83,10 @@ pub fn emit_event<R: Runtime>(app: &AppHandle<R>, event: VoiceEvent) {
         VoiceEvent::InputLevel(level) => app.emit(LEVEL_EVENT, level),
         VoiceEvent::MicFailed(e) => app.emit(ERROR_EVENT, format!("Não deu para abrir o microfone: {e}")),
         VoiceEvent::OutputFailed(e) => app.emit(ERROR_EVENT, format!("Não deu para abrir a saída de áudio: {e}")),
+        VoiceEvent::Transcript(line) => {
+            crate::meeting::emit_line(app, line);
+            Ok(())
+        }
     };
 }
 

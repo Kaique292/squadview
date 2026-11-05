@@ -54,6 +54,8 @@ pub struct VoiceFrame<'a> {
     pub opus: &'a [u8],
     /// Nível (pico, 0 a 1), para o "está falando" dos outros.
     pub peak: f32,
+    /// Os 20 ms de voz já tratados (48 kHz, mono) que viraram este pacote, para a transcrição.
+    pub pcm: &'a [f32],
 }
 
 /// Do microfone ao Opus.
@@ -170,6 +172,7 @@ impl VoiceEncoder {
                     on_frame(VoiceFrame {
                         opus: &self.packet[..n],
                         peak: level,
+                        pcm: &self.frame[..VOICE_FRAME],
                     });
                 }
                 self.frame.clear();

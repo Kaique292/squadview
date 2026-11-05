@@ -16,6 +16,8 @@ import { usePresenceSync } from "./settings/presence-store";
 import { useStreamStore } from "./stream/stream-store";
 import { Dissolve } from "./ui/Dissolve";
 import { VoiceRoom } from "./voice/VoiceRoom";
+import { MeetingPanel } from "./meeting/MeetingPanel";
+import { useMeetingStore } from "./meeting/meeting-store";
 import { Backdrop } from "./ui/Backdrop";
 import { TitleBar } from "./ui/TitleBar";
 import { Toaster } from "./ui/Toaster";
@@ -30,6 +32,7 @@ export function App() {
   // Assistindo alguma live (elas aparecem como quadros na sala, junto com a gente).
   const watching = useRoomStore((s) => Object.keys(s.watching).length > 0);
   const code = useRoomStore((s) => s.code);
+  const meetingOpen = useMeetingStore((s) => s.open) && !!code && !fullscreen;
   const roomName = useRoomStore((s) => s.roomName);
   // O servidor aberto na lateral (pela barra de salas ou por entrar numa sala dele).
   const server = useServersStore((s) => s.servers.find((x) => x.id === s.selected) ?? null);
@@ -102,6 +105,14 @@ export function App() {
             )
           ) : server && !code ? (
             <ServerHome server={server} />
+          ) : meetingOpen ? (
+            // A aba Reunião fica ao lado da sala, como o chat de um canal de voz no Discord.
+            <div className="flex h-full w-full min-w-0">
+              <div className="min-w-0 flex-1">
+                <VoiceRoom />
+              </div>
+              <MeetingPanel />
+            </div>
           ) : (
             <VoiceRoom />
           )}

@@ -8,6 +8,7 @@ pub mod level;
 mod mic;
 pub mod opus;
 mod playback;
+pub mod transcribe;
 pub mod voice;
 mod wasapi;
 mod window;

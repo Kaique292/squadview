@@ -13,6 +13,7 @@ import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
 import { listenToSoundEvents } from "./sounds/sound-store";
 import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, boot } from "./splash/boot";
 import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
+import { listenToMeetingEvents } from "./meeting/meeting-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { parsePipHash } from "./stream/pip";
 import { PipView } from "./stream/PipView";
@@ -63,6 +64,7 @@ function startApp() {
               listenToDmEvents(),
               listenToArcadeEvents(),
               listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name),
+              listenToMeetingEvents(),
             ]),
         },
         { text: "Carregando seu perfil…", run: () => useAccountStore.getState().load() },
