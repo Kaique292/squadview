@@ -37,7 +37,7 @@ O projeto não tem servidor de mídia (ADR 0002) e roda ao lado de jogos: a GPU 
   - Padrão: `small` quantizado, uns 190 MB. Para PC mais fraco, o `base`, uns 60 MB.
   - Vem do repositório oficial do whisper.cpp, com SHA-256 conferido antes de usar.
   - Fica na pasta de dados do app, e dá para apagar nas configurações.
-- **Build:** o `whisper-rs` compila o whisper.cpp com CMake. O CI do Windows já tem CMake. O `docs/desenvolvimento.md` passa a pedir o CMake para compilar localmente.
+- **Build:** o `whisper-rs` compila o whisper.cpp com CMake e gera os bindings com o bindgen, que precisa do LLVM (libclang): os bindings que vêm na crate foram gerados no Linux e têm os tamanhos errados no Windows. O whisper.cpp é compilado para AVX2, FMA e F16C, e não para o processador da máquina que compila. O CI do Windows já tem CMake e LLVM. O `docs/desenvolvimento.md` passa a pedir os dois para compilar localmente.
 
 ### Falas na sala
 
@@ -90,7 +90,7 @@ O projeto não tem servidor de mídia (ADR 0002) e roda ao lado de jogos: a GPU 
 - **Qualidade:** gíria, nomes de jogo e falas sobrepostas vão sair com erros. Como cada um transcreve só o próprio microfone, falas sobrepostas atrapalham menos do que numa gravação da call inteira.
 - **Download grande:** o primeiro uso baixa o modelo, de 60 a 190 MB, com progresso na tela.
 - **Atraso:** uma fala aparece na aba alguns segundos depois de terminar.
-- **Build:** CMake passa a ser necessário para compilar o app.
+- **Build:** CMake e LLVM passam a ser necessários para compilar o app.
 - O Worker ganha 5 mensagens novas, `meeting-start`, `meeting-stop`, `meeting-line`, `meeting-history-request` e `meeting-history`, e o estado da reunião na sala. Elas entram no `docs/protocolo-malha.md`.
 
 ## Alternativas consideradas
