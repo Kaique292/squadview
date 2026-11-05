@@ -12,8 +12,17 @@
 | WebView2                  | já vem no Windows 11                               | —                                                                                                                                               |
 | cargo-llvm-cov            | última                                             | `cargo install cargo-llvm-cov`                                                                                                                  |
 | cargo-deny                | última                                             | `cargo install cargo-deny`                                                                                                                      |
+| CMake                     | 3.x ou 4.x                                         | já vem no Build Tools (componente **Ferramentas CMake do C++**) ou `winget install Kitware.CMake`                                               |
+| LLVM (libclang)           | 18+                                                | `winget install LLVM.LLVM`                                                                                                                      |
 
 A partir da Fase 1, uma placa NVIDIA (GTX 10xx ou mais nova) é necessária para testar o encoder. O SDK do NVENC é carregado em tempo de execução pelo driver; não precisa instalar nada além do driver atualizado.
+
+> **Transcrição do modo reunião (ADR 0032):** o `sv-media` compila o whisper.cpp com o CMake e gera os bindings dele com o
+> bindgen, que precisa do libclang do LLVM. Os bindings que vêm na crate foram gerados no Linux e não servem no Windows.
+> Se o build não achar o libclang, defina `LIBCLANG_PATH=C:\Program Files\LLVM\bin`. Com o Visual Studio 2026 instalado
+> e o CMake do 2022, o CMake não conhece o gerador do 2026: use `CMAKE_GENERATOR=Ninja` (o Ninja vem com o CMake do
+> Build Tools) e rode o `cargo` num terminal com o ambiente do `vcvars64.bat`, para o bindgen achar os cabeçalhos do MSVC.
+> As máquinas Windows do GitHub Actions já têm CMake e LLVM.
 
 > **Git Bash:** o `link` do Git Bash esconde o `link.exe` do MSVC e quebra o build do Rust. Rode `cargo` e `yarn tauri` pelo **PowerShell** ou pelo terminal do VS Code com PowerShell.
 

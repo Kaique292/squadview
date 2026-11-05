@@ -1,3 +1,13 @@
+# Transcrição do modo reunião (ADR 0032): o whisper.cpp é compilado para processadores com AVX2,
+# FMA e F16C, e não para os da máquina que compila: o instalador do CI tem que rodar no PC de
+# qualquer jogador. Os bindings são gerados na hora pelo bindgen, que precisa do LLVM (libclang).
+[env]
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+
 # Higiene de build (ver "Tamanho da target/" em docs/desenvolvimento.md).
 #
 # Em out/2026 a target/ chegou a 133 GB e quase lotou o disco: o grosso era informação de debug
