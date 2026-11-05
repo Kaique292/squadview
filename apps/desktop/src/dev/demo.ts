@@ -1,12 +1,14 @@
 /**
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
  * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`,
- * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes`, `#demo=assistindo` ou `#demo=fliperama`.
+ * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes`, `#demo=assistindo`, `#demo=fliperama` ou
+ * `#demo=reuniao`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
 import { useAccountStore } from "../account/account-store";
 import { useArcadeStore } from "../arcade/arcade-store";
 import { type DmMessage, useDmStore } from "../dm/dm-store";
+import { useMeetingStore } from "../meeting/meeting-store";
 import { useFriendsStore } from "../friends/friends-store";
 import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
@@ -273,8 +275,33 @@ function watchTwo() {
 /** Respostas de mentira do Rust, para as telas que perguntam algo a ele. */
 const FAKE_COMMANDS: Record<string, unknown> = {
   diagnostics_status: { enabled: true, files: 3 },
+  meeting_status: {
+    cpuSupported: true,
+    models: [
+      { kind: "small", size: 190_085_487, installed: true },
+      { kind: "base", size: 59_707_625, installed: false },
+    ],
+  },
   dm_preview: thumbnail("#0a3d62", "#c89b3c", "PENTAKILL"),
 };
+
+/** A aba Reunião aberta, transcrevendo, com algumas falas nossas (ADR 0032). */
+function openMeeting() {
+  const start = Date.now() - 6 * 60_000;
+  const said = [
+    "Bom dia, pessoal. Bora decidir o que entra na próxima versão?",
+    "Eu acho que o modo reunião tem que estar pronto antes do fim do mês.",
+    "E a exportação para o Discord vem logo depois, com e sem Nitro.",
+  ];
+  useMeetingStore.setState({
+    transcribing: true,
+    lines: [
+      ...said.map((text, i) => ({ id: i + 1, memberId: "eu", atMs: start + i * 95_000, kind: "text" as const, text })),
+      { id: 9, memberId: "eu", atMs: start + 300_000, kind: "skipped" as const },
+    ],
+  });
+  useMeetingStore.getState().setOpen(true);
+}
 
 export function runDemo(scene: string) {
   useAppearanceStore.getState().setGlass(0);
@@ -346,6 +373,7 @@ export function runDemo(scene: string) {
   if (scene === "transmitindo" || scene === "detalhes" || scene === "fliperama") goLive();
   if (scene === "fliperama") openArcade();
   if (scene === "assistindo") watchTwo();
+  if (scene === "reuniao") openMeeting();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
     // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).

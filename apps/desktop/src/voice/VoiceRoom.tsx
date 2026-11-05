@@ -8,6 +8,7 @@ import {
   Loader2,
   Maximize2,
   MicOff,
+  NotebookPen,
   MonitorUp,
   PhoneOff,
   PictureInPicture2,
@@ -43,6 +44,7 @@ import { Backdrop } from "../ui/Backdrop";
 import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
+import { useMeetingStore } from "../meeting/meeting-store";
 import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { tileGlows, tileGradient } from "./tile-background";
@@ -131,6 +133,9 @@ export function VoiceRoom() {
   const { code, roomName, members, pendingWatch, watching, watch, leave } = useRoomStore();
   const speaking = useVoiceStore((s) => s.speaking);
   const myPrefs = useVoiceStore((s) => s.prefs);
+  const meetingOpen = useMeetingStore((s) => s.open);
+  const setMeetingOpen = useMeetingStore((s) => s.setOpen);
+  const transcribing = useMeetingStore((s) => s.transcribing);
   const profile = useAccountStore((s) => s.profile);
   // O nome no topo e os controles embaixo só aparecem com o mouse na área (ou o foco do teclado),
   // como no Discord. O evento do React conta os menus abertos (em portal) como dentro da área.
@@ -493,22 +498,36 @@ export function VoiceRoom() {
             </CornerButton>
           </div>
         )}
-        {/* No canto: a live em foco em tela cheia ou na janelinha por cima de tudo. */}
-        {focusedLive && (
-          <div className="absolute right-4 flex items-center gap-1">
-            {focusedWatch && (
-              <CornerButton label="Picture in picture" onClick={() => void setPip(focusedLive.id)}>
-                <PictureInPicture2 size={20} />
-              </CornerButton>
-            )}
+        {/* No canto: a aba Reunião e, com uma live em foco, a tela cheia ou a janelinha. */}
+        <div className="absolute right-4 flex items-center gap-1">
+          {code && (
+            <CornerButton
+              label={meetingOpen ? "Fechar a aba Reunião" : "Reunião (transcrever a conversa)"}
+              pressed={meetingOpen}
+              onClick={() => setMeetingOpen(!meetingOpen)}
+            >
+              <span className="relative">
+                <NotebookPen size={20} />
+                {transcribing && (
+                  <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-live" />
+                )}
+              </span>
+            </CornerButton>
+          )}
+          {focusedLive && focusedWatch && (
+            <CornerButton label="Picture in picture" onClick={() => void setPip(focusedLive.id)}>
+              <PictureInPicture2 size={20} />
+            </CornerButton>
+          )}
+          {focusedLive && (
             <CornerButton
               label="Tela cheia"
               onClick={() => void setFullscreen(true, focusedWatch ? focusedLive.id : STREAM_TILE)}
             >
               <Maximize2 size={20} />
             </CornerButton>
-          </div>
-        )}
+          )}
+        </div>
       </nav>
     </section>
   );
