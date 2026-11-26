@@ -10,19 +10,21 @@
 //! são `Send`: tudo passa pela trava de [`Comp`], de qualquer thread.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use sv_gpu::{Gpu, Rect, Size, fit_inside};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionRectangleClip, IDCompositionTarget, IDCompositionVisual,
+    DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR, DCompositionCreateDevice, IDCompositionDevice,
+    IDCompositionRectangleClip, IDCompositionScaleTransform, IDCompositionTarget, IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
     DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2, IDXGISwapChain1,
 };
-use windows::core::Result;
+use windows::core::{Interface, Result};
 
 use crate::window::Bounds;
 
@@ -38,6 +40,24 @@ struct Host {
 struct Comp {
     device: IDCompositionDevice,
     hosts: HashMap<isize, Host>,
+    ambient: Ambient,
+}
+
+/// Tamanho da imagem da luz ambiente (ADR 0034): a live reduzida a 32 × 18. O compositor só a
+/// amplia até a sala, o que sai de graça; o desfoque do próprio compositor custava ~16% da GPU.
+pub const AMBIENT_SIZE: Size = Size::new(32, 18);
+
+/// A luz ambiente: a live em foco, minúscula e esticada até a área da sala, no fundo da árvore da
+/// janela do app (por baixo de todos os vídeos e da página). Uma por app.
+#[derive(Default)]
+struct Ambient {
+    visual: Option<(IDCompositionVisual, IDCompositionScaleTransform)>,
+    /// A área da sala na janela do app (pixels físicos); `None`: a interface não quer luz.
+    area: Option<Bounds>,
+    /// Quem está mostrando agora: a janela e o swap chain minúsculo da live fonte.
+    showing: Option<(isize, usize)>,
+    /// O visual está na árvore da janela de `showing`.
+    in_tree: bool,
 }
 
 // SAFETY: as interfaces do DirectComposition só são usadas com a trava de `COMP` (uma thread por
@@ -55,6 +75,7 @@ fn comp() -> Result<MutexGuard<'static, Comp>> {
                 Mutex::new(Comp {
                     device,
                     hosts: HashMap::new(),
+                    ambient: Ambient::default(),
                 })
             })
             .map_err(|e| e.message())
@@ -105,6 +126,51 @@ impl Comp {
         // SAFETY: dispositivo vivo.
         let _ = unsafe { self.device.Commit() };
     }
+
+    /// Estica a luz até a área da sala (ou a tira da árvore, sem área ou sem fonte).
+    fn place_ambient(&mut self) {
+        let Some((visual, scale)) = self.ambient.visual.clone() else {
+            return;
+        };
+        let (visual, scale) = (&visual, &scale);
+        let root = self
+            .ambient
+            .showing
+            .and_then(|(hwnd, _)| self.hosts.get(&hwnd))
+            .map(|h| h.root.clone());
+        // SAFETY: visual, transformação e raiz vivos, com a trava do dispositivo.
+        unsafe {
+            if self.ambient.in_tree
+                && let Some(root) = &root
+            {
+                let _ = root.RemoveVisual(visual);
+            }
+            self.ambient.in_tree = false;
+            let (Some(area), Some(root)) = (self.ambient.area, root) else {
+                return;
+            };
+            if area.width == 0 || area.height == 0 {
+                return;
+            }
+            let _ = visual.SetOffsetX2(area.x as f32);
+            let _ = visual.SetOffsetY2(area.y as f32);
+            let _ = scale.SetScaleX2(area.width as f32 / AMBIENT_SIZE.width as f32);
+            let _ = scale.SetScaleY2(area.height as f32 / AMBIENT_SIZE.height as f32);
+            // No fundo de tudo: por baixo dos vídeos e da página.
+            self.ambient.in_tree = root.AddVisual(visual, false, None).is_ok();
+        }
+    }
+}
+
+/// A área da sala onde a luz ambiente aparece, na janela do app (pixels físicos). `None` tira a luz.
+pub fn set_ambient_area(area: Option<Bounds>) {
+    let Ok(mut comp) = comp() else { return };
+    if comp.ambient.area == area {
+        return;
+    }
+    comp.ambient.area = area;
+    comp.place_ambient();
+    comp.commit();
 }
 
 /// O que a interface pediu e onde a imagem está agora.
@@ -165,6 +231,8 @@ pub struct Layer {
     state: Mutex<LayerState>,
     /// A janela de origem (o app): é para onde o vídeo volta do picture in picture.
     home: isize,
+    /// A interface quer que esta live seja a fonte da luz ambiente (a live em foco).
+    ambient: AtomicBool,
 }
 
 impl std::fmt::Debug for Layer {
@@ -201,7 +269,77 @@ impl Layer {
                 placed: None,
             }),
             home: hwnd,
+            ambient: AtomicBool::new(false),
         }))
+    }
+
+    /// Esta live vira (ou deixa de ser) a fonte da luz ambiente. Quem desenha é o renderer dela.
+    pub fn set_ambient(&self, on: bool) {
+        self.ambient.store(on, Ordering::Relaxed);
+    }
+
+    /// A interface escolheu esta live como a fonte da luz ambiente.
+    pub fn ambient_source(&self) -> bool {
+        self.ambient.load(Ordering::Relaxed)
+    }
+
+    /// A interface quer luz desta live, e ela está na janela do app (no picture in picture, não).
+    pub(crate) fn wants_ambient(&self) -> bool {
+        self.ambient.load(Ordering::Relaxed) && self.state().host == self.home
+    }
+
+    /// Mostra o swap chain minúsculo `swapchain` como a luz ambiente da janela do app.
+    pub(crate) fn show_ambient(&self, swapchain: &IDXGISwapChain1) -> Result<()> {
+        let mut comp = comp()?;
+        if comp.ambient.visual.is_none() {
+            // SAFETY: dispositivo vivo; o visual e a escala são dele.
+            let made = unsafe {
+                let visual = comp.device.CreateVisual()?;
+                let scale = comp.device.CreateScaleTransform()?;
+                visual.SetTransform(&scale)?;
+                // Ampliar 32 × 18 até a sala com suavização: vira um borrão de cor, sem quadradinhos.
+                visual.SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR)?;
+                (visual, scale)
+            };
+            comp.ambient.visual = Some(made);
+        }
+        // Tira da árvore da fonte anterior antes de trocar (pode ser de outra janela).
+        let area = comp.ambient.area.take();
+        comp.place_ambient();
+        comp.ambient.area = area;
+        if let Some((visual, _)) = &comp.ambient.visual {
+            // SAFETY: visual vivo; o swap chain passa a ser o conteúdo dele.
+            unsafe { visual.SetContent(swapchain)? };
+        }
+        comp.ambient.showing = Some((self.home, swapchain.as_raw() as usize));
+        comp.place_ambient();
+        comp.commit();
+        Ok(())
+    }
+
+    /// Tira a luz, se ela ainda é a do swap chain `swapchain` (outra live pode já ter assumido).
+    pub(crate) fn hide_ambient(&self, swapchain: &IDXGISwapChain1) {
+        let Ok(mut comp) = comp() else { return };
+        if comp.ambient.showing.map(|(_, id)| id) != Some(swapchain.as_raw() as usize) {
+            return;
+        }
+        // Tira da árvore antes de esquecer de onde ela era.
+        let area = comp.ambient.area.take();
+        comp.place_ambient();
+        comp.ambient.area = area;
+        comp.ambient.showing = None;
+        if let Some((visual, _)) = &comp.ambient.visual {
+            // SAFETY: visual vivo; sem conteúdo, ele não segura o swap chain que vai ser solto.
+            let _ = unsafe { visual.SetContent(None) };
+        }
+        comp.commit();
+    }
+
+    /// A luz ambiente está na árvore e qual é a área dela (para os testes).
+    #[cfg(test)]
+    pub(crate) fn ambient_placed() -> Option<Bounds> {
+        let comp = comp().ok()?;
+        comp.ambient.in_tree.then_some(comp.ambient.area?)
     }
 
     fn state(&self) -> MutexGuard<'_, LayerState> {

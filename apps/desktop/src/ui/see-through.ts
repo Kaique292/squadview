@@ -34,9 +34,9 @@ export function setSeeThrough(key: string, area: SeeThrough | null) {
   listeners.forEach((fn) => fn());
 }
 
-/** As áreas registradas agora. */
-export function seeThroughAreas(): SeeThrough[] {
-  return [...areas.values()];
+/** As áreas registradas agora (menos as das chaves `except`). */
+export function seeThroughAreas(except: readonly string[] = []): SeeThrough[] {
+  return [...areas].filter(([key]) => !except.includes(key)).map(([, area]) => area);
 }
 
 /** Avisa quando as áreas mudam; devolve a função que deixa de avisar. */

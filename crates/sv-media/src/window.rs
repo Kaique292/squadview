@@ -38,6 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, Result, w};
 
+use crate::ambient::AmbientFeed;
 use crate::composition::Layer;
 
 /// Onde o vídeo aparece.
@@ -106,6 +107,14 @@ impl WindowControl {
     pub fn set_corner_radius(&self, radius: u32) {
         if let Some(layer) = self.shared.layer.get() {
             layer.set_radius(radius);
+        }
+    }
+
+    /// Esta live vira (ou deixa de ser) a fonte da luz ambiente da sala (ADR 0034). Só no modo
+    /// [`WindowTarget::Composed`].
+    pub fn set_ambient(&self, on: bool) {
+        if let Some(layer) = self.shared.layer.get() {
+            layer.set_ambient(on);
         }
     }
 
@@ -188,6 +197,7 @@ impl VideoWindow {
                 shared: self.shared.clone(),
                 layer: Some(layer.clone()),
                 video: Size::new(0, 0),
+                ambient: None,
             });
         }
         // SAFETY: criação da fábrica DXGI e da swapchain para um HWND vivo.
@@ -217,6 +227,7 @@ impl VideoWindow {
             shared: self.shared.clone(),
             layer: None,
             video: Size::new(0, 0),
+            ambient: None,
         })
     }
 }
@@ -252,6 +263,8 @@ pub struct Renderer {
     layer: Option<Arc<Layer>>,
     /// O tamanho do vídeo do último quadro (só avisa a camada quando muda).
     video: Size,
+    /// A luz ambiente, enquanto esta live é a fonte dela (ADR 0034).
+    ambient: Option<AmbientFeed>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -310,7 +323,26 @@ impl Renderer {
         // O conversor pinta o fundo de preto fora do retângulo do vídeo.
         converter.convert(&frame.texture, frame.slice, &back, Some(fit_inside(frame.size, window)))?;
         // SAFETY: apresenta sem esperar o vsync (menor latência; o DWM compõe sem rasgar a imagem).
-        unsafe { self.swapchain.Present(0, DXGI_PRESENT(0)).ok() }
+        unsafe { self.swapchain.Present(0, DXGI_PRESENT(0)).ok()? };
+        self.feed_ambient(frame);
+        Ok(())
+    }
+
+    /// Se esta live é a fonte da luz ambiente, atualiza a luz; se deixou de ser, solta. Uma falha
+    /// na luz nunca derruba a live: ela só some.
+    fn feed_ambient(&mut self, frame: &GpuFrame) {
+        let Some(layer) = self.layer.as_ref().filter(|l| l.wants_ambient()) else {
+            self.ambient = None;
+            return;
+        };
+        if self.ambient.is_none() {
+            self.ambient = AmbientFeed::new(&self.gpu, layer).ok();
+        }
+        if let Some(feed) = &mut self.ambient
+            && feed.update(frame).is_err()
+        {
+            self.ambient = None;
+        }
     }
 }
 
@@ -728,6 +760,73 @@ mod tests {
         // Escondido: não desenha nada.
         control.set_visible(false);
         renderer.present(&nv12_frame(&gpu, Size::new(1920, 1080))).unwrap();
+    }
+
+    #[test]
+    #[ignore = "precisa de placa de vídeo e de uma sessão de desktop"]
+    fn luz_ambiente_so_aparece_com_a_live_fonte_na_janela_do_app_e_com_area() {
+        let gpu = Gpu::new().unwrap();
+        let app = solta("SquadView (app, luz ambiente)");
+        let pip = solta("SquadView (pip, luz ambiente)");
+        let video = composto(&app).expect("DirectComposition");
+        let control = video.control();
+        let layer = control.layer().unwrap().clone();
+        control.set_bounds(Bounds {
+            x: 40,
+            y: 40,
+            width: 640,
+            height: 360,
+        });
+        let sala = Bounds {
+            x: 0,
+            y: 0,
+            width: 1200,
+            height: 700,
+        };
+        let mut renderer = video.renderer(&gpu).expect("swap chain de composição");
+        let frame = nv12_frame(&gpu, Size::new(1920, 1080));
+
+        // Sem pedir a luz: nada.
+        crate::set_ambient_area(Some(sala));
+        renderer.present(&frame).unwrap();
+        assert_eq!(Layer::ambient_placed(), None);
+
+        // A live em foco vira a fonte: a luz aparece esticada na sala.
+        layer.set_ambient(true);
+        for _ in 0..4 {
+            renderer.present(&frame).unwrap();
+        }
+        assert_eq!(Layer::ambient_placed(), Some(sala));
+        // A sala mudou de tamanho: a luz acompanha.
+        let maior = Bounds { width: 1400, ..sala };
+        crate::set_ambient_area(Some(maior));
+        assert_eq!(Layer::ambient_placed(), Some(maior));
+
+        // No picture in picture, a live não ilumina a sala do app.
+        assert!(control.set_host(Some(pip.hwnd)));
+        renderer.present(&frame).unwrap();
+        assert_eq!(Layer::ambient_placed(), None);
+        assert!(control.set_host(None));
+        renderer.present(&frame).unwrap();
+        assert_eq!(Layer::ambient_placed(), Some(maior));
+
+        // Sem área (a interface não quer luz) ou deixando de ser a fonte: some.
+        crate::set_ambient_area(None);
+        assert_eq!(Layer::ambient_placed(), None);
+        crate::set_ambient_area(Some(sala));
+        assert_eq!(Layer::ambient_placed(), Some(sala));
+        layer.set_ambient(false);
+        renderer.present(&frame).unwrap();
+        assert_eq!(Layer::ambient_placed(), None);
+
+        // A live foi embora sendo a fonte: a luz sai junto.
+        layer.set_ambient(true);
+        renderer.present(&frame).unwrap();
+        assert_eq!(Layer::ambient_placed(), Some(sala));
+        drop(renderer);
+        assert_eq!(Layer::ambient_placed(), None);
+        crate::set_ambient_area(None);
+        drop((video, pip, app));
     }
 
     fn nv12_frame(gpu: &Gpu, size: Size) -> GpuFrame {

@@ -45,6 +45,7 @@ import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
 import { useMeetingStore } from "../meeting/meeting-store";
+import { AMBIENT_EXCEPT, useAmbientLight } from "./ambient-light";
 import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
 import { tileGlows, tileGradient } from "./tile-background";
@@ -169,6 +170,14 @@ export function VoiceRoom() {
   const focusedLive = focusedWatch?.member ?? (focusId === STREAM_TILE ? members[0] : undefined);
   const setPip = useStreamStore((s) => s.setPip);
   const setFullscreen = useStreamStore((s) => s.setFullscreen);
+  const pip = useStreamStore((s) => s.pip);
+  // A luz ambiente vem da live de alguém em foco, já com imagem e aqui (não no picture in picture).
+  const roomRef = useRef<HTMLElement>(null);
+  const ambientSource =
+    focusedWatch && pip !== focusedWatch.member.id && (focusedWatch.stats?.fps ?? 0) > 0
+      ? focusedWatch.member.id
+      : null;
+  const ambient = useAmbientLight(roomRef, ambientSource);
   // Começou a assistir alguém: a live dele vem para o foco, como no Discord.
   useEffect(
     () =>
@@ -343,7 +352,9 @@ export function VoiceRoom() {
 
   return (
     <section
+      ref={roomRef}
       aria-label="Canal de voz"
+      data-ambient={ambient || undefined}
       data-chrome={chrome || undefined}
       onMouseEnter={() => setPointerIn(true)}
       onMouseLeave={() => setPointerIn(false)}
@@ -361,6 +372,9 @@ export function VoiceRoom() {
     >
       {/* O fundo preto da sala, transparente onde há live passando (o vídeo fica por baixo). */}
       <Backdrop className="bg-black" />
+      {/* Com a luz ambiente, a vinheta escurece a luz em volta (por cima dela e por baixo de tudo),
+          deixando as cores da live vazarem no meio e sumirem nas bordas. Abre buraco só nas lives. */}
+      {ambient && <Backdrop className="ambient-vignette" except={AMBIENT_EXCEPT} />}
       {/* Topo: o nome da sala e, com uma live em foco, de quem ela é e quem está assistindo (como no
           Discord), sobre uma sombra que some para baixo. */}
       <header
