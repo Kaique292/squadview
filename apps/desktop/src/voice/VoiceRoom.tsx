@@ -46,6 +46,7 @@ import { Avatar } from "../ui/Avatar";
 import { toast } from "../ui/toast-store";
 import { Tooltip } from "../ui/Tooltip";
 import { useMeetingStore } from "../meeting/meeting-store";
+import { EntryScene } from "../room/EntryScene";
 import { AMBIENT_EXCEPT, useAmbientLight } from "./ambient-light";
 import { useMemberEffect } from "./speaking-effect";
 import { DeafenButton, MicButton } from "./VoiceButtons";
@@ -469,6 +470,7 @@ export function VoiceRoom() {
         </p>
       )}
       {dialogs}
+      <EntryScene />
 
       {/* Embaixo, abaixo dos quadros (não por cima deles), os controles como a barra da chamada do
           Discord: cada botão na sua caixa, todos do mesmo tamanho, e a tela cheia no canto. */}

@@ -131,6 +131,13 @@ interface RoomState {
   /** Membros da sala, nós primeiro. */
   members: Member[];
   joining: boolean;
+  /**
+   * A cena de entrada (ADR 0034): achando a sala, conectando com cada um e pronto. `since`: quando a
+   * fase começou (ms). `null`: sem cena (fora da sala, ou já dentro e assentado).
+   */
+  entry: { phase: EntryPhase; since: number } | null;
+  /** Passa a cena de entrada para outra fase, ou a fecha (`null`). */
+  setEntry: (phase: EntryPhase | null) => void;
   /** Erro ao criar/entrar (aparece no próprio modal). */
   joinError: string | null;
   /** Quem pedimos para assistir, esperando a conexão. */
@@ -152,6 +159,9 @@ interface RoomState {
   clearError: () => void;
 }
 
+/** As fases da cena de entrada na sala. */
+export type EntryPhase = "finding" | "connecting" | "ready";
+
 /** Encerra a nossa live, se houver (com a animação de saída do vídeo). */
 async function endLive() {
   const stream = useStreamStore.getState();
@@ -166,6 +176,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   joinedAt: null,
   members: [],
   joining: false,
+  entry: null,
   joinError: null,
   pendingWatch: [],
   watching: {},
@@ -187,8 +198,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     }
   },
 
+  setEntry(phase) {
+    set({ entry: phase ? { phase, since: Date.now() } : null });
+  },
+
   async join(code, name, roomName = null) {
-    set({ joining: true, joinError: null });
+    set({ joining: true, joinError: null, entry: { phase: "finding", since: Date.now() } });
     try {
       // A voz liga junto com a sala, com os dispositivos, volumes, mudo e surdo salvos.
       const voice = toRust(useVoiceStore.getState().prefs);
@@ -209,13 +224,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         // Desde quando a sala está ocupada: sair e voltar não zera o tempo (só a sala vazia zera).
         joinedAt: info.since ?? Date.now(),
         joining: false,
+        entry: { phase: "connecting", since: Date.now() },
         watching: {},
         pendingWatch: [],
       });
       toast.success(`Mande o código ${info.code} para a galera entrar.`, "Você está na sala");
       return true;
     } catch (e) {
-      set({ joining: false, joinError: typeof e === "string" ? e : "Não deu para entrar na sala." });
+      set({ joining: false, entry: null, joinError: typeof e === "string" ? e : "Não deu para entrar na sala." });
       return false;
     }
   },
@@ -239,6 +255,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       members: [],
       watching: {},
       pendingWatch: [],
+      entry: null,
     });
   },
 
@@ -357,6 +374,7 @@ export async function listenToRoomEvents() {
           code: null,
           roomName: null,
           reconnecting: false,
+          entry: null,
           joinedAt: null,
           members: [],
           watching: {},

@@ -37,7 +37,14 @@ beforeEach(async () => {
   handlers.clear();
   localStorage.clear();
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], bridges: {}, level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
+  useRoomStore.setState({
+    code: "B8RJ2Q",
+    roomName: "Galera",
+    members: [],
+    watching: {},
+    pendingWatch: [],
+    entry: null,
+  });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   useToastStore.setState({ toasts: [] });
   useMeetingStore.setState({ open: false, transcribing: false, lines: [] });

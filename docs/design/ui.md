@@ -133,7 +133,7 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 - **Quem fala:** a borda do quadro fica na cor do efeito de fala da pessoa (ou verde, `online`), e um brilho interno na mesma cor aparece e encolhe enquanto some, a cada 1,1 s (`.speak-pulse`). O pulso é para dentro porque o quadro corta o que passa da borda; só a opacidade e a escala se animam, ele pausa com o app fora de uso (`loop`) e some com "reduzir movimento" (a borda fica).
 - **Doca e topo da live:** de vidro (`glass-live`). Os cantos da barra da chamada dividem o espaço que sobra: com folga, a doca fica no meio; na janela estreita, ela anda para o lado em vez de passar por baixo dos botões do canto.
 - **Momentos:**
-  - **Entrar na sala:** os amigos aparecem em volta da sala, e uma barra com as etapas ("Achando a sala", "Conectando direto com cada um", "Ligando a voz", "Preparando as lives") avança até "Conectado".
+  - **Entrar na sala:** com a sala encontrada, uma cena por cima da sala (`room/EntryScene.tsx`) mostra quem já está lá e uma barra com as etapas de verdade: "Sala encontrada", "Conectando direto com cada um… x de y" (contando quem já está em `voice-peers`) e "Pronto". Sozinho, fica pronta na hora; se alguém demorar, fica pronta em 6 s com quem deu. Some sozinha 1,4 s depois de pronta, e um clique ou o Esc a fecham na hora. A cena `#demo=entrando` mostra a entrada no meio.
   - **Ficar ao vivo:** contagem 3, 2, 1 sobre a prévia, uma onda vermelha que se expande e o selo AO VIVO. Com "reduzir movimento", vai direto para ao vivo.
   - **Alguém começou a assistir:** um aviso curto com a foto da pessoa, que entra com mola e some sozinho.
   - Nenhum momento bloqueia: dá para clicar em tudo enquanto ele acontece.
