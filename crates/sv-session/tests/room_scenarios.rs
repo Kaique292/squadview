@@ -138,6 +138,17 @@ impl Friend {
     }
 }
 
+/// Espera `cond` ficar verdadeira por até 10 s e falha com `what` se não ficar. As esperas fixas
+/// de 2 s seguiam em frente sem conferir, e na esteira a conexão pela sinalização de verdade às
+/// vezes passava disso: o teste falhava adiante, num lugar que não tinha nada a ver.
+fn wait_for(what: &str, cond: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !cond() {
+        assert!(std::time::Instant::now() < deadline, "não aconteceu em 10 s: {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn desc() -> StreamDescription {
     StreamDescription {
         width: 1280,
@@ -643,12 +654,7 @@ fn amigo_conectado_recebe_video_e_som_e_cai_quando_a_transmissao_para() {
         let _guard = rt.enter();
         Receiver::start(conn, Sink(tx))
     };
-    for _ in 0..100 {
-        if ana.room.viewer_count() == 1 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for("o Beto entrar como espectador da Ana", || ana.room.viewer_count() == 1);
     assert_eq!(ana.room.viewer_count(), 1);
 
     tap.video(
@@ -738,12 +744,7 @@ fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
         let _guard = rt.enter();
         Receiver::start(conn, Sink(tx))
     };
-    for _ in 0..100 {
-        if ana.room.viewer_count() == 1 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for("o Beto entrar como espectador da Ana", || ana.room.viewer_count() == 1);
     assert!(!tap.wants_low(), "ninguém precisa da camada baixa ainda");
 
     // Uma rajada maior que a fila do Beto, no mesmo segundo.
@@ -1123,12 +1124,7 @@ fn quem_ja_assiste_repassa_o_stream_a_quem_pediu() {
         let _guard = rt.enter();
         Receiver::start(conn, Sink(tx))
     };
-    for _ in 0..100 {
-        if relay.viewer_count() == 1 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for("o espectador entrar no repasse", || relay.viewer_count() == 1);
     assert_eq!(relay.viewer_count(), 1, "a Dani recebe pelo repasse");
     assert_eq!(ana.room.viewer_count(), 0, "não é espectadora da transmissão da Ana");
 
