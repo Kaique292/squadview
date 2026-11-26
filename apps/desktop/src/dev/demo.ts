@@ -14,6 +14,7 @@ import { useAppearanceStore } from "../settings/appearance-store";
 import { useRoomStore } from "../room/room-store";
 import { useServersStore } from "../servers/servers-store";
 import { type Source, type StreamStats, sourceKey, useStreamStore } from "../stream/stream-store";
+import { useVoiceStore } from "../voice/voice-store";
 
 // Lobo e Yondaime assistem o Minato: o 👁 2 aparece ao lado do "Ao vivo".
 const MEMBERS = [
@@ -311,6 +312,9 @@ export function runDemo(scene: string) {
     joinedAt: Date.now() - (1 * 3600 + 24 * 60 + 9) * 1000,
     members: MEMBERS,
   });
+  // Nós (o Kaique) estamos falando: o quadro pulsa (ADR 0034). Não o de quem transmite: a cena
+  // pinta as lives mexendo direto no DOM, e um quadro de live redesenhado perderia a pintura.
+  useVoiceStore.setState({ speaking: { me: true } });
   useStreamStore.setState({
     loadSources: async () => {
       useStreamStore.setState({
