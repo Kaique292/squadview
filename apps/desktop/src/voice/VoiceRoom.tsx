@@ -485,7 +485,7 @@ export function VoiceRoom() {
             type="button"
             aria-label="Sair da sala"
             onClick={() => void leave()}
-            className="grid h-12 w-[72px] place-items-center rounded-lg bg-live text-white transition-colors hover:bg-live/85"
+            className="press grid h-12 w-[72px] place-items-center rounded-lg bg-live text-white hover:bg-live/85"
           >
             <PhoneOff size={20} />
           </button>
@@ -666,7 +666,7 @@ function StreamControl(props: { onChange: () => void; onDetails: () => void }) {
           <button
             type="button"
             aria-label="Opções da transmissão"
-            className="grid size-12 place-items-center rounded-lg bg-online/15 text-online transition-colors hover:bg-online/25 data-[state=open]:bg-online/25"
+            className="press grid size-12 place-items-center rounded-lg bg-online/15 text-online hover:bg-online/25 data-[state=open]:bg-online/25"
           >
             <MonitorUp size={20} />
           </button>
@@ -699,7 +699,7 @@ function CornerButton(props: { label: string; pressed?: boolean; onClick: () => 
         aria-label={props.label}
         aria-pressed={props.pressed}
         onClick={props.onClick}
-        className={`grid size-10 place-items-center rounded-lg transition-colors hover:bg-surface-hover hover:text-text ${
+        className={`press grid size-10 place-items-center rounded-lg hover:bg-surface-hover hover:text-text ${
           props.pressed ? "bg-surface-3 text-text" : "text-text-muted"
         }`}
       >
@@ -716,7 +716,7 @@ function ControlButton(props: { label: string; onClick?: () => void; children: R
         type="button"
         aria-label={props.label}
         onClick={props.onClick}
-        className="grid size-12 place-items-center rounded-lg bg-surface-1 text-text transition-colors hover:bg-surface-hover"
+        className="press grid size-12 place-items-center rounded-lg bg-surface-1 text-text hover:bg-surface-hover"
       >
         {props.children}
       </button>

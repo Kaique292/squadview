@@ -17,6 +17,7 @@ import { listenToMeetingEvents } from "./meeting/meeting-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { parsePipHash } from "./stream/pip";
 import { PipView } from "./stream/PipView";
+import { watchAppActivity } from "./ui/app-activity";
 import { blockNativeContextMenu } from "./ui/native-menu";
 import { toast } from "./ui/toast-store";
 import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
@@ -24,6 +25,8 @@ import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
 // A janelinha do picture in picture é esta mesma página, com outro endereço (ADR 0021): ela só
 // mostra os controles por cima do vídeo, sem nada do resto do app.
 const pipPage = parsePipHash(location.hash);
+// Fora de uso (minimizado, sem foco, atrás do jogo), o que se repete pausa (ADR 0034).
+watchAppActivity();
 if (pipPage) {
   blockNativeContextMenu();
   createRoot(document.getElementById("root")!).render(
