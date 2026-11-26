@@ -130,7 +130,8 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
   - A sala inteira vira uma área transparente da página (chave `luz-ambiente` em `ui/see-through.ts`), e a vinheta (`.ambient-vignette`, um `Backdrop` que só abre buraco nas lives) escurece por cima: 42% no meio, 88% nas bordas.
 - **Brilho da live em foco:** uma sombra larga na cor da live sob o quadro em foco, que muda junto com a luz.
 - **Vidro sobre a live:** o topo da live (de quem é, quem assiste, a qualidade), a doca de controles e os menus são de vidro: fundo escuro translúcido e borda de 1 px branca a 6–8%. Sobre o vídeo não há desfoque: o `backdrop-filter` não alcança o vídeo, que fica por baixo da página. Fora da live (lateral, modais), o desfoque de 14–18 px fica só nas superfícies pequenas, nunca na área inteira.
-- **Quem fala:** anel verde (`#3ddc84`) parado em volta do quadro e do avatar, mais um segundo anel que se expande e some a cada 1,1 s enquanto a pessoa fala.
+- **Quem fala:** a borda do quadro fica na cor do efeito de fala da pessoa (ou verde, `online`), e um brilho interno na mesma cor aparece e encolhe enquanto some, a cada 1,1 s (`.speak-pulse`). O pulso é para dentro porque o quadro corta o que passa da borda; só a opacidade e a escala se animam, ele pausa com o app fora de uso (`loop`) e some com "reduzir movimento" (a borda fica).
+- **Doca e topo da live:** de vidro (`glass-live`). Os cantos da barra da chamada dividem o espaço que sobra: com folga, a doca fica no meio; na janela estreita, ela anda para o lado em vez de passar por baixo dos botões do canto.
 - **Momentos:**
   - **Entrar na sala:** os amigos aparecem em volta da sala, e uma barra com as etapas ("Achando a sala", "Conectando direto com cada um", "Ligando a voz", "Preparando as lives") avança até "Conectado".
   - **Ficar ao vivo:** contagem 3, 2, 1 sobre a prévia, uma onda vermelha que se expande e o selo AO VIVO. Com "reduzir movimento", vai direto para ao vivo.

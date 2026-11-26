@@ -93,6 +93,39 @@ describe("chat de voz", () => {
     expect(grade.querySelectorAll("[data-speaking]")).toHaveLength(2);
   });
 
+  it("quem fala ganha o brilho que pulsa, na cor do efeito dela (ou verde), e ele some ao calar", () => {
+    const BIA: Member = {
+      id: "dddddddddddddddd",
+      name: "Bia",
+      live: false,
+      effect: { kind: "dots", color: "#ff7a3d" },
+    };
+    render(<App />);
+    emit("room-members", [ME, ANA, BIA]);
+    const grade = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(grade.querySelectorAll("[data-speak-pulse]")).toHaveLength(0);
+    emit("voice-speaking", { memberId: ANA.id, speaking: true });
+    emit("voice-speaking", { memberId: BIA.id, speaking: true });
+    const pulsos = [...grade.querySelectorAll<HTMLElement>("[data-speak-pulse]")];
+    expect(pulsos).toHaveLength(2);
+    // Pausa com o app fora de uso (a classe `loop`).
+    expect(pulsos.every((p) => p.classList.contains("loop"))).toBe(true);
+    const cores = pulsos.map((p) => p.style.getPropertyValue("--speak"));
+    expect(cores).toContain("var(--color-online)");
+    expect(cores).toContain("#ff7a3d");
+    emit("voice-speaking", { memberId: ANA.id, speaking: false });
+    expect(grade.querySelectorAll("[data-speak-pulse]")).toHaveLength(1);
+  });
+
+  it("os controles da chamada ficam numa doca de vidro", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const doca = screen.getByRole("navigation", { name: "Controles da voz" }).querySelector("[data-glass]")!;
+    expect(doca).toHaveClass("glass-live");
+    expect(within(doca as HTMLElement).getByRole("button", { name: "Sair da sala" })).toBeInTheDocument();
+    expect(within(doca as HTMLElement).getByRole("group", { name: "Áudio" })).toBeInTheDocument();
+  });
+
   it("silencia o microfone e ensurdece pelos botões, e lembra", async () => {
     render(<App />);
     emit("room-members", [ME]);

@@ -18,6 +18,7 @@ import {
   Volume2,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type HTMLAttributes,
   type KeyboardEvent,
   type ReactNode,
@@ -389,16 +390,20 @@ export function VoiceRoom() {
             <span aria-hidden className="text-text-faint">
               •
             </span>
-            <span className="flex min-w-0 items-center gap-2">
+            {/* De quem é a live e quem assiste, numa pílula de vidro sobre ela. */}
+            <span
+              data-glass
+              className="glass-live -mt-1 flex min-w-0 items-center gap-2 rounded-full py-1 pr-3 pl-1 text-sm"
+            >
               <Avatar
                 name={focusedLive.name}
                 size={22}
                 src={memberPhoto(focusedLive, focusedLive.id === members[0]?.id, profile, 64)}
               />
               <span className="truncate">Tela de {focusedLive.name}</span>
-            </span>
-            <span className="ml-1 pt-px">
-              <Viewers streamerId={focusedLive.id} />
+              <span className="pt-px">
+                <Viewers streamerId={focusedLive.id} />
+              </span>
             </span>
           </>
         )}
@@ -469,51 +474,56 @@ export function VoiceRoom() {
           Discord: cada botão na sua caixa, todos do mesmo tamanho, e a tela cheia no canto. */}
       <nav
         aria-label="Controles da voz"
-        className={`relative flex h-20 shrink-0 items-center justify-center gap-2 px-4 ${chromeClass} ${
+        className={`relative flex h-20 shrink-0 items-center gap-2 px-4 ${chromeClass} ${
           chrome ? "" : "translate-y-2"
         }`}
       >
-        {/* Grupos como a barra de chamada do Discord: áudio, depois tela e convite, e o desligar. */}
-        <ControlGroup label="Áudio">
-          <MicButton large />
-          <DeafenButton large />
-        </ControlGroup>
-        <ControlGroup label="Tela e convite">
-          {live ? (
-            <StreamControl onChange={() => setChanging(true)} onDetails={() => setDetails(true)} />
-          ) : (
-            <StreamDialog
-              trigger={
-                <ControlButton label="Transmitir minha tela">
-                  <MonitorUp size={20} />
-                </ControlButton>
-              }
-            />
-          )}
-          <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
-            <UserPlus size={20} />
-          </ControlButton>
-        </ControlGroup>
-        <Tooltip label="Sair da sala" side="top">
-          <button
-            type="button"
-            aria-label="Sair da sala"
-            onClick={() => void leave()}
-            className="press grid h-12 w-[72px] place-items-center rounded-lg bg-live text-white hover:bg-live/85"
-          >
-            <PhoneOff size={20} />
-          </button>
-        </Tooltip>
+        {/* Os cantos dividem o espaço que sobra: com folga, a doca fica no meio; na janela estreita,
+            ela anda para o lado em vez de passar por baixo dos botões do canto. */}
         {/* No canto esquerdo, com alguma live na grade: deixar só as lives e as pessoas na faixa. */}
-        {focusIndex < 0 && videoCount > 0 && members.length > 0 && (
-          <div className="absolute left-4 flex items-center">
+        <div className="flex flex-1 items-center justify-start">
+          {focusIndex < 0 && videoCount > 0 && members.length > 0 && (
             <CornerButton label="Só transmissões na grade" pressed={onlyVideo} onClick={toggleOnlyVideo}>
               <Users size={20} />
             </CornerButton>
-          </div>
-        )}
+          )}
+        </div>
+        {/* Grupos como a barra de chamada do Discord: áudio, depois tela e convite, e o desligar,
+            numa doca de vidro sobre a sala (e a luz ambiente). */}
+        <div data-glass className="glass-live flex items-center gap-2 rounded-2xl p-2">
+          <ControlGroup label="Áudio">
+            <MicButton large />
+            <DeafenButton large />
+          </ControlGroup>
+          <ControlGroup label="Tela e convite">
+            {live ? (
+              <StreamControl onChange={() => setChanging(true)} onDetails={() => setDetails(true)} />
+            ) : (
+              <StreamDialog
+                trigger={
+                  <ControlButton label="Transmitir minha tela">
+                    <MonitorUp size={20} />
+                  </ControlButton>
+                }
+              />
+            )}
+            <ControlButton label="Convidar pessoas" onClick={() => void invite()}>
+              <UserPlus size={20} />
+            </ControlButton>
+          </ControlGroup>
+          <Tooltip label="Sair da sala" side="top">
+            <button
+              type="button"
+              aria-label="Sair da sala"
+              onClick={() => void leave()}
+              className="press grid h-12 w-[72px] place-items-center rounded-lg bg-live text-white hover:bg-live/85"
+            >
+              <PhoneOff size={20} />
+            </button>
+          </Tooltip>
+        </div>
         {/* No canto: a aba Reunião e, com uma live em foco, a tela cheia ou a janelinha. */}
-        <div className="absolute right-4 flex items-center gap-1">
+        <div className="flex flex-1 items-center justify-end gap-1">
           {code && (
             <CornerButton
               label={meetingOpen ? "Fechar a aba Reunião" : "Reunião (transcrever a conversa)"}
@@ -622,6 +632,15 @@ function Tile({
         ...(speaking && effect ? { borderColor: effect.color } : null),
       }}
     >
+      {/* Enquanto fala, um brilho que pulsa para dentro do quadro, na cor do efeito da pessoa. */}
+      {speaking && (
+        <span
+          aria-hidden
+          data-speak-pulse
+          className="speak-pulse loop"
+          style={{ "--speak": effect?.color ?? "var(--color-online)" } as CSSProperties}
+        />
+      )}
       <Avatar name={member.name} size={AVATAR_SIZE[variant]} speaking={speaking} effect={effect} src={photo} />
 
       {(member.live || member.arcade) && (
