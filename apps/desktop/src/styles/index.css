@@ -103,6 +103,32 @@
   /* Barra do tempo: esvazia da direita para a esquerda (duração definida em cada notificação). */
   --animate-toast-timer: toast-timer linear forwards;
 
+  /* A cena de entrada na sala (ADR 0034): o fundo escurece, o cartão sobe e os amigos aparecem com mola. */
+  --animate-entry-fade: overlay-in var(--duration-mola) var(--ease-out);
+  --animate-entry-rise: entry-rise var(--duration-mola) var(--ease-spring) both;
+  --animate-entry-pop: entry-pop var(--duration-mola) var(--ease-spring) both;
+
+  @keyframes entry-rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes entry-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   @keyframes toast-in {
     from {
       opacity: 0;

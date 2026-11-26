@@ -2,7 +2,7 @@
  * Cenas de demonstração para as capturas do README (só no `yarn dev`, nunca no instalador):
  * `http://localhost:1420/#demo=sala`, `#demo=transmitir`, `#demo=config`, `#demo=amigos`, `#demo=conversa`,
  * `#demo=servidor`, `#demo=transmitindo`, `#demo=detalhes`, `#demo=assistindo`, `#demo=fliperama` ou
- * `#demo=reuniao`.
+ * `#demo=reuniao` ou `#demo=entrando`.
  * Preenche as stores com uma sala de exemplo, sem precisar do Rust.
  */
 import { useAccountStore } from "../account/account-store";
@@ -286,6 +286,12 @@ const FAKE_COMMANDS: Record<string, unknown> = {
   dm_preview: thumbnail("#0a3d62", "#c89b3c", "PENTAKILL"),
 };
 
+/** A cena de entrada (ADR 0034): a sala encontrada, já conectada com 1 dos 3 amigos. */
+function enterRoom() {
+  useVoiceStore.setState({ connected: ["a"] });
+  useRoomStore.getState().setEntry("connecting");
+}
+
 /** A aba Reunião aberta, transcrevendo, com algumas falas nossas (ADR 0032). */
 function openMeeting() {
   const start = Date.now() - 6 * 60_000;
@@ -378,6 +384,7 @@ export function runDemo(scene: string) {
   if (scene === "fliperama") openArcade();
   if (scene === "assistindo") watchTwo();
   if (scene === "reuniao") openMeeting();
+  if (scene === "entrando") enterRoom();
   // Espera a interface montar antes de abrir os modais.
   setTimeout(() => {
     // Na sala, o nome e os controles só aparecem com o mouse em cima (como no Discord).
