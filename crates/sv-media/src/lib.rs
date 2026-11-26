@@ -1,5 +1,6 @@
 //! Lado de quem assiste: decodificação por GPU, janela de vídeo e áudio Opus.
 
+mod ambient;
 mod composition;
 mod decode;
 pub mod devices;
@@ -13,7 +14,7 @@ pub mod voice;
 mod wasapi;
 mod window;
 
-pub use composition::Layer;
+pub use composition::{AMBIENT_SIZE, Layer, set_ambient_area};
 pub use decode::Decoder;
 pub use devices::{AudioDevice, Flow, list_devices};
 pub use level::{AutoGain, soft_clip, volume_gain};
