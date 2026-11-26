@@ -15,14 +15,14 @@ O [protótipo](https://claude.ai/artifact/Ptg5mWVMsUzTHSSDjBqCna) mostra a dire�
 
 A estrutura do Discord continua. O que muda é a superfície e o movimento, em quatro pilares:
 
-1. **Luz ambiente:** a live em foco "vaza" as cores dela pela sala, num fundo desfocado atrás de tudo. Ao trocar de live, a luz muda junto, com uma transição suave. A luz vem do próprio vídeo: o renderizador nativo que já desenha as lives por baixo da interface ([ADR 0021](0021-video-por-baixo-da-interface.md)) desenha a live em foco mais uma vez, pequena e desfocada, atrás da sala, sem ler a imagem para a CPU.
-2. **Profundidade:** camadas de vidro (fundo translúcido e desfocado) sobre a live e a luz ambiente: topo da live, doca de controles, lateral e modais.
+1. **Luz ambiente:** a live em foco "vaza" as cores dela pela sala, num fundo atrás de tudo. A luz vem do próprio vídeo: o renderizador da live em foco ([ADR 0021](0021-video-por-baixo-da-interface.md)) também desenha uma imagem minúscula dela, de 32 × 18, num swap chain próprio, e o compositor do Windows a estica até a sala, com suavização. Tudo fica na GPU: o `VideoProcessor` reduz o quadro para 256 × 144, o `GenerateMips` tira a média até 32 × 18, e nada volta para a CPU. A página põe por cima uma vinheta escura estática, que some com o contorno da imagem esticada.
+2. **Profundidade:** camadas de vidro sobre a live e a luz ambiente: topo da live, doca de controles, lateral e modais. Sobre o vídeo, o vidro é só um escurecido translúcido, sem desfoque: o `backdrop-filter` da página não alcança o vídeo, que fica por baixo dela (ADR 0021).
 3. **Movimento com física:** transições com mola (um leve passar do ponto antes de assentar) em quadros, botões e trocas de foco, sempre em resposta a uma ação, e com resposta em menos de 400 ms (limiar de Doherty).
 4. **Momentos marcantes:** entrar na sala (progresso por etapas), ficar ao vivo (contagem e onda de entrada) e alguém começar a assistir ganham uma cena própria, curta e que não bloqueia o uso.
 
 Regras que valem para todo efeito:
 
-- **Só o que a GPU compõe sozinha:** `transform` e `opacity`. Nada de animar `box-shadow`, `filter`, `width`, `height` ou posição, que obrigam o navegador a refazer layout ou pintura a cada quadro. O desfoque da luz ambiente é estático; o que se move é a camada já desfocada.
+- **Só o que a GPU compõe sozinha:** `transform` e `opacity`. Nada de animar `box-shadow`, `filter`, `width`, `height` ou posição, que obrigam o navegador a refazer layout ou pintura a cada quadro.
 - **Contínuo só com o app em uso:** efeitos que se repetem (luz ambiente que flutua, anel de quem fala, pulso do AO VIVO) pausam com a janela minimizada, sem foco ou escondida atrás do jogo.
 - **Reduzir movimento:** com a opção do Windows (`prefers-reduced-motion`), nenhum efeito se move; as mudanças acontecem direto.
 - **Medido:** cada etapa do redesign que mexe na sala é medida com a skill `perf-check`, com o FPS do jogo com o app aberto antes e depois. Um efeito que não passa não entra.
@@ -44,6 +44,7 @@ Regras que valem para todo efeito:
 
 - **Manter o visual atual e só polir:** seguro, mas não muda a percepção do app, que é o objetivo.
 - **Trocar a estrutura (navegação nova, layout próprio):** daria mais personalidade, mas quebra a lei de Jakob: a galera já sabe usar a estrutura do Discord.
+- **Desfoque do próprio compositor para a luz ambiente (`IDCompositionGaussianBlurEffect`, com o mesmo swap chain da live num segundo visual):** fica lindo, mas medido com `crates/sv-media/examples/luz_ambiente.rs` o compositor do Windows foi de 0,6% para 16% da GPU, e reduzir o visual antes de desfocar não mudou nada (ele desfoca na resolução da tela). A imagem minúscula esticada ficou dentro do ruído da medição.
 - **Efeitos em WebGL (shaders) para a luz ambiente:** mais ricos, mas ocupam a GPU que o jogo e o encoder usam, e o mesmo efeito sai em CSS com uma camada desfocada parada.
 - **Ler a cor média da live na CPU e pintar a luz em CSS:** simples na interface, mas exige copiar a imagem da GPU para a CPU a cada amostra, o que o CLAUDE.md proíbe. Desenhar a live pequena e desfocada na própria GPU dá o mesmo efeito, mais fiel, sem a cópia.
 - **Cores fixas por live (como no protótipo):** baratas, mas não acompanham o jogo. Ficam só como reserva enquanto a primeira imagem não chega.

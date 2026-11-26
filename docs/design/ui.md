@@ -124,9 +124,12 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 
 ## Imersão
 
-- **Luz ambiente:** a live em foco aparece de novo, pequena e muito desfocada, atrás de toda a sala, e as cores dela vazam pelas bordas. Quem desenha é o renderizador nativo por baixo da interface ([ADR 0021](../adr/0021-video-por-baixo-da-interface.md)), sem ler a imagem para a CPU. A força é ajustável em Configurações → Aparência (0 desliga). Sem live na tela, o fundo fica no escuro da marca.
+- **Luz ambiente:** a live de alguém em foco aparece de novo, minúscula (32 × 18) e esticada, atrás de toda a sala, e as cores dela vazam em volta do quadro e da faixa. Quem desenha é o renderizador da live, por baixo da interface ([ADR 0021](../adr/0021-video-por-baixo-da-interface.md)), sem ler a imagem para a CPU.
+  - Liga só com a live já com imagem, fora do picture in picture e com o app em uso; fora disso, a sala é o preto de sempre (`voice/ambient-light.ts`).
+  - A imagem da luz é atualizada a cada 6 quadros da live (10 vezes por segundo a 60 fps): para uma luz difusa, parece contínuo, e custa menos de 1 ponto de GPU (medido com `crates/sv-media/examples/luz_ambiente.rs app`).
+  - A sala inteira vira uma área transparente da página (chave `luz-ambiente` em `ui/see-through.ts`), e a vinheta (`.ambient-vignette`, um `Backdrop` que só abre buraco nas lives) escurece por cima: 42% no meio, 88% nas bordas.
 - **Brilho da live em foco:** uma sombra larga na cor da live sob o quadro em foco, que muda junto com a luz.
-- **Vidro sobre a live:** o topo da live (de quem é, quem assiste, a qualidade), a doca de controles e os menus são de vidro: fundo escuro translúcido com `backdrop-filter: blur(14–18px)` e borda de 1 px branca a 6–8%. O desfoque fica só nessas superfícies pequenas, nunca na área inteira.
+- **Vidro sobre a live:** o topo da live (de quem é, quem assiste, a qualidade), a doca de controles e os menus são de vidro: fundo escuro translúcido e borda de 1 px branca a 6–8%. Sobre o vídeo não há desfoque: o `backdrop-filter` não alcança o vídeo, que fica por baixo da página. Fora da live (lateral, modais), o desfoque de 14–18 px fica só nas superfícies pequenas, nunca na área inteira.
 - **Quem fala:** anel verde (`#3ddc84`) parado em volta do quadro e do avatar, mais um segundo anel que se expande e some a cada 1,1 s enquanto a pessoa fala.
 - **Momentos:**
   - **Entrar na sala:** os amigos aparecem em volta da sala, e uma barra com as etapas ("Achando a sala", "Conectando direto com cada um", "Ligando a voz", "Preparando as lives") avança até "Conectado".
