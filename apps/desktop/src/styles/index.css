@@ -72,6 +72,14 @@
 
   --radius-card: 0.75rem;
 
+  /* Movimento (ADR 0034, docs/design/ui.md "Tokens"): entradas suaves e uma mola que passa um
+     pouco do ponto e assenta, para quadros, botões e trocas de foco. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-resposta: 150ms;
+  --duration-mola: 440ms;
+  --duration-cena: 750ms;
+
   /* Modais: entrada um pouco mais lenta e suave, saída rápida (ver docs/design/ui.md, "Movimento"). */
   --animate-overlay-in: overlay-in 180ms ease-out;
   --animate-overlay-out: overlay-out 140ms ease-in forwards;
@@ -441,6 +449,46 @@ body {
 }
 
 /* Rolagem sem barra (a faixa de quadros da sala rola com a roda do mouse, como no Discord). */
+/*
+ * Clique com mola: o alvo afunda e volta ao soltar (Doherty: a resposta vem na hora). Usa `scale`
+ * e `translate`, que se somam ao `transform` do elemento e só pedem composição na GPU.
+ */
+@utility press {
+  transition-property: scale, translate, color, background-color, border-color, opacity;
+  transition-duration:
+    var(--duration-resposta), var(--duration-mola), var(--duration-resposta), var(--duration-resposta),
+    var(--duration-resposta), var(--duration-resposta);
+  transition-timing-function:
+    var(--ease-spring), var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out);
+  &:active {
+    scale: 0.94;
+  }
+}
+
+/* Sobe um pouco no hover (quadros e botões grandes); combina com o `press`. */
+@utility lift {
+  transition-property: scale, translate, color, background-color, border-color, opacity;
+  transition-duration:
+    var(--duration-resposta), var(--duration-mola), var(--duration-resposta), var(--duration-resposta),
+    var(--duration-resposta), var(--duration-resposta);
+  transition-timing-function:
+    var(--ease-spring), var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out);
+  &:hover {
+    translate: 0 -3px;
+  }
+}
+
+/*
+ * Sem o app em uso (minimizado, sem foco ou atrás do jogo), o que se repete para e não gasta GPU
+ * (ADR 0034). Quem marca o `data-idle` é `ui/app-activity.ts`; um efeito contínuo novo usa `loop`.
+ */
+html[data-idle] .animate-spin,
+html[data-idle] .animate-pulse,
+html[data-idle] .voice-aura *,
+html[data-idle] .loop {
+  animation-play-state: paused;
+}
+
 @utility scrollbar-none {
   scrollbar-width: none;
   &::-webkit-scrollbar {

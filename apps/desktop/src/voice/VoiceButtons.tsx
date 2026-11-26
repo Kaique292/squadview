@@ -103,7 +103,7 @@ function SplitButton(props: {
   };
   return (
     <div
-      className={`flex items-center transition-colors ${props.large ? "rounded-lg" : "rounded-md"} ${
+      className={`press flex items-center ${props.large ? "rounded-lg" : "rounded-md"} ${
         props.off ? "bg-live/15" : props.large ? "bg-surface-1" : ""
       }`}
     >
