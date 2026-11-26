@@ -7,8 +7,11 @@
  * - Cloudflare Realtime: `TURN_KEY_ID` e `TURN_KEY_API_TOKEN` (pago por uso, 1.000 GB/mês grátis);
  * - Metered "Open Relay": `METERED_DOMAIN` (ex.: `squadview.metered.live`) e `METERED_API_KEY`
  *   (plano grátis de 20 GB/mês, só com cadastro);
- * - fixo (um coturn próprio, por exemplo): `TURN_URLS` (separadas por vírgula), `TURN_USERNAME` e
- *   `TURN_CREDENTIAL`.
+ * - coturn próprio com credencial temporária ("TURN REST API", `use-auth-secret`): `TURN_URLS`
+ *   (separadas por vírgula) e `TURN_SHARED_SECRET`, o mesmo `static-auth-secret` do coturn. Cada
+ *   membro recebe a sua credencial, que vence em `TURN_TTL_S`;
+ * - fixo (um coturn com usuário e senha permanentes): `TURN_URLS`, `TURN_USERNAME` e
+ *   `TURN_CREDENTIAL`. Todo membro de sala recebe a mesma senha, que nunca vence: prefira o segredo.
  * Sem nenhum, a sala funciona só com conexão direta.
  */
 
@@ -32,15 +35,23 @@ export interface TurnEnv {
   METERED_DOMAIN?: string;
   METERED_API_KEY?: string;
   TURN_URLS?: string;
+  TURN_SHARED_SECRET?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
 }
 
-/** Busca credenciais no provedor configurado; `null` se não deu (a sala segue só com o direto). */
-export type TurnProvider = () => Promise<TurnCredentials | null>;
+/**
+ * Busca credenciais no provedor configurado; `null` se não deu (a sala segue só com o direto).
+ * `user` só importa para o provedor `perUser` (o coturn com segredo), que gera uma por pessoa.
+ */
+export type TurnProvider = ((user?: string) => Promise<TurnCredentials | null>) & { perUser?: boolean };
 
 /** O provedor configurado, ou `null` sem nenhum. */
-export function turnProvider(env: TurnEnv, fetcher: typeof fetch = fetch): TurnProvider | null {
+export function turnProvider(
+  env: TurnEnv,
+  fetcher: typeof fetch = fetch,
+  now: () => number = Date.now,
+): TurnProvider | null {
   if (env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) {
     const [id, token] = [env.TURN_KEY_ID, env.TURN_KEY_API_TOKEN];
     return () => generateTurnCredentials(id, token, fetcher);
@@ -49,11 +60,17 @@ export function turnProvider(env: TurnEnv, fetcher: typeof fetch = fetch): TurnP
     const [domain, key] = [env.METERED_DOMAIN, env.METERED_API_KEY];
     return () => meteredCredentials(domain, key, fetcher);
   }
+  if (env.TURN_URLS && env.TURN_SHARED_SECRET) {
+    const [urls, secret] = [splitUrls(env.TURN_URLS), env.TURN_SHARED_SECRET];
+    const provider: TurnProvider = (user = "") => sharedSecretCredentials(urls, secret, user, now());
+    provider.perUser = true;
+    return provider;
+  }
   if (env.TURN_URLS && env.TURN_USERNAME && env.TURN_CREDENTIAL) {
     const fixed = parseIceServers({
       iceServers: [
         {
-          urls: env.TURN_URLS.split(",").map((u) => u.trim()),
+          urls: splitUrls(env.TURN_URLS),
           username: env.TURN_USERNAME,
           credential: env.TURN_CREDENTIAL,
         },
@@ -62,6 +79,58 @@ export function turnProvider(env: TurnEnv, fetcher: typeof fetch = fetch): TurnP
     return async () => fixed;
   }
   return null;
+}
+
+function splitUrls(urls: string): string[] {
+  return urls
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Quem entrou na sala recebe as credenciais: por pessoa no provedor `perUser`, e as da sala (no
+ * {@link TurnCache}, uma chamada por dia) nos outros. Sem provedor, sempre `null`.
+ */
+export function turnIssuer(
+  env: TurnEnv,
+  fetcher: typeof fetch = fetch,
+  now: () => number = Date.now,
+): (user: string) => Promise<TurnCredentials | null> {
+  const provider = turnProvider(env, fetcher, now);
+  if (!provider) return async () => null;
+  if (provider.perUser) return (user) => provider(user);
+  const cache = new TurnCache(() => provider(), now);
+  return () => cache.get();
+}
+
+/**
+ * Credencial temporária do coturn ("TURN REST API", `use-auth-secret`): o usuário é
+ * `<vence_em_unix>:<quem>` e a senha é `base64(HMAC-SHA1(segredo, usuário))`. O coturn confere a
+ * senha com o mesmo segredo e recusa depois do vencimento, então ninguém guarda uma senha que
+ * sirva para sempre, e o registro do coturn mostra quem usou o repassador.
+ */
+export async function sharedSecretCredentials(
+  urls: string[],
+  secret: string,
+  user: string,
+  now: number = Date.now(),
+): Promise<TurnCredentials | null> {
+  const turnUrls = parseIceServers({ iceServers: [{ urls, username: "-", credential: "-" }] })?.urls;
+  if (!turnUrls?.length || !secret) return null;
+  const expires = Math.floor(now / 1000) + TURN_TTL_S;
+  const username = `${expires}:${user}`;
+  return { urls: turnUrls, username, credential: await hmacSha1Base64(secret, username) };
+}
+
+/** `base64(HMAC-SHA1(key, message))`, pelo Web Crypto do Worker. */
+export async function hmacSha1Base64(key: string, message: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey("raw", encoder.encode(key), { name: "HMAC", hash: "SHA-1" }, false, [
+    "sign",
+  ]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message)));
+  return btoa(String.fromCharCode(...signature));
 }
 
 /** Metered: `GET https://<app>.metered.live/api/v1/turn/credentials?apiKey=...` (lista de iceServers). */
