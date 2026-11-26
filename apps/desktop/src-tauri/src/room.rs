@@ -348,6 +348,21 @@ pub fn set_watch_bounds(
     }
 }
 
+/// A live de `member_id` vira (ou deixa de ser) a fonte da luz ambiente da sala (ADR 0034).
+#[tauri::command]
+pub fn set_watch_ambient(state: State<'_, RoomState>, member_id: String, on: bool) {
+    if let Some(w) = lock(&state).watching.get(&member_id) {
+        w.view.set_video_ambient(on);
+    }
+}
+
+/// Onde a luz ambiente aparece: a área da sala, em pixels físicos (largura zero tira a luz).
+#[tauri::command]
+pub fn set_ambient_area(x: i32, y: i32, width: u32, height: u32) {
+    let area = (width > 0 && height > 0).then_some(Bounds { x, y, width, height });
+    sv_media::set_ambient_area(area);
+}
+
 /// O que a prévia entrega para a sala (se estivermos numa).
 pub fn tap<R: Runtime>(app: &AppHandle<R>) -> Option<std::sync::Arc<dyn sv_session::StreamTap>> {
     lock(&app.state::<RoomState>()).room.as_ref().map(Room::tap)
@@ -717,6 +732,9 @@ mod tests {
         set_watch_listening(state(), "aa".into(), false);
         set_watch_volume(state(), "aa".into(), 1.5);
         set_watch_bounds(state(), "aa".into(), 0, 0, 320, 180, Some(8));
+        set_watch_ambient(state(), "aa".into(), true);
+        set_ambient_area(0, 0, 1280, 720);
+        set_ambient_area(0, 0, 0, 0);
         assert!(tap(t.handle()).is_none());
         stream_changed(t.handle(), None);
         tauri::async_runtime::block_on(room_stop_watching(t.handle().clone(), "aa".into())).unwrap();

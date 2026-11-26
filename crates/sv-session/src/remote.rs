@@ -238,6 +238,14 @@ impl RemoteView {
         s.apply();
     }
 
+    /// Esta live vira (ou deixa de ser) a fonte da luz ambiente da sala (ADR 0034): a interface
+    /// escolhe a live em foco, enquanto o app está em uso.
+    pub fn set_video_ambient(&self, on: bool) {
+        let mut s = lock(&self.state.surface);
+        s.ambient = on;
+        s.apply();
+    }
+
     /// Por baixo da interface (ADR 0021): leva o vídeo para a janela do picture in picture `hwnd`,
     /// ocupando `area` dela, ou de volta para a do app (`None`), no último lugar pedido lá.
     pub fn set_video_host(&self, host: Option<(isize, Bounds)>) {

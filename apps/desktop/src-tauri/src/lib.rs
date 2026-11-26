@@ -213,6 +213,8 @@ pub fn run() {
             room::room_watch,
             room::room_stop_watching,
             room::set_watch_bounds,
+            room::set_watch_ambient,
+            room::set_ambient_area,
             room::room_set_pip,
             room::set_watch_listening,
             room::set_watch_volume,

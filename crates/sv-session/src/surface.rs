@@ -15,12 +15,15 @@ pub(crate) struct Surface {
     /// A janela do picture in picture onde o vídeo está agora (`None`: a do app) e a área dele lá.
     /// A área do app (`bounds`) fica guardada para a volta.
     pub host: Option<(isize, Bounds)>,
+    /// Esta live é a fonte da luz ambiente da sala (ADR 0034).
+    pub ambient: bool,
 }
 
 impl Surface {
     pub fn apply(&self) {
         if let Some(c) = &self.control {
             c.set_corner_radius(self.radius);
+            c.set_ambient(self.ambient);
             c.set_host(self.host.map(|(hwnd, _)| hwnd));
             c.set_bounds(self.host.map_or(self.bounds, |(_, area)| area));
         }
@@ -87,13 +90,16 @@ mod tests {
             width: 640,
             height: 360,
         };
+        // A interface já tinha escolhido esta live para a luz ambiente antes do vídeo abrir.
         let mut s = Surface {
             bounds: quadro,
             radius: 8,
+            ambient: true,
             ..Surface::default()
         };
         s.attach(video.control());
         assert_eq!(layer.placed(), Some((app_hwnd, quadro)));
+        assert!(layer.ambient_source(), "o pedido da luz chega ao vídeo quando ele abre");
 
         // No picture in picture: a área da janelinha.
         let janelinha = Bounds {
@@ -109,6 +115,9 @@ mod tests {
         s.host = None;
         s.apply();
         assert_eq!(layer.placed(), Some((app_hwnd, quadro)));
+        s.ambient = false;
+        s.apply();
+        assert!(!layer.ambient_source());
     }
 
     #[test]
