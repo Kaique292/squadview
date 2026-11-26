@@ -107,6 +107,8 @@ const THUMBNAIL_CONCURRENCY = 4;
 
 interface StreamState {
   status: Status;
+  /** Quando a live entrou no ar (ms), para o momento de ficar ao vivo (ADR 0034); não muda numa troca de fonte. */
+  liveSince: number | null;
   sources: Source[];
   loadingSources: boolean;
   /** Miniatura por fonte: data URL, `null` quando a fonte não mandou imagem (ex.: minimizada). */
@@ -145,6 +147,7 @@ interface StreamState {
 
 export const useStreamStore = create<StreamState>((set, get) => ({
   status: "idle",
+  liveSince: null,
   sources: [],
   loadingSources: false,
   thumbnails: {},
@@ -238,7 +241,11 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     try {
       await invoke("start_preview", { source, quality, audioPid });
       const lastAudioPid = audioPid ?? get().current?.lastAudioPid ?? null;
-      set({ status: "live", current: { source, audioPid, lastAudioPid } });
+      set({
+        status: "live",
+        current: { source, audioPid, lastAudioPid },
+        ...(live ? null : { liveSince: Date.now() }),
+      });
     } catch (e) {
       const message = typeof e === "string" ? e : "Não deu para começar a transmissão.";
       if (live) {

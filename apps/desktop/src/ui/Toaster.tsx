@@ -1,5 +1,6 @@
 import { CircleAlert, CircleCheck, Info, OctagonX, TriangleAlert, X } from "lucide-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { Avatar } from "./Avatar";
 import { type Toast, type ToastKind, useToastStore } from "./toast-store";
 
 const STYLE: Record<ToastKind, { icon: typeof Info; color: string; label: string }> = {
@@ -115,13 +116,19 @@ function ToastCard(props: {
       {/* Faixa de cor do tipo, na esquerda. */}
       <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: color }} />
       <div className="flex items-start gap-3 py-3 pr-2 pl-4">
-        <span
-          aria-hidden
-          className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full"
-          style={{ background: `color-mix(in srgb, ${color} 18%, transparent)`, color }}
-        >
-          <Icon size={16} />
-        </span>
+        {toast.avatar ? (
+          <span aria-hidden className="mt-0.5 shrink-0">
+            <Avatar name={toast.avatar.name} size={28} src={toast.avatar.src} />
+          </span>
+        ) : (
+          <span
+            aria-hidden
+            className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full"
+            style={{ background: `color-mix(in srgb, ${color} 18%, transparent)`, color }}
+          >
+            <Icon size={16} />
+          </span>
+        )}
         <div className="min-w-0 flex-1 text-left">
           {toast.title && <p className="text-sm font-semibold">{toast.title}</p>}
           <p className={`text-sm ${toast.title ? "text-text-muted" : ""}`}>{toast.message}</p>

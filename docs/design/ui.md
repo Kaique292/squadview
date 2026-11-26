@@ -134,8 +134,8 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 - **Doca e topo da live:** de vidro (`glass-live`). Os cantos da barra da chamada dividem o espaço que sobra: com folga, a doca fica no meio; na janela estreita, ela anda para o lado em vez de passar por baixo dos botões do canto.
 - **Momentos:**
   - **Entrar na sala:** com a sala encontrada, uma cena por cima da sala (`room/EntryScene.tsx`) mostra quem já está lá e uma barra com as etapas de verdade: "Sala encontrada", "Conectando direto com cada um… x de y" (contando quem já está em `voice-peers`) e "Pronto". Sozinho, fica pronta na hora; se alguém demorar, fica pronta em 6 s com quem deu. Some sozinha 1,4 s depois de pronta, e um clique ou o Esc a fecham na hora. A cena `#demo=entrando` mostra a entrada no meio.
-  - **Ficar ao vivo:** contagem 3, 2, 1 sobre a prévia, uma onda vermelha que se expande e o selo AO VIVO. Com "reduzir movimento", vai direto para ao vivo.
-  - **Alguém começou a assistir:** um aviso curto com a foto da pessoa, que entra com mola e some sozinho.
+  - **Ficar ao vivo:** a live começa no instante do clique, sem contagem: uma contagem de 3 s, como no protótipo, atrasaria a resposta ao clique (limiar de Doherty). O momento é a entrada no ar: o selo AO VIVO entra com mola e uma onda vermelha percorre a borda do quadro da nossa live e some para dentro (`.live-wave`), uma vez. A onda só toca na montagem logo depois de entrar no ar (`liveSince` no `stream-store`, até 1,5 s), nunca ao trocar de fonte nem ao mover o quadro entre grade, foco e faixa. Com "reduzir movimento", não aparece.
+  - **Alguém começou a assistir:** um aviso com a foto da pessoa, "Fulano começou a assistir" (`stream/viewer-notices.ts`), vindo da lista real de quem assiste. Quem sai não gera aviso; mais de 3 de uma vez viram um aviso só.
   - Nenhum momento bloqueia: dá para clicar em tudo enquanto ele acontece.
 
 ## Rolagem
