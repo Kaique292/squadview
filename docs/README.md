@@ -49,3 +49,4 @@
 | [0031](adr/0031-controles-alem-do-xbox-e-p1-guardado.md)     | Fliperama: controles além do Xbox, P1 guardado e avisos do que impede o P2                          |
 | [0032](adr/0032-modo-reuniao.md)                             | Modo reunião: transcrição local da voz, falas divididas pela sala e exportação para o Discord e PDF |
 | [0033](adr/0033-coturn-proprio-com-credencial-temporaria.md) | Repassador TURN próprio (coturn) com credencial temporária por segredo compartilhado                |
+| [0034](adr/0034-redesign-imersivo.md)                        | Redesign imersivo: luz ambiente, vidro, movimento com física e momentos marcantes                   |
