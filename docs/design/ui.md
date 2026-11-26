@@ -1,6 +1,20 @@
 # Design da interface
 
-A interface segue a **hierarquia** do Discord, porque é onde a galera já vive, com identidade própria (ver [ADR 0005](../adr/0005-ui-estilo-discord.md)). Os tokens em código ficam em `apps/desktop/src/styles/index.css`.
+A interface segue a **hierarquia** do Discord, porque é onde a galera já vive, com identidade própria (ver [ADR 0005](../adr/0005-ui-estilo-discord.md)). Por cima dessa estrutura, a sala é **imersiva**: reage a quem está nela, com luz ambiente, profundidade e movimento com física ([ADR 0034](../adr/0034-redesign-imersivo.md), [protótipo](https://claude.ai/artifact/Ptg5mWVMsUzTHSSDjBqCna)). Os tokens em código ficam em `apps/desktop/src/styles/index.css`.
+
+## Princípios
+
+As leis de UX que guiam cada tela, e o que elas querem dizer aqui:
+
+- **Jakob (o familiar):** a estrutura é a do Discord. O que surpreende é a superfície e o movimento, nunca onde as coisas ficam.
+- **Fitts (alvos grandes e perto):** os controles da chamada ficam juntos numa doca embaixo, com 52 px de alvo; a ação principal de cada tela é o maior botão dela.
+- **Hick e divulgação progressiva (poucas escolhas):** cada tela tem uma ação principal. Opções avançadas (qualidade, dispositivos) ficam atrás de "Ajustar…" ou de menus.
+- **Miller (blocos pequenos):** listas e menus em grupos de até 7 itens, com cabeçalhos de seção.
+- **Doherty (resposta em menos de 400 ms):** todo clique responde na hora (o botão afunda); o que demora mostra esqueleto ou progresso.
+- **Gradiente de objetivo:** processos com etapas (entrar na sala, baixar um modelo, atualizar) mostram a barra e as etapas que já foram.
+- **Usabilidade estética:** o visual é parte da função; mas um efeito nunca esconde o estado da sala (quem fala, quem está ao vivo, a conexão).
+- **Gestalt:** o que é do mesmo grupo divide a mesma superfície (proximidade e região comum); o que tem a mesma função tem a mesma cara (semelhança).
+- **Heurísticas de Nielsen:** estado sempre visível, sair e desfazer fácil (parar a transmissão, sair da sala), erros com explicação e ação, e o mínimo de texto e de opção por tela.
 
 ## Layout
 
@@ -64,8 +78,8 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 - Primitivos acessíveis do **Radix UI** (Dialog, DropdownMenu, Tooltip, Slider, Switch) estilizados com Tailwind.
 - Ícones **lucide-react**, 16–22 px.
 - **Checkbox:** sempre `apps/desktop/src/ui/Checkbox.tsx`. Use `Checkbox` (com rótulo) em formulários e modais, e `CheckMark` (só a caixa) dentro dos `CheckboxItem` dos menus. Nunca `<input type="checkbox">` nativo nem caixa desenhada à mão. Ao marcar, a caixa enche com um pulo e o ✓ se desenha; ao desmarcar, o ✓ se apaga e a caixa esvazia.
-- Raio: 4 px (botões pequenos), 8 px (botões), 12 px (cards), 16 px (ícones de sala).
-- Animações de 120–200 ms com `ease-out`; nada que roube GPU enquanto alguém joga.
+- Raio: 4 px (selos), 8 px (botões pequenos e itens de lista), 12 px (cards), 14 px (botões da doca), 16 px (ícones de sala e quadros da sala), 18 px (live em foco), 24 px (modais e cenas).
+- Animações seguem os tokens de [Movimento](#movimento).
 
 ## Estados que toda tela precisa ter
 
@@ -86,8 +100,39 @@ Em Configurações → Aparência, o "Efeito de vidro" (0–100%, padrão 40%) d
 - **Abrir:** fundo escurece em 180 ms; a caixa sobe 12 px e cresce de 96% para 100% em 220 ms (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **Fechar:** mais rápido (140 ms), no sentido inverso. O Radix só remove o modal depois que a animação termina.
 - **Trocar de passo dentro do modal** (ex.: fonte → qualidade): o conteúdo novo entra deslizando 16 px da direita (`animate-step-in`), e a largura do modal se ajusta com transição.
-- Quem ativou "Mostrar animações" desligado no Windows (`prefers-reduced-motion`) não vê animação nenhuma.
-- Nada de animação contínua enquanto alguém joga, a não ser o carregamento das miniaturas (`animate-pulse`).
+- Quem ativou "Mostrar animações" desligado no Windows (`prefers-reduced-motion`) não vê animação nenhuma: as mudanças acontecem direto.
+
+### Tokens
+
+| Token          | Valor                               | Uso                                                       |
+| -------------- | ----------------------------------- | --------------------------------------------------------- |
+| `ease-out`     | `cubic-bezier(0.16, 1, 0.3, 1)`     | Entradas, trocas de cor e de luz                          |
+| `ease-spring`  | `cubic-bezier(0.34, 1.56, 0.64, 1)` | Quadros, botões e foco: passa um pouco do ponto e assenta |
+| `dur-resposta` | 120–160 ms                          | Hover, cor de fundo, o botão que afunda                   |
+| `dur-mola`     | 360–520 ms                          | Quadros que se movem, troca de foco, botões que sobem     |
+| `dur-cena`     | 600–900 ms                          | Luz ambiente, entrada na sala, ficar ao vivo              |
+
+- **Clique:** o alvo afunda para 92–97% (`ease-spring`), e volta ao soltar.
+- **Hover:** quadros e botões sobem 3–4 px.
+- **Troca de foco:** a live nova entra de 103% para 100% com opacidade, e a luz ambiente troca de cor em `dur-cena`.
+
+### O que pode se mover
+
+- **Só `transform` e `opacity`.** Nada de animar `box-shadow`, `filter`, `backdrop-filter`, `width`, `height`, `top` ou `left`: obrigam o navegador a refazer pintura ou layout a cada quadro. Um anel que pulsa é um elemento próprio que muda de escala e opacidade, não uma sombra animada.
+- **Contínuo só com o app em uso.** O que se repete (a luz ambiente que flutua, o anel de quem fala, o ponto do AO VIVO, o carregamento das miniaturas) pausa com a janela minimizada, sem foco ou escondida atrás do jogo. Sem isso, o efeito não entra.
+- **Medido:** mudança que adiciona efeito na sala passa pela skill `perf-check`, com o FPS do jogo antes e depois.
+
+## Imersão
+
+- **Luz ambiente:** a live em foco aparece de novo, pequena e muito desfocada, atrás de toda a sala, e as cores dela vazam pelas bordas. Quem desenha é o renderizador nativo por baixo da interface ([ADR 0021](../adr/0021-video-por-baixo-da-interface.md)), sem ler a imagem para a CPU. A força é ajustável em Configurações → Aparência (0 desliga). Sem live na tela, o fundo fica no escuro da marca.
+- **Brilho da live em foco:** uma sombra larga na cor da live sob o quadro em foco, que muda junto com a luz.
+- **Vidro sobre a live:** o topo da live (de quem é, quem assiste, a qualidade), a doca de controles e os menus são de vidro: fundo escuro translúcido com `backdrop-filter: blur(14–18px)` e borda de 1 px branca a 6–8%. O desfoque fica só nessas superfícies pequenas, nunca na área inteira.
+- **Quem fala:** anel verde (`#3ddc84`) parado em volta do quadro e do avatar, mais um segundo anel que se expande e some a cada 1,1 s enquanto a pessoa fala.
+- **Momentos:**
+  - **Entrar na sala:** os amigos aparecem em volta da sala, e uma barra com as etapas ("Achando a sala", "Conectando direto com cada um", "Ligando a voz", "Preparando as lives") avança até "Conectado".
+  - **Ficar ao vivo:** contagem 3, 2, 1 sobre a prévia, uma onda vermelha que se expande e o selo AO VIVO. Com "reduzir movimento", vai direto para ao vivo.
+  - **Alguém começou a assistir:** um aviso curto com a foto da pessoa, que entra com mola e some sozinho.
+  - Nenhum momento bloqueia: dá para clicar em tudo enquanto ele acontece.
 
 ## Rolagem
 
