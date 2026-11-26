@@ -489,6 +489,22 @@ html[data-idle] .loop {
   animation-play-state: paused;
 }
 
+/*
+ * A vinheta da luz ambiente (ADR 0034): por cima da luz (a live em foco, minúscula e esticada,
+ * desenhada por baixo da página). Com a live em foco ocupando o meio, a luz aparece nas sobras (em
+ * volta do quadro e da faixa): o escurecido é quase uniforme e só aperta nas bordas, onde some o
+ * contorno da imagem esticada. Estática: não custa nada por quadro.
+ */
+.ambient-vignette {
+  background: radial-gradient(
+    ellipse 95% 90% at 50% 45%,
+    rgb(0 0 0 / 0.42) 0%,
+    rgb(0 0 0 / 0.5) 55%,
+    rgb(0 0 0 / 0.72) 85%,
+    rgb(0 0 0 / 0.88) 100%
+  );
+}
+
 @utility scrollbar-none {
   scrollbar-width: none;
   &::-webkit-scrollbar {

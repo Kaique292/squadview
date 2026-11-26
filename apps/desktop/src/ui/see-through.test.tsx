@@ -32,6 +32,15 @@ describe("fundo transparente onde há vídeo", () => {
     ).toBe("none");
   });
 
+  it("um fundo pode ignorar áreas (a vinheta da luz não abre buraco para a própria luz)", () => {
+    setSeeThrough("luz", { x: 0, y: 0, width: 800, height: 600, radius: 0 });
+    setSeeThrough("live", { x: 10, y: 10, width: 320, height: 180, radius: 8 });
+    expect(seeThroughAreas()).toHaveLength(2);
+    expect(seeThroughAreas(["luz"])).toEqual([{ x: 10, y: 10, width: 320, height: 180, radius: 8 }]);
+    setSeeThrough("luz", null);
+    setSeeThrough("live", null);
+  });
+
   it("avisa só quando a área muda, e ignora área vazia", () => {
     const changed = vi.fn();
     const stop = onSeeThroughChange(changed);
