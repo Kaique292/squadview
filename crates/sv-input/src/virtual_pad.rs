@@ -90,14 +90,18 @@ fn foreign(connected: [bool; xinput::SLOTS as usize], ours: u8) -> bool {
 /// Quanto esperar o Windows dar uma vaga do XInput ao controle novo.
 pub const SLOT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A vaga do controle recém-plugado. O driver só sabe depois que o Windows atribui a vaga (logo
-/// depois do plug ele responde com erro); enquanto isso, a vaga que passou a estar ocupada no
-/// XInput também diz qual é.
+/// A vaga do controle recém-plugado. Quando o Windows dá a vaga, acende o LED do controle com o
+/// número dela, e o driver repassa esse aviso; a vaga que passou a estar ocupada no XInput também
+/// diz qual é. (O `user_index` do driver não serve: nos drivers atuais do ViGEmBus ele responde
+/// sem o número, e a `vigem-rust` 0.2.1 o marcou como obsoleto.)
 fn find_slot(target: &TargetHandle<Xbox360>, before: [bool; xinput::SLOTS as usize]) -> Option<u32> {
     let deadline = Instant::now() + SLOT_TIMEOUT;
+    // Sem o aviso (o LED pode ter acendido antes de nos inscrevermos), fica só o XInput.
+    let leds = target.register_notification().ok();
     loop {
-        if let Ok(slot) = target.user_index()
-            && slot < xinput::SLOTS
+        if let Some(slot) = leds
+            .as_ref()
+            .and_then(|leds| std::iter::from_fn(|| leds.try_recv().ok()).find_map(|n| led_slot(n.led_number)))
         {
             return Some(slot);
         }
@@ -109,6 +113,12 @@ fn find_slot(target: &TargetHandle<Xbox360>, before: [bool; xinput::SLOTS as usi
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// O LED que o Windows acendeu no controle é a vaga dele no XInput (`0..4`); outro valor não é vaga.
+fn led_slot(led: u8) -> Option<u32> {
+    let slot = u32::from(led);
+    (slot < xinput::SLOTS).then_some(slot)
 }
 
 /// A única vaga que estava livre e agora está ocupada (com duas ou mais, não dá para saber).
@@ -152,6 +162,14 @@ impl Drop for VirtualPad {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn o_led_do_controle_diz_a_vaga_e_valor_fora_de_0_a_3_nao_conta() {
+        assert_eq!(led_slot(0), Some(0));
+        assert_eq!(led_slot(3), Some(3));
+        assert_eq!(led_slot(4), None);
+        assert_eq!(led_slot(255), None);
+    }
 
     #[test]
     fn vaga_nova_so_quando_uma_unica_aparece() {
