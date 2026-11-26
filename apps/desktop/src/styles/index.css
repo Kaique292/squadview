@@ -560,6 +560,42 @@ html[data-idle] .loop {
 }
 
 /*
+ * Ficar ao vivo (ADR 0034): uma onda vermelha percorre a borda do quadro da nossa live e some para
+ * dentro, uma vez. Só a opacidade e a escala se animam; com "reduzir movimento", não aparece.
+ */
+.live-wave {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 3px var(--color-live),
+    inset 0 0 48px 4px color-mix(in srgb, var(--color-live) 50%, transparent);
+  opacity: 0;
+  animation: live-wave var(--duration-cena) cubic-bezier(0.4, 0, 0.6, 1);
+}
+/* A cor fica forte no primeiro terço (dá tempo de ver o flash) e só então some, encolhendo. */
+@keyframes live-wave {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  35% {
+    opacity: 0.9;
+    transform: scale(0.99);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-wave {
+    display: none;
+  }
+}
+
+/*
  * A vinheta da luz ambiente (ADR 0034): por cima da luz (a live em foco, minúscula e esticada,
  * desenhada por baixo da página). Com a live em foco ocupando o meio, a luz aparece nas sobras (em
  * volta do quadro e da faixa): o escurecido é quase uniforme e só aperta nas bordas, onde some o

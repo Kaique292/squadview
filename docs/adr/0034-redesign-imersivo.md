@@ -18,7 +18,7 @@ A estrutura do Discord continua. O que muda é a superfície e o movimento, em q
 1. **Luz ambiente:** a live em foco "vaza" as cores dela pela sala, num fundo atrás de tudo. A luz vem do próprio vídeo: o renderizador da live em foco ([ADR 0021](0021-video-por-baixo-da-interface.md)) também desenha uma imagem minúscula dela, de 32 × 18, num swap chain próprio, e o compositor do Windows a estica até a sala, com suavização. Tudo fica na GPU: o `VideoProcessor` reduz o quadro para 256 × 144, o `GenerateMips` tira a média até 32 × 18, e nada volta para a CPU. A página põe por cima uma vinheta escura estática, que some com o contorno da imagem esticada.
 2. **Profundidade:** camadas de vidro sobre a live e a luz ambiente: topo da live, doca de controles, lateral e modais. Sobre o vídeo, o vidro é só um escurecido translúcido, sem desfoque: o `backdrop-filter` da página não alcança o vídeo, que fica por baixo dela (ADR 0021).
 3. **Movimento com física:** transições com mola (um leve passar do ponto antes de assentar) em quadros, botões e trocas de foco, sempre em resposta a uma ação, e com resposta em menos de 400 ms (limiar de Doherty).
-4. **Momentos marcantes:** entrar na sala (progresso por etapas), ficar ao vivo (contagem e onda de entrada) e alguém começar a assistir ganham uma cena própria, curta e que não bloqueia o uso.
+4. **Momentos marcantes:** entrar na sala (progresso por etapas), ficar ao vivo (selo com mola e onda de entrada, sem contagem: a live começa no instante do clique) e alguém começar a assistir ganham uma cena própria, curta e que não bloqueia o uso.
 
 Regras que valem para todo efeito:
 
@@ -38,7 +38,7 @@ Regras que valem para todo efeito:
   1. Tokens de movimento e profundidade, e a pausa dos efeitos contínuos.
   2. Sala ao vivo: luz ambiente, quem fala e a doca de vidro.
   3. Entrada na sala, com o progresso por etapas.
-  4. Ficar ao vivo, com a contagem e o aviso de quem começou a assistir.
+  4. Ficar ao vivo, com a onda de entrada e o aviso de quem começou a assistir.
 
 ## Alternativas consideradas
 

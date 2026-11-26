@@ -16,6 +16,7 @@ import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
 import { listenToMeetingEvents } from "./meeting/meeting-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { parsePipHash } from "./stream/pip";
+import { watchViewerNotices } from "./stream/viewer-notices";
 import { PipView } from "./stream/PipView";
 import { watchAppActivity } from "./ui/app-activity";
 import { blockNativeContextMenu } from "./ui/native-menu";
@@ -42,6 +43,8 @@ if (pipPage) {
 function startApp() {
   // Sons de aviso (entrar, sair, mudo, surdo, transmissão).
   listenToSoundEvents();
+  // Quem começou a assistir a nossa live ganha um aviso com a foto (ADR 0034).
+  watchViewerNotices();
   blockNativeContextMenu();
 
   // Vidro antes do primeiro desenho, para a janela já abrir com a intensidade salva.

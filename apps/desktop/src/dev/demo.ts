@@ -210,6 +210,8 @@ function goLive() {
   const history = liveHistory();
   useStreamStore.setState({
     status: "live",
+    // Acabou de entrar no ar: o quadro toca a onda (ADR 0034).
+    liveSince: Date.now(),
     quality: { resolution: "720", fps: 30 },
     stats: history.at(-1),
     history,

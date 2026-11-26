@@ -25,6 +25,21 @@ describe("notificações", () => {
     expect(screen.getByRole("alert", { name: "Erro" })).toHaveTextContent("Deu errado");
   });
 
+  it("um aviso sobre alguém mostra a foto dessa pessoa no lugar do ícone", () => {
+    render(<Toaster />);
+    act(() => {
+      useToastStore.getState().push({
+        kind: "info",
+        title: "Sua live",
+        message: "Ana começou a assistir",
+        avatar: { name: "Ana", src: "https://cdn.exemplo/ana.png" },
+      });
+    });
+    const aviso = screen.getByRole("status", { name: "Aviso do sistema" });
+    expect(aviso.querySelector("img")).toHaveAttribute("src", "https://cdn.exemplo/ana.png");
+    expect(aviso.querySelector("svg.lucide-info")).toBeNull();
+  });
+
   it("some sozinha no fim do tempo, com animação de saída", () => {
     render(<Toaster />);
     act(() => void toast.success("Entrou"));

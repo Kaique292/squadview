@@ -19,6 +19,13 @@ export interface Toast {
   duration: number;
   /** Saindo (animação de saída em andamento). */
   leaving: boolean;
+  /** A foto de quem o aviso fala (ex.: quem começou a assistir), no lugar do ícone do tipo. */
+  avatar?: ToastAvatar;
+}
+
+export interface ToastAvatar {
+  name: string;
+  src?: string;
 }
 
 /** Tempo padrão por tipo: erros e alertas ficam mais. */
@@ -36,7 +43,13 @@ const MAX_TOASTS = 5;
 
 interface ToastState {
   toasts: Toast[];
-  push: (toast: { kind: ToastKind; message: string; title?: string; duration?: number }) => number;
+  push: (toast: {
+    kind: ToastKind;
+    message: string;
+    title?: string;
+    duration?: number;
+    avatar?: ToastAvatar;
+  }) => number;
   dismiss: (id: number) => void;
 }
 
@@ -45,12 +58,20 @@ let nextId = 1;
 export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
 
-  push({ kind, message, title, duration }) {
+  push({ kind, message, title, duration, avatar }) {
     // A mesma mensagem já na tela: não repete (ex.: o mesmo erro chegando duas vezes).
     const same = get().toasts.find((t) => !t.leaving && t.message === message && t.kind === kind);
     if (same) return same.id;
     const id = nextId++;
-    const toast: Toast = { id, kind, title, message, duration: duration ?? DEFAULT_DURATION[kind], leaving: false };
+    const toast: Toast = {
+      id,
+      kind,
+      title,
+      message,
+      duration: duration ?? DEFAULT_DURATION[kind],
+      leaving: false,
+      avatar,
+    };
     const active = [toast, ...get().toasts];
     set({ toasts: active });
     // As mais antigas além do limite saem com animação.
