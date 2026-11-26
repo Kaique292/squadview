@@ -14,7 +14,9 @@ class_name = "Room"
 # plugável (`wrangler secret put <NOME>`), o primeiro completo vale:
 # - Cloudflare Realtime: TURN_KEY_ID e TURN_KEY_API_TOKEN;
 # - Metered (grátis, 20 GB/mês): METERED_DOMAIN (ex.: squadview.metered.live) e METERED_API_KEY;
-# - servidor fixo (coturn próprio): TURN_URLS (separadas por vírgula), TURN_USERNAME e TURN_CREDENTIAL.
+# - coturn próprio com credencial temporária (ADR 0033): TURN_URLS (separadas por vírgula) e
+#   TURN_SHARED_SECRET, o mesmo static-auth-secret do coturn (use-auth-secret); vale antes do par fixo;
+# - servidor fixo: TURN_URLS, TURN_USERNAME e TURN_CREDENTIAL (senha permanente, igual para todos).
 # Sem nenhum, a sala funciona só com conexão direta.
 [[durable_objects.bindings]]
 name = "USERS"
