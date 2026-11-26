@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   generateTurnCredentials,
+  hmacSha1Base64,
   meteredCredentials,
   parseIceServers,
+  sharedSecretCredentials,
   TURN_RENEW_BEFORE_MS,
   TURN_TTL_S,
   TurnCache,
+  turnIssuer,
   turnProvider,
 } from "./turn";
 
@@ -108,5 +111,88 @@ describe("credenciais do repassador TURN", () => {
     const fixo = turnProvider({ TURN_URLS: "turn:a:3478, turn:b:3478", TURN_USERNAME: "x", TURN_CREDENTIAL: "y" }, f);
     expect(await fixo!()).toEqual({ urls: ["turn:a:3478", "turn:b:3478"], username: "x", credential: "y" });
     expect(turnProvider({ METERED_DOMAIN: "a.metered.live", METERED_API_KEY: "k" }, f)).not.toBeNull();
+  });
+});
+
+describe("coturn próprio com segredo compartilhado (TURN REST API)", () => {
+  const SECRET = "segredo-do-coturn";
+  const URLS = "turn:187.53.103.68:3478?transport=udp, turn:187.53.103.68:3478?transport=tcp";
+  const COTURN = { TURN_URLS: URLS, TURN_SHARED_SECRET: SECRET };
+  /** 2023-11-14 22:13:20 UTC; com as 24 h, vence em 1700086400. */
+  const NOW = 1_700_000_000_000;
+  const noFetch = vi.fn() as unknown as typeof fetch;
+
+  it("o HMAC-SHA1 em base64 bate com o calculado à parte", async () => {
+    // Vetores calculados com o Python (`hmac` + `hashlib.sha1` + `base64`) e conferidos com o
+    // `openssl dgst -sha1 -hmac`.
+    expect(await hmacSha1Base64(SECRET, "1700086400:123456789012345678")).toBe("/izOcy2uJirc48HkBZypzBM8aNg=");
+    expect(await hmacSha1Base64("outro", "1700000000:a1b2c3d4e5f60718")).toBe("7JhNOkAHfXaeDlNId0ETMWE/N5c=");
+  });
+
+  it("o usuário é o vencimento em unix e quem pediu, e a senha é o HMAC dele", async () => {
+    const turn = await sharedSecretCredentials(
+      ["turn:187.53.103.68:3478?transport=udp", "stun:187.53.103.68:3478", "turn:187.53.103.68:53"],
+      SECRET,
+      "123456789012345678",
+      NOW,
+    );
+    expect(turn).toEqual({
+      // Só as URLs TURN, sem a porta 53 (como nos outros provedores).
+      urls: ["turn:187.53.103.68:3478?transport=udp"],
+      username: `${NOW / 1000 + TURN_TTL_S}:123456789012345678`,
+      credential: "/izOcy2uJirc48HkBZypzBM8aNg=",
+    });
+  });
+
+  it("sem URL TURN ou sem segredo, não há credencial", async () => {
+    expect(await sharedSecretCredentials(["stun:a:3478"], SECRET, "x", NOW)).toBeNull();
+    expect(await sharedSecretCredentials(["turn:a:3478"], "", "x", NOW)).toBeNull();
+  });
+
+  it("com o segredo, ele vale antes do usuário e senha fixos, sem chamar ninguém", async () => {
+    const env = { ...COTURN, TURN_USERNAME: "fixo", TURN_CREDENTIAL: "senha-fixa" };
+    const provider = turnProvider(env, noFetch, () => NOW)!;
+    expect(provider.perUser).toBe(true);
+    const turn = await provider("123456789012345678");
+    expect(turn?.username).toBe("1700086400:123456789012345678");
+    expect(turn?.credential).toBe("/izOcy2uJirc48HkBZypzBM8aNg=");
+    expect(turn?.urls).toEqual(["turn:187.53.103.68:3478?transport=udp", "turn:187.53.103.68:3478?transport=tcp"]);
+    expect(noFetch).not.toHaveBeenCalled();
+    // Sem o segredo, o par fixo continua valendo como antes.
+    const fixo = turnProvider({ TURN_URLS: URLS, TURN_USERNAME: "fixo", TURN_CREDENTIAL: "senha-fixa" }, noFetch);
+    expect(fixo?.perUser).toBeUndefined();
+    expect((await fixo!())?.username).toBe("fixo");
+    // Segredo sem as URLs não forma provedor.
+    expect(turnProvider({ TURN_SHARED_SECRET: SECRET }, noFetch)).toBeNull();
+  });
+
+  it("Cloudflare e Metered, se configurados, continuam antes do coturn", () => {
+    const cloudflare = turnProvider({ ...COTURN, TURN_KEY_ID: "a", TURN_KEY_API_TOKEN: "b" }, noFetch);
+    expect(cloudflare?.perUser).toBeUndefined();
+    const metered = turnProvider({ ...COTURN, METERED_DOMAIN: "a.metered.live", METERED_API_KEY: "k" }, noFetch);
+    expect(metered?.perUser).toBeUndefined();
+  });
+
+  it("cada membro recebe a sua credencial, e uma nova a cada entrada", async () => {
+    let now = NOW;
+    const issue = turnIssuer(COTURN, noFetch, () => now);
+    const ana = await issue("111111111111111111");
+    const beto = await issue("2222222222222222");
+    expect(ana?.username).toBe("1700086400:111111111111111111");
+    expect(beto?.username).toBe("1700086400:2222222222222222");
+    expect(ana?.credential).not.toBe(beto?.credential);
+    // Entrando de novo mais tarde, o vencimento acompanha (a mesma validade de 24 h de hoje).
+    now += 60 * 60 * 1000;
+    expect((await issue("111111111111111111"))?.username).toBe("1700090000:111111111111111111");
+  });
+
+  it("os provedores de fora seguem com uma credencial por sala, guardada", async () => {
+    const fetcher = vi.fn(async () => Response.json(RESPONSE, { status: 201 }));
+    const issue = turnIssuer({ TURN_KEY_ID: "a", TURN_KEY_API_TOKEN: "b" }, fetcher as unknown as typeof fetch);
+    expect((await issue("ana"))?.username).toBe("u1");
+    expect((await issue("beto"))?.username).toBe("u1");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    // Sem provedor, ninguém recebe nada.
+    expect(await turnIssuer({})("ana")).toBeNull();
   });
 });

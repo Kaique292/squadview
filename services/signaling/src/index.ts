@@ -12,7 +12,7 @@ import {
   type VoiceFlags,
 } from "./server-state";
 import { exchangeDiscordToken, type Profile, signSession, verifySession } from "./session";
-import { TurnCache, type TurnEnv, turnProvider } from "./turn";
+import { type TurnEnv, turnIssuer } from "./turn";
 import {
   type JoinResult,
   type Peers,
@@ -151,8 +151,11 @@ export class Room extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Credenciais do repassador, guardadas enquanto a sala está acordada. */
-  private readonly turn = new TurnCache(async () => turnProvider(this.env)?.() ?? null);
+  /**
+   * Credenciais do repassador: as da sala ficam guardadas enquanto ela está acordada; com o coturn
+   * próprio (segredo compartilhado), cada um recebe a sua.
+   */
+  private readonly turn = turnIssuer(this.env);
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const conn = connection(ws);
@@ -160,8 +163,10 @@ export class Room extends DurableObject<Env> {
     this.state.message(conn, message, await this.verifiedJoin(message));
     this.reportOccupants();
     // Acabou de entrar: manda o repassador (só quem é da sala recebe a credencial).
-    if (!wasIn && conn.getAttachment()?.member) {
-      const turn = await this.turn.get();
+    const attachment = conn.getAttachment();
+    if (!wasIn && attachment?.member) {
+      // No coturn, o usuário leva o id do Discord verificado (ou o da vaga na sala).
+      const turn = await this.turn(attachment.verified ?? attachment.member.id);
       if (turn) conn.send({ type: "turn", ...turn });
     }
   }
@@ -440,7 +445,7 @@ function peers(env: Env): Peers {
     serverPresence: async (id) => server(env, id).presence(),
     serverRefresh: async (id, profile) => server(env, id).refresh(profile),
     dmSignal: async (to, from, payload) => user(env, to).onDmSignal(from, payload),
-    turn: async () => (await turnProvider(env)?.()) ?? null,
+    turn: (user) => turnIssuer(env)(user),
   };
 }
 
