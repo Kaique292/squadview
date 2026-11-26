@@ -177,8 +177,8 @@ export interface Peers {
   serverRefresh(server: string, profile: Profile): Promise<void>;
   /** Entrega o sinal da conversa ao registro do amigo. `false` se ele não está online. */
   dmSignal(to: string, from: string, payload: Record<string, unknown>): Promise<boolean>;
-  /** Credenciais do repassador TURN (`null` sem provedor configurado). */
-  turn(): Promise<TurnCredentials | null>;
+  /** Credenciais do repassador TURN para `user` (`null` sem provedor configurado). */
+  turn(user: string): Promise<TurnCredentials | null>;
 }
 
 const DISCORD_ID = /^[0-9]{15,21}$/;
@@ -523,7 +523,7 @@ export class UserState {
         return;
       }
       case "turn-request": {
-        const turn = await this.peers.turn().catch(() => null);
+        const turn = await this.peers.turn(this.id).catch(() => null);
         if (turn) conn.send({ type: "turn", ...turn });
         return;
       }
