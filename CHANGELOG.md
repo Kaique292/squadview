@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.16.0](https://github.com/Kaique292/squadview/compare/v0.15.0...v0.16.0) (2026-11-27)
+
+
+### ✨ Novidades
+
+* **signal:** gera credenciais temporárias para um coturn próprio ([#156](https://github.com/Kaique292/squadview/issues/156)) ([a77d61e](https://github.com/Kaique292/squadview/commit/a77d61e8e570a2762b495741c8b6fd90aef22612))
+* **ui:** adiciona a luz ambiente da live em foco na sala ([#160](https://github.com/Kaique292/squadview/issues/160)) ([49f35cd](https://github.com/Kaique292/squadview/commit/49f35cd11f9fe78f1f558243a73649b8e0c2f491))
+* **ui:** adiciona o modo reunião com a transcrição da própria voz ([#144](https://github.com/Kaique292/squadview/issues/144)) ([0aa7ff6](https://github.com/Kaique292/squadview/commit/0aa7ff6d8a20fe1b3327fb751242268ef192b0de))
+* **ui:** adiciona os tokens de movimento e pausa as animações fora de uso ([#159](https://github.com/Kaique292/squadview/issues/159)) ([99398dd](https://github.com/Kaique292/squadview/commit/99398ddde746f686b83a00568a7f65d206211ae9))
+* **ui:** marca a entrada no ar e avisa quem começou a assistir ([#163](https://github.com/Kaique292/squadview/issues/163)) ([34511d7](https://github.com/Kaique292/squadview/commit/34511d71db0983f6a77bc54db408e153ddb5e0e4))
+* **ui:** mostra a entrada na sala com as conexões de verdade ([#162](https://github.com/Kaique292/squadview/issues/162)) ([a011aaa](https://github.com/Kaique292/squadview/commit/a011aaa9e09530fb43a371f0b7e6410a3e208a1c))
+* **ui:** pulsa o quadro de quem fala e põe a doca em vidro ([#161](https://github.com/Kaique292/squadview/issues/161)) ([04990b3](https://github.com/Kaique292/squadview/commit/04990b3918d0d12c4c081b8f302e91afaa889721))
+
+
+### 📝 Documentação
+
+* **docs:** atualiza o README e as capturas para a versão 0.16 ([#164](https://github.com/Kaique292/squadview/issues/164)) ([32649c7](https://github.com/Kaique292/squadview/commit/32649c78556683a352386da3758d49740df6b9df))
+* **docs:** registra a ADR 0032 do modo reunião ([#143](https://github.com/Kaique292/squadview/issues/143)) ([0727488](https://github.com/Kaique292/squadview/commit/072748837928cd9704f8d41e226456beff4c0634))
+* **docs:** registra a ADR 0034 do redesign imersivo ([#158](https://github.com/Kaique292/squadview/issues/158)) ([05a2c1d](https://github.com/Kaique292/squadview/commit/05a2c1d8df6642efe51fcc008ddf9b69098e0f76))
+
+
+### 📦 Build
+
+* **deps-dev:** bump jsdom from 30.1.3 to 31.0.0 ([#148](https://github.com/Kaique292/squadview/issues/148)) ([6812ccf](https://github.com/Kaique292/squadview/commit/6812ccf5a7db60c226e67079b61de8e0a55ff734))
+* **deps:** bump the javascript group across 1 directory with 18 updates ([#157](https://github.com/Kaique292/squadview/issues/157)) ([9d2143c](https://github.com/Kaique292/squadview/commit/9d2143cb304eae004f21eafc4d1d25f675b59505))
+* **deps:** bump the javascript group with 6 updates ([#142](https://github.com/Kaique292/squadview/issues/142)) ([3580a94](https://github.com/Kaique292/squadview/commit/3580a94d65ccd1b6a6ec0bf9faf3496c83567f05))
+* **deps:** bump the rust group across 1 directory with 6 updates ([#154](https://github.com/Kaique292/squadview/issues/154)) ([0cda020](https://github.com/Kaique292/squadview/commit/0cda02033415a2bf91a6df50f1bfa7042aa86203))
+* **deps:** bump the rust group with 5 updates ([#141](https://github.com/Kaique292/squadview/issues/141)) ([8032a16](https://github.com/Kaique292/squadview/commit/8032a16b7ad71c2ce717c1b0ed0db0d0d7dba109))
+
 ## [0.15.0](https://github.com/Kaique292/squadview/compare/v0.14.0...v0.15.0) (2026-10-31)
 
 
