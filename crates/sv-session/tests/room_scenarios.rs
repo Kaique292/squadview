@@ -739,21 +739,23 @@ fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
     let conn = rt
         .block_on(beto_peer.connect(&candidates, None, &fingerprint))
         .expect("conectar na Ana");
-    let (tx, got) = mpsc::channel();
-    let _receiver = {
-        let _guard = rt.enter();
-        Receiver::start(conn, Sink(tx))
-    };
     wait_for("o Beto entrar como espectador da Ana", || ana.room.viewer_count() == 1);
     assert!(!tap.wants_low(), "ninguém precisa da camada baixa ainda");
 
-    // Uma rajada maior que a fila do Beto, no mesmo segundo.
-    for seq in 0..60 {
+    // O Beto ainda não lê nada, como uma internet que não dá conta: a Ana só consegue mandar até a
+    // janela da conexão (32 MB, `sv-net`), e daí em diante a fila dele enche e os frames caem.
+    // Todos são keyframes: depois de uma falta na sequência, quem manda pula os frames comuns até
+    // o próximo keyframe (sem escrever, esvaziando a fila), e com um descarte só a sala não troca
+    // de camada (precisa de 2 no mesmo segundo). No app, o keyframe pedido chega e a fila volta a
+    // encher; aqui, sem keyframes depois do primeiro, o teste falhava quando o primeiro estouro
+    // descartava um frame só (1 em cada 6 a 15 vezes).
+    // 100 frames de 400 KB (40 MB) passam da janela, no mesmo segundo.
+    for seq in 0..100 {
         tap.video(
             seq,
             &EncodedFrame {
                 data: vec![1; 400_000],
-                keyframe: seq == 0,
+                keyframe: true,
                 timestamp_us: 1_000 + u64::from(seq),
                 encode_us: 1,
             },
@@ -761,6 +763,12 @@ fn quem_aceita_simulcast_e_perde_frames_passa_para_a_camada_baixa() {
     }
     assert!(tap.wants_low(), "a sala pede a camada baixa ao encoder");
 
+    // Agora o Beto lê: depois do que ficou na fila, a camada baixa tem que chegar a ele.
+    let (tx, got) = mpsc::channel();
+    let _receiver = {
+        let _guard = rt.enter();
+        Receiver::start(conn, Sink(tx))
+    };
     std::thread::sleep(Duration::from_millis(500));
     tap.low_video(
         1_000,
