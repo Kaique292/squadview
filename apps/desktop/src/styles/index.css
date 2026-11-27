@@ -72,6 +72,14 @@
 
   --radius-card: 0.75rem;
 
+  /* Movimento (ADR 0034, docs/design/ui.md "Tokens"): entradas suaves e uma mola que passa um
+     pouco do ponto e assenta, para quadros, botões e trocas de foco. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-resposta: 150ms;
+  --duration-mola: 440ms;
+  --duration-cena: 750ms;
+
   /* Modais: entrada um pouco mais lenta e suave, saída rápida (ver docs/design/ui.md, "Movimento"). */
   --animate-overlay-in: overlay-in 180ms ease-out;
   --animate-overlay-out: overlay-out 140ms ease-in forwards;
@@ -94,6 +102,32 @@
   --animate-toast-out: toast-out 220ms ease-in forwards;
   /* Barra do tempo: esvazia da direita para a esquerda (duração definida em cada notificação). */
   --animate-toast-timer: toast-timer linear forwards;
+
+  /* A cena de entrada na sala (ADR 0034): o fundo escurece, o cartão sobe e os amigos aparecem com mola. */
+  --animate-entry-fade: overlay-in var(--duration-mola) var(--ease-out);
+  --animate-entry-rise: entry-rise var(--duration-mola) var(--ease-spring) both;
+  --animate-entry-pop: entry-pop var(--duration-mola) var(--ease-spring) both;
+
+  @keyframes entry-rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes entry-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 
   @keyframes toast-in {
     from {
@@ -441,6 +475,142 @@ body {
 }
 
 /* Rolagem sem barra (a faixa de quadros da sala rola com a roda do mouse, como no Discord). */
+/*
+ * Clique com mola: o alvo afunda e volta ao soltar (Doherty: a resposta vem na hora). Usa `scale`
+ * e `translate`, que se somam ao `transform` do elemento e só pedem composição na GPU.
+ */
+@utility press {
+  transition-property: scale, translate, color, background-color, border-color, opacity;
+  transition-duration:
+    var(--duration-resposta), var(--duration-mola), var(--duration-resposta), var(--duration-resposta),
+    var(--duration-resposta), var(--duration-resposta);
+  transition-timing-function:
+    var(--ease-spring), var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out);
+  &:active {
+    scale: 0.94;
+  }
+}
+
+/* Sobe um pouco no hover (quadros e botões grandes); combina com o `press`. */
+@utility lift {
+  transition-property: scale, translate, color, background-color, border-color, opacity;
+  transition-duration:
+    var(--duration-resposta), var(--duration-mola), var(--duration-resposta), var(--duration-resposta),
+    var(--duration-resposta), var(--duration-resposta);
+  transition-timing-function:
+    var(--ease-spring), var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out);
+  &:hover {
+    translate: 0 -3px;
+  }
+}
+
+/*
+ * Sem o app em uso (minimizado, sem foco ou atrás do jogo), o que se repete para e não gasta GPU
+ * (ADR 0034). Quem marca o `data-idle` é `ui/app-activity.ts`; um efeito contínuo novo usa `loop`.
+ */
+html[data-idle] .animate-spin,
+html[data-idle] .animate-pulse,
+html[data-idle] .voice-aura *,
+html[data-idle] .loop {
+  animation-play-state: paused;
+}
+
+/*
+ * Vidro na sala (ADR 0034): escurecido translúcido com borda fina, para o topo da live e a doca.
+ * Sem desfoque: o `backdrop-filter` não alcança o vídeo nem a luz ambiente, que ficam por baixo da
+ * página (ADR 0021).
+ */
+@utility glass-live {
+  background-color: rgb(12 12 16 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: 0 18px 44px -18px rgb(0 0 0 / 0.8);
+}
+
+/*
+ * Quem fala: um brilho interno na cor do efeito da pessoa (ou o verde) aparece e encolhe enquanto
+ * some, a cada 1,1 s. Para dentro, porque o quadro corta o que passa da borda. A sombra é fixa; só
+ * a opacidade e a escala se animam. Com a classe `loop`, pausa com o app fora de uso.
+ */
+.speak-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 2px var(--speak),
+    inset 0 0 24px 2px color-mix(in srgb, var(--speak) 45%, transparent);
+  opacity: 0;
+  animation: speak-pulse 1.1s var(--ease-out) infinite;
+}
+@keyframes speak-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+/* Menos movimento: sem pulso (a regra geral o faria piscar); a borda verde continua. */
+@media (prefers-reduced-motion: reduce) {
+  .speak-pulse {
+    animation: none !important;
+  }
+}
+
+/*
+ * Ficar ao vivo (ADR 0034): uma onda vermelha percorre a borda do quadro da nossa live e some para
+ * dentro, uma vez. Só a opacidade e a escala se animam; com "reduzir movimento", não aparece.
+ */
+.live-wave {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 3px var(--color-live),
+    inset 0 0 48px 4px color-mix(in srgb, var(--color-live) 50%, transparent);
+  opacity: 0;
+  animation: live-wave var(--duration-cena) cubic-bezier(0.4, 0, 0.6, 1);
+}
+/* A cor fica forte no primeiro terço (dá tempo de ver o flash) e só então some, encolhendo. */
+@keyframes live-wave {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  35% {
+    opacity: 0.9;
+    transform: scale(0.99);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-wave {
+    display: none;
+  }
+}
+
+/*
+ * A vinheta da luz ambiente (ADR 0034): por cima da luz (a live em foco, minúscula e esticada,
+ * desenhada por baixo da página). Com a live em foco ocupando o meio, a luz aparece nas sobras (em
+ * volta do quadro e da faixa): o escurecido é quase uniforme e só aperta nas bordas, onde some o
+ * contorno da imagem esticada. Estática: não custa nada por quadro.
+ */
+.ambient-vignette {
+  background: radial-gradient(
+    ellipse 95% 90% at 50% 45%,
+    rgb(0 0 0 / 0.42) 0%,
+    rgb(0 0 0 / 0.5) 55%,
+    rgb(0 0 0 / 0.72) 85%,
+    rgb(0 0 0 / 0.88) 100%
+  );
+}
+
 @utility scrollbar-none {
   scrollbar-width: none;
   &::-webkit-scrollbar {

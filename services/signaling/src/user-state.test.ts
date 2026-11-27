@@ -52,6 +52,8 @@ class World {
   serverDown = false;
   /** Credenciais do repassador (`null`: sem provedor configurado). */
   turnCredentials: { urls: string[]; username: string; credential: string } | null = null;
+  /** Para quem as credenciais do repassador foram pedidas. */
+  turnUsers: string[] = [];
 
   server(id: string) {
     let s = this.servers.get(id);
@@ -144,7 +146,10 @@ class World {
         return this.server(id).snapshot();
       },
       dmSignal: async (to, from, payload) => this.person(to).state.onDmSignal(from, payload),
-      turn: async () => this.turnCredentials,
+      turn: async (user) => {
+        this.turnUsers.push(user);
+        return this.turnCredentials;
+      },
       serverSetPresence: async (id, member, code, live, voice) => {
         const srv = this.server(id);
         if (!srv.setPresence(member, code, live, voice)) return;
@@ -562,6 +567,8 @@ describe("mensagens privadas: sinal da conexão direta", () => {
       username: "u",
       credential: "c",
     });
+    // O coturn com segredo põe o id no usuário da credencial: o pedido vai com o id de quem pediu.
+    expect(world.turnUsers).toEqual([ANA, ANA]);
   });
 });
 

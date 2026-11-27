@@ -4,17 +4,20 @@
 //! Threads: a do microfone (captura, ruído, Opus) e a do mixer (a cada ~10 ms completa a fila da
 //! saída com 20 ms misturados). A rede só enfileira pacotes, sem esperar ninguém.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sv_media::jitter::{JitterBuffer, Next};
+use sv_media::transcribe::{SpeechSegmenter, Transcriber};
 use sv_media::voice::{VOICE_FRAME, VoiceDecoder, VoiceEncoder, VoiceOptions};
 use sv_media::{AudioPlayer, MicCapture};
 
 use crate::surface::lock;
+use crate::transcribe::{TranscribeQueue, TranscriptLine};
 
 /// Pacotes guardados antes de tocar a voz de alguém (60 ms): absorve a variação da rede.
 const JITTER_PACKETS: usize = 3;
@@ -65,6 +68,8 @@ pub enum VoiceEvent {
     MicFailed(String),
     /// Não deu para abrir a saída de áudio.
     OutputFailed(String),
+    /// Uma linha da nossa transcrição (modo reunião).
+    Transcript(TranscriptLine),
 }
 
 type OnEvent = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
@@ -112,6 +117,10 @@ struct Shared {
     reopen_output: AtomicBool,
     stop: AtomicBool,
     on_event: OnEvent,
+    /// A fila da transcrição, quando o modo reunião está ligado. A thread do microfone só olha
+    /// aqui quando `transcription_gen` muda.
+    transcription: Mutex<Option<Arc<TranscribeQueue>>>,
+    transcription_gen: AtomicU32,
 }
 
 impl Shared {
@@ -125,6 +134,8 @@ impl Shared {
             reopen_output: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             on_event,
+            transcription: Mutex::new(None),
+            transcription_gen: AtomicU32::new(0),
         }
     }
 
@@ -279,6 +290,9 @@ impl VoiceEngine {
             speaking: false,
             level_peak: 0.0,
             level_frames: 0,
+            segmenter: RefCell::new(SpeechSegmenter::new()),
+            transcription: None,
+            transcription_gen: 0,
         }
     }
 
@@ -344,6 +358,23 @@ impl VoiceEngine {
     pub fn peers(&self) -> Vec<String> {
         self.shared.peers()
     }
+
+    /// Liga (com o motor) ou desliga (`None`) a transcrição da nossa voz. Cada linha pronta
+    /// chega como [`VoiceEvent::Transcript`]. Desligar não espera a fala que está sendo
+    /// transcrita: ela ainda chega.
+    pub fn set_transcriber(&self, transcriber: Option<Box<dyn Transcriber>>) -> Result<(), String> {
+        let queue = match transcriber {
+            Some(transcriber) => {
+                let on_event = self.shared.on_event.clone();
+                let queue = TranscribeQueue::start(transcriber, move |line| on_event(VoiceEvent::Transcript(line)))?;
+                Some(Arc::new(queue))
+            }
+            None => None,
+        };
+        *lock(&self.shared.transcription) = queue;
+        self.shared.transcription_gen.fetch_add(1, Ordering::Release);
+        Ok(())
+    }
 }
 
 impl Drop for VoiceEngine {
@@ -366,10 +397,29 @@ struct MicPipeline {
     speaking: bool,
     level_peak: f32,
     level_frames: u32,
+    /// Corta as falas para a transcrição (as duas callbacks do encoder usam).
+    segmenter: RefCell<SpeechSegmenter>,
+    transcription: Option<Arc<TranscribeQueue>>,
+    transcription_gen: u32,
 }
 
 impl MicPipeline {
+    /// Acompanha o liga e desliga da transcrição. Só pega o lock quando ela muda.
+    fn refresh_transcription(&mut self) {
+        let generation = self.shared.transcription_gen.load(Ordering::Acquire);
+        if generation == self.transcription_gen {
+            return;
+        }
+        self.transcription_gen = generation;
+        // A fala em andamento fica com a fila antiga, que ainda a transcreve antes de parar.
+        if let (Some(queue), Some(speech)) = (&self.transcription, self.segmenter.get_mut().finish()) {
+            queue.push(speech);
+        }
+        self.transcription = lock(&self.shared.transcription).clone();
+    }
+
     fn process(&mut self, samples: &[f32]) {
+        self.refresh_transcription();
         let Self {
             shared,
             encoder,
@@ -378,9 +428,21 @@ impl MicPipeline {
             speaking,
             level_peak,
             level_frames,
+            segmenter,
+            transcription,
+            ..
         } = self;
+        if let Some(queue) = transcription.as_deref() {
+            while let Some(buffer) = queue.try_take_buffer() {
+                segmenter.get_mut().recycle(buffer);
+            }
+        }
         // Mudo (ou surdo): não processa nem manda nada, como no Discord.
         if shared.muted.load(Ordering::Relaxed) || shared.deafened.load(Ordering::Relaxed) {
+            // E também não transcreve: a fala em andamento termina aqui.
+            if let (Some(queue), Some(speech)) = (transcription.as_deref(), segmenter.get_mut().finish()) {
+                queue.push(speech);
+            }
             if *speaking {
                 *speaking = false;
                 (shared.on_event)(VoiceEvent::Speaking {
@@ -390,10 +452,19 @@ impl MicPipeline {
             }
             return;
         }
+        let now_ms = now_ms();
+        let transcription = transcription.as_deref();
+        let segmenter = &*segmenter;
         let mut encoder = lock(encoder);
         let _ = encoder.push(
             samples,
             |level, open| {
+                if let Some(queue) = transcription
+                    && !open
+                    && let Some(speech) = segmenter.borrow_mut().silence()
+                {
+                    queue.push(speech);
+                }
                 if open != *speaking {
                     *speaking = open;
                     (shared.on_event)(VoiceEvent::Speaking {
@@ -413,9 +484,21 @@ impl MicPipeline {
             |frame| {
                 let n = seq.fetch_add(1, Ordering::Relaxed);
                 on_packet(n, frame.peak, frame.opus);
+                if let Some(queue) = transcription
+                    && let Some(speech) = segmenter.borrow_mut().voice(frame.pcm, now_ms)
+                {
+                    queue.push(speech);
+                }
             },
         );
     }
+}
+
+/// Agora, em ms desde 1970 (UTC), para a hora de cada fala.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// Mistura 20 ms de todo mundo em `mix` (mono). Devolve quem mudou de "falando".
@@ -702,6 +785,109 @@ mod tests {
         engine.set_muted(false);
         speak(&mut mic, 300);
         assert!(lock(&packets).len() > sent, "volta a mandar ao desmutar");
+    }
+
+    /// Um Whisper de mentira: responde quantos ms de fala recebeu.
+    struct Duration16k;
+
+    impl Transcriber for Duration16k {
+        fn transcribe(&mut self, samples: &[f32]) -> Result<String, sv_media::transcribe::TranscribeError> {
+            Ok(format!("{} ms", samples.len() * 1000 / 16_000))
+        }
+    }
+
+    /// Entrega `ms` de silêncio ao microfone.
+    fn quiet(pipeline: &mut MicPipeline, ms: usize) {
+        let audio = vec![0.0; 48 * ms];
+        for block in audio.chunks(480) {
+            pipeline.process(block);
+        }
+    }
+
+    /// As linhas da transcrição que chegaram (espera até 5 s pela primeira).
+    fn transcript(events: &Events, wait: bool) -> Vec<TranscriptLine> {
+        let deadline = Instant::now() + Duration::from_secs(if wait { 5 } else { 0 });
+        loop {
+            let lines: Vec<TranscriptLine> = lock(events)
+                .iter()
+                .filter_map(|e| match e {
+                    VoiceEvent::Transcript(line) => Some(line.clone()),
+                    _ => None,
+                })
+                .collect();
+            if !lines.is_empty() || Instant::now() >= deadline {
+                return lines;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Os ms de fala de uma linha do [`Duration16k`].
+    fn spoken_ms(line: &TranscriptLine) -> usize {
+        let TranscriptLine::Text { text, .. } = line else {
+            panic!("linha sem texto: {line:?}");
+        };
+        text.trim_end_matches(" ms").parse().expect("ms")
+    }
+
+    #[test]
+    fn com_a_transcricao_ligada_a_fala_vira_linha_depois_do_silencio() {
+        let (engine, _, events) = engine();
+        engine.set_transcriber(Some(Box::new(Duration16k))).unwrap();
+        let mut mic = engine.mic_pipeline();
+        let before = now_ms();
+        speak(&mut mic, 1000);
+        assert!(transcript(&events, false).is_empty(), "ainda falando: nada transcrito");
+        quiet(&mut mic, 1000);
+        let lines = transcript(&events, true);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        // 1 s de fala mais os 300 ms em que o portão segura aberto.
+        let ms = spoken_ms(&lines[0]);
+        assert!((1000..=1400).contains(&ms), "{ms} ms transcritos");
+        let TranscriptLine::Text { at_ms, .. } = lines[0] else {
+            unreachable!()
+        };
+        assert!(at_ms >= before && at_ms <= now_ms(), "hora da fala");
+    }
+
+    #[test]
+    fn sem_a_transcricao_ligada_nada_e_transcrito() {
+        let (engine, _, events) = engine();
+        let mut mic = engine.mic_pipeline();
+        speak(&mut mic, 1000);
+        quiet(&mut mic, 1000);
+        engine.set_transcriber(Some(Box::new(Duration16k))).unwrap();
+        quiet(&mut mic, 100);
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(transcript(&events, false).is_empty());
+    }
+
+    #[test]
+    fn mutar_termina_a_fala_e_nao_transcreve_o_que_vem_depois() {
+        let (engine, _, events) = engine();
+        engine.set_transcriber(Some(Box::new(Duration16k))).unwrap();
+        let mut mic = engine.mic_pipeline();
+        speak(&mut mic, 1000);
+        engine.set_muted(true);
+        speak(&mut mic, 2000);
+        let lines = transcript(&events, true);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let ms = spoken_ms(&lines[0]);
+        assert!((1000..=1100).contains(&ms), "só a fala de antes do mudo: {ms} ms");
+    }
+
+    #[test]
+    fn desligar_a_transcricao_ainda_entrega_a_fala_em_andamento() {
+        let (engine, _, events) = engine();
+        engine.set_transcriber(Some(Box::new(Duration16k))).unwrap();
+        let mut mic = engine.mic_pipeline();
+        speak(&mut mic, 1000);
+        engine.set_transcriber(None).unwrap();
+        speak(&mut mic, 1000);
+        quiet(&mut mic, 1000);
+        let lines = transcript(&events, true);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!((1000..=1100).contains(&spoken_ms(&lines[0])));
     }
 
     #[test]

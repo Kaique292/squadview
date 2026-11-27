@@ -15,6 +15,7 @@ mod sender;
 mod stats;
 mod surface;
 mod system;
+mod transcribe;
 mod viewer;
 mod voice;
 mod voice_mesh;
@@ -33,6 +34,7 @@ pub use sender::{SenderEvent, StreamInfo, VideoSender};
 pub use stats::{StatsMeter, StreamStats};
 pub use sv_net::{DiscordUser, JoinRequester, Member, SpeakingEffect};
 pub use system::{SystemLoad, SystemMonitor};
+pub use transcribe::TranscriptLine;
 pub use viewer::{ClockOffset, VideoViewer, ViewerEvent};
 pub use voice::{OnPacket, VoiceEngine, VoiceEvent, VoiceSettings};
 

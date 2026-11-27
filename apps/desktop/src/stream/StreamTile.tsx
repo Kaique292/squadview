@@ -20,6 +20,9 @@ export type StreamTileVariant = "grid" | "focus" | "strip" | "fullscreen";
  * O vídeo fica por baixo da página (ADR 0021): selos, nome e botões são desenhados por cima dele,
  * e o mouse cai direto no quadro.
  */
+/** Até quanto depois de a live entrar no ar o quadro ainda toca o momento de ficar ao vivo. */
+export const LIVE_MOMENT_MS = 1500;
+
 export function StreamTile(props: {
   variant: StreamTileVariant;
   /** Está na faixa recolhida: o vídeo some junto. */
@@ -37,6 +40,10 @@ export function StreamTile(props: {
   // Na faixa recolhida, o vídeo some junto com o quadro (antes ficava aparecendo por cima).
   const slot = useVideoSlot(undefined, !!props.hidden, showing);
   const [pointerIn, setPointerIn] = useState(false);
+  // Ficou ao vivo agora (ADR 0034): a onda e o selo com mola tocam uma vez. O quadro remonta ao
+  // trocar entre grade, foco e faixa; só a montagem logo depois de entrar no ar toca de novo.
+  const liveSince = useStreamStore((s) => s.liveSince);
+  const [fresh] = useState(() => liveSince !== null && Date.now() - liveSince < LIVE_MOMENT_MS);
   const [menuOpen, setMenuOpen] = useState(false);
   const strip = props.variant === "strip";
   const showMore = !strip && (pointerIn || menuOpen);
@@ -82,8 +89,11 @@ export function StreamTile(props: {
           <div className={`absolute flex items-center gap-1.5 ${strip ? "top-1.5 right-1.5" : "top-2.5 right-2.5"}`}>
             {!strip && <InfoBadge>{qualityLabel(quality, stats?.height)}</InfoBadge>}
             {arcade && <ArcadeBadge arcade={arcade} size={strip ? "sm" : "md"} compact={strip} />}
-            <LiveBadge size={strip ? "sm" : "md"} />
+            <span className={fresh ? "animate-entry-pop" : undefined}>
+              <LiveBadge size={strip ? "sm" : "md"} />
+            </span>
           </div>
+          {fresh && <span aria-hidden data-live-wave className="live-wave" />}
 
           <span
             className={`absolute flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-black/60 font-medium ${

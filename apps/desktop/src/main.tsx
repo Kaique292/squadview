@@ -13,9 +13,12 @@ import { applyGlass, useAppearanceStore } from "./settings/appearance-store";
 import { listenToSoundEvents } from "./sounds/sound-store";
 import { SPLASH_EVENT, SPLASH_UPDATE_EVENT, boot } from "./splash/boot";
 import { listenToVoiceEvents, useVoiceStore } from "./voice/voice-store";
+import { listenToMeetingEvents } from "./meeting/meeting-store";
 import { listenToStreamEvents, useStreamStore } from "./stream/stream-store";
 import { parsePipHash } from "./stream/pip";
+import { watchViewerNotices } from "./stream/viewer-notices";
 import { PipView } from "./stream/PipView";
+import { watchAppActivity } from "./ui/app-activity";
 import { blockNativeContextMenu } from "./ui/native-menu";
 import { toast } from "./ui/toast-store";
 import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
@@ -23,6 +26,8 @@ import { CHECK_EVERY_MS, useUpdateStore } from "./update/update-store";
 // A janelinha do picture in picture é esta mesma página, com outro endereço (ADR 0021): ela só
 // mostra os controles por cima do vídeo, sem nada do resto do app.
 const pipPage = parsePipHash(location.hash);
+// Fora de uso (minimizado, sem foco, atrás do jogo), o que se repete pausa (ADR 0034).
+watchAppActivity();
 if (pipPage) {
   blockNativeContextMenu();
   createRoot(document.getElementById("root")!).render(
@@ -38,6 +43,8 @@ if (pipPage) {
 function startApp() {
   // Sons de aviso (entrar, sair, mudo, surdo, transmissão).
   listenToSoundEvents();
+  // Quem começou a assistir a nossa live ganha um aviso com a foto (ADR 0034).
+  watchViewerNotices();
   blockNativeContextMenu();
 
   // Vidro antes do primeiro desenho, para a janela já abrir com a intensidade salva.
@@ -63,6 +70,7 @@ function startApp() {
               listenToDmEvents(),
               listenToArcadeEvents(),
               listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name),
+              listenToMeetingEvents(),
             ]),
         },
         { text: "Carregando seu perfil…", run: () => useAccountStore.getState().load() },

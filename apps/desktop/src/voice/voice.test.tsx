@@ -5,6 +5,7 @@ import { App } from "../App";
 import { listenToRoomEvents, type Member, useRoomStore } from "../room/room-store";
 import { DEFAULT_QUALITY, useStreamStore } from "../stream/stream-store";
 import { useToastStore } from "../ui/toast-store";
+import { useMeetingStore } from "../meeting/meeting-store";
 import { gridColumns, gridLayout } from "./VoiceRoom";
 import { DEFAULT_PREFS, listenToVoiceEvents, useVoiceStore } from "./voice-store";
 
@@ -36,9 +37,17 @@ beforeEach(async () => {
   handlers.clear();
   localStorage.clear();
   useVoiceStore.setState({ prefs: DEFAULT_PREFS, peers: {}, speaking: {}, connected: [], bridges: {}, level: 0 });
-  useRoomStore.setState({ code: "B8RJ2Q", roomName: "Galera", members: [], watching: {}, pendingWatch: [] });
+  useRoomStore.setState({
+    code: "B8RJ2Q",
+    roomName: "Galera",
+    members: [],
+    watching: {},
+    pendingWatch: [],
+    entry: null,
+  });
   useStreamStore.setState({ status: "idle", stats: null, fullscreen: false, quality: DEFAULT_QUALITY });
   useToastStore.setState({ toasts: [] });
+  useMeetingStore.setState({ open: false, transcribing: false, lines: [] });
   await listenToRoomEvents();
   await listenToVoiceEvents((id) => useRoomStore.getState().members.find((m) => m.id === id)?.name);
 });
@@ -66,6 +75,21 @@ describe("chat de voz", () => {
     expect(within(grade).getByLabelText("Microfone silenciado")).toBeInTheDocument();
   });
 
+  it("o botão do canto abre e fecha a aba Reunião ao lado da sala", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    fireEvent.click(screen.getByRole("button", { name: "Reunião (transcrever a conversa)" }));
+    expect(screen.getByRole("complementary", { name: "Reunião" })).toBeInTheDocument();
+    // Transcrevendo, o botão ganha a bolinha vermelha.
+    act(() => useMeetingStore.setState({ transcribing: true }));
+    const controls = screen.getByRole("navigation", { name: "Controles da voz" });
+    const button = within(controls).getByRole("button", { name: "Fechar a aba Reunião" });
+    expect(button.querySelector(".bg-live")).not.toBeNull();
+    fireEvent.click(button);
+    expect(screen.queryByRole("complementary", { name: "Reunião" })).not.toBeInTheDocument();
+    act(() => useMeetingStore.setState({ transcribing: false }));
+  });
+
   it("acende a borda de quem está falando", () => {
     render(<App />);
     emit("room-members", [ME, ANA]);
@@ -74,6 +98,39 @@ describe("chat de voz", () => {
     expect(grade.querySelectorAll("[data-speaking]")).toHaveLength(1);
     emit("voice-speaking", { memberId: null, speaking: true });
     expect(grade.querySelectorAll("[data-speaking]")).toHaveLength(2);
+  });
+
+  it("quem fala ganha o brilho que pulsa, na cor do efeito dela (ou verde), e ele some ao calar", () => {
+    const BIA: Member = {
+      id: "dddddddddddddddd",
+      name: "Bia",
+      live: false,
+      effect: { kind: "dots", color: "#ff7a3d" },
+    };
+    render(<App />);
+    emit("room-members", [ME, ANA, BIA]);
+    const grade = screen.getByRole("list", { name: "Quem está na voz" });
+    expect(grade.querySelectorAll("[data-speak-pulse]")).toHaveLength(0);
+    emit("voice-speaking", { memberId: ANA.id, speaking: true });
+    emit("voice-speaking", { memberId: BIA.id, speaking: true });
+    const pulsos = [...grade.querySelectorAll<HTMLElement>("[data-speak-pulse]")];
+    expect(pulsos).toHaveLength(2);
+    // Pausa com o app fora de uso (a classe `loop`).
+    expect(pulsos.every((p) => p.classList.contains("loop"))).toBe(true);
+    const cores = pulsos.map((p) => p.style.getPropertyValue("--speak"));
+    expect(cores).toContain("var(--color-online)");
+    expect(cores).toContain("#ff7a3d");
+    emit("voice-speaking", { memberId: ANA.id, speaking: false });
+    expect(grade.querySelectorAll("[data-speak-pulse]")).toHaveLength(1);
+  });
+
+  it("os controles da chamada ficam numa doca de vidro", () => {
+    render(<App />);
+    emit("room-members", [ME, ANA]);
+    const doca = screen.getByRole("navigation", { name: "Controles da voz" }).querySelector("[data-glass]")!;
+    expect(doca).toHaveClass("glass-live");
+    expect(within(doca as HTMLElement).getByRole("button", { name: "Sair da sala" })).toBeInTheDocument();
+    expect(within(doca as HTMLElement).getByRole("group", { name: "Áudio" })).toBeInTheDocument();
   });
 
   it("silencia o microfone e ensurdece pelos botões, e lembra", async () => {

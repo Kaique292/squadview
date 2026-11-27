@@ -36,6 +36,16 @@ allow = [
 crate = "jpeg-encoder"
 allow = ["IJG"]
 
+# Unlicense (domínio público) só nos bindings do whisper.cpp, que é MIT: transcrição do modo
+# reunião (ADR 0032).
+[[licenses.exceptions]]
+crate = "whisper-rs"
+allow = ["Unlicense"]
+
+[[licenses.exceptions]]
+crate = "whisper-rs-sys"
+allow = ["Unlicense"]
+
 [licenses.private]
 ignore = true
 

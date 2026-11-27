@@ -1,5 +1,5 @@
 import * as Scroll from "@radix-ui/react-scroll-area";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 interface ScrollAreaProps {
   children: ReactNode;
@@ -7,6 +7,9 @@ interface ScrollAreaProps {
   className?: string;
   /** Classes da área rolável (espaçamento interno). */
   viewportClassName?: string;
+  /** A área rolável, para quem precisa rolar por código (ex.: descer até a última linha). */
+  viewportRef?: Ref<HTMLDivElement>;
+  onViewportScroll?: (viewport: HTMLDivElement) => void;
 }
 
 /**
@@ -14,13 +17,17 @@ interface ScrollAreaProps {
  * espaço), aparece com o mouse em cima ou ao rolar e some com um fade quando o mouse sai.
  * Use no lugar de `overflow-auto` em qualquer lista ou painel do app.
  */
-export function ScrollArea(props: ScrollAreaProps) {
+export function ScrollArea({ children, className, viewportClassName, viewportRef, onViewportScroll }: ScrollAreaProps) {
   return (
-    <Scroll.Root type="hover" scrollHideDelay={500} className={`relative overflow-hidden ${props.className ?? ""}`}>
+    <Scroll.Root type="hover" scrollHideDelay={500} className={`relative overflow-hidden ${className ?? ""}`}>
       {/* O Radix envolve o conteúdo numa caixa "display: table" que cresce com o item mais largo
           (ex.: título longo de janela) e empurra o resto para fora. Forçar "block" mantém a largura. */}
-      <Scroll.Viewport className={`h-full w-full [&>div]:!block ${props.viewportClassName ?? ""}`}>
-        {props.children}
+      <Scroll.Viewport
+        ref={viewportRef}
+        onScroll={onViewportScroll && ((e) => onViewportScroll(e.currentTarget))}
+        className={`h-full w-full [&>div]:!block ${viewportClassName ?? ""}`}
+      >
+        {children}
       </Scroll.Viewport>
       <Scroll.Scrollbar
         orientation="vertical"

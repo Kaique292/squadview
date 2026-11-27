@@ -110,3 +110,12 @@ A conexão do fliperama fica fora da árvore de vídeo. O jogador abre uma conex
 - **Sinais:** a vaga é combinada pela sinalização (`arcade-join`, `arcade-seat`, `arcade-deny`, `arcade-leave`, `arcade-kbm`).
 
 Detalhes em [fliperama.md](fliperama.md).
+
+### Modo reunião (ADR 0032)
+
+Fica fora da malha: só texto, pela sinalização. O áudio não sai do PC de quem fala, e cada um transcreve o próprio microfone.
+
+- **Estado:** `meeting-start` e `meeting-stop` ligam e desligam o modo. O Worker guarda na sala se ele está ligado, quem ligou e quando, e manda isso a quem entra.
+- **Falas:** `meeting-line { id, at, text }` vai uma vez ao Worker, que difunde para a sala com o id de quem mandou. O Worker não guarda o texto.
+- **Histórico:** quem entra no meio manda `meeting-history-request` a quem ligou o modo, que responde com `meeting-history` em pedaços de até 8 KB.
+- Apps antigos ignoram essas mensagens.

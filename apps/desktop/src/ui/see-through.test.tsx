@@ -32,6 +32,15 @@ describe("fundo transparente onde há vídeo", () => {
     ).toBe("none");
   });
 
+  it("um fundo pode ignorar áreas (a vinheta da luz não abre buraco para a própria luz)", () => {
+    setSeeThrough("luz", { x: 0, y: 0, width: 800, height: 600, radius: 0 });
+    setSeeThrough("live", { x: 10, y: 10, width: 320, height: 180, radius: 8 });
+    expect(seeThroughAreas()).toHaveLength(2);
+    expect(seeThroughAreas(["luz"])).toEqual([{ x: 10, y: 10, width: 320, height: 180, radius: 8 }]);
+    setSeeThrough("luz", null);
+    setSeeThrough("live", null);
+  });
+
   it("avisa só quando a área muda, e ignora área vazia", () => {
     const changed = vi.fn();
     const stop = onSeeThroughChange(changed);
@@ -49,6 +58,15 @@ describe("fundo transparente onde há vídeo", () => {
     expect(changed).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * Os comandos e números do caminho de um `clip-path: path(...)`, um por vez. O texto muda de
+   * espaçamento conforme quem serializa (o jsdom 31 escreve `M 11 11 H 109`, o 30 deixava `M11 11H109`).
+   */
+  function pathTokens(css: string): string {
+    const path = /"([^"]*)"/.exec(css)?.[1] ?? css;
+    return (path.match(/[A-Za-z]|-?\d*\.?\d+/g) ?? []).join(" ");
+  }
+
   it("o fundo pinta a cor dele e fica transparente onde a live passa", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       left: 0,
@@ -61,7 +79,7 @@ describe("fundo transparente onde há vídeo", () => {
     expect(fundo).toHaveClass("bg-black");
     expect(fundo.style.clipPath).toBe("none");
     act(() => setSeeThrough("a", { x: 10, y: 10, width: 100, height: 50, radius: 0 }));
-    expect(fundo.style.clipPath).toContain("M11 11H109V59H11Z");
+    expect(pathTokens(fundo.style.clipPath)).toContain(pathTokens("M11 11H109V59H11Z"));
     act(() => setSeeThrough("a", null));
     expect(fundo.style.clipPath).toBe("none");
     unmount();
